@@ -1,0 +1,75 @@
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+      - "README.md"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+      - "README.md"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.4
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bun run typecheck
+      - run: bun run build
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: t3s-docs-production
+      cancel-in-progress: true
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.4
+      - run: bun install --cwd docs --frozen-lockfile
+      - run: bun run --cwd docs test
+      - run: bun run --cwd docs typecheck
+      - run: bun run --cwd docs build
+      - name: Deploy to Cloudflare Pages
+        run: >-
+          npx --yes wrangler@4.99.0 pages deploy docs/dist
+          --project-name=t3s
+          --branch=main
+          --commit-hash="${GITHUB_SHA}"
+          --commit-message="${COMMIT_MESSAGE}"
+      - name: Verify deployed commit
+        run: |
+          deployments="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/t3s/deployments")"
+          jq --exit-status --arg sha "${GITHUB_SHA}" \
+            '.result[] | select(.deployment_trigger.metadata.commit_hash == $sha and .deployment_trigger.metadata.branch == "main")' \
+            <<<"${deployments}"
+      - name: Smoke test production
+        run: >-
+          curl --fail --silent --show-error
+          --retry 12 --retry-delay 10 --retry-all-errors
+          https://t3s.m11s.io/
