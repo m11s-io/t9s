@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "t3s-docs",
+      "name": "t9s-docs",
       "dependencies": {
         "@astrojs/starlight": "0.41.7",
         "astro": "7.2.0",

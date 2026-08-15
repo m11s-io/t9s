@@ -1,6 +1,6 @@
 ---
 title: Environment variables
-description: Environment variables used by t3s.
+description: Environment variables used by t9s.
 ---
 
 ## `TALOSCONFIG`
@@ -15,7 +15,7 @@ Explicit `--talosconfig` arguments take part in file selection according to the 
 
 ## `TALOSCONFIGS`
 
-The t3s-specific variable selects multiple files as an operating-system path list:
+The t9s-specific variable selects multiple files as an operating-system path list:
 
 ```bash
 export TALOSCONFIGS="$HOME/.talos/mgmt:$HOME/.talos/stage:$HOME/.talos/test"

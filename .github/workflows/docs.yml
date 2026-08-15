@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     concurrency:
-      group: t3s-docs-production
+      group: t9s-docs-production
       cancel-in-progress: true
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -56,7 +56,7 @@ jobs:
       - name: Deploy to Cloudflare Pages
         run: >-
           npx --yes wrangler@4.99.0 pages deploy docs/dist
-          --project-name=t3s
+          --project-name=t9s
           --branch=main
           --commit-hash="${GITHUB_SHA}"
           --commit-message="${COMMIT_MESSAGE}"
@@ -64,7 +64,7 @@ jobs:
         run: |
           deployments="$(curl --fail --silent --show-error \
             --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/t3s/deployments")"
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/t9s/deployments")"
           jq --exit-status --arg sha "${GITHUB_SHA}" \
             '.result[] | select(.deployment_trigger.metadata.commit_hash == $sha and .deployment_trigger.metadata.branch == "main")' \
             <<<"${deployments}"
@@ -72,4 +72,4 @@ jobs:
         run: >-
           curl --fail --silent --show-error
           --retry 12 --retry-delay 10 --retry-all-errors
-          https://t3s.m11s.io/
+          https://t9s.m11s.io/

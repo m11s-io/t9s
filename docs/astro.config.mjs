@@ -2,13 +2,13 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 
 export default defineConfig({
-  site: "https://t3s.m11s.io",
+  site: "https://t9s.m11s.io",
   integrations: [
     starlight({
-      title: "t3s",
+      title: "t9s",
       description: "A resource-first terminal UI for Talos Linux clusters.",
       customCss: ["./src/styles/custom.css"],
-      social: [{ icon: "github", label: "GitHub", href: "https://github.com/m11s-io/t3s" }],
+      social: [{ icon: "github", label: "GitHub", href: "https://github.com/m11s-io/t9s" }],
       sidebar: [
         { label: "Start", items: [{ label: "Overview", slug: "" }] },
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },

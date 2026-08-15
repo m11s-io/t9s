@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Build and run t3s against a Talos Linux cluster.
+description: Build and run t9s against a Talos Linux cluster.
 ---
 
 ## Requirements
@@ -12,9 +12,9 @@ description: Build and run t3s against a Talos Linux cluster.
 ## Build from source
 
 ```bash
-git clone https://github.com/m11s-io/t3s.git
-cd t3s
-go build ./cmd/t3s
+git clone https://github.com/m11s-io/t9s.git
+cd t9s
+go build ./cmd/t9s
 ```
 
 Run the test suite before using a development build:
@@ -27,7 +27,7 @@ go test -race ./...
 ## Run
 
 ```bash
-go run ./cmd/t3s --context <name>
+go run ./cmd/t9s --context <name>
 ```
 
 The context must exist in the Talos configuration resolved by the Talos client. See [Talos configuration](../talos-configuration/) for file selection.

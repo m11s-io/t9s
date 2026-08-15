@@ -1,6 +1,6 @@
 ---
 title: Commands
-description: Commands available from the t3s command palette.
+description: Commands available from the t9s command palette.
 ---
 
 Press `:` to open the command palette.

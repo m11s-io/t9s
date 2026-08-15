@@ -3,7 +3,7 @@ title: Security
 description: Protect Talos credentials while using the read-only interface.
 ---
 
-The current t3s UI is read-only. It offers no mutation operation and no arbitrary command path.
+The current t9s UI is read-only. It offers no mutation operation and no arbitrary command path.
 
 The supplied Talos credentials can still be privileged. Protect every talosconfig as a sensitive secret and grant only the permissions an operator needs.
 

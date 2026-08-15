@@ -3,7 +3,7 @@ title: Nodes
 description: Inspect cluster nodes and filter the current snapshot.
 ---
 
-The node explorer is the initial t3s view. Return to it with `:nodes` or `:no`.
+The node explorer is the initial t9s view. Return to it with `:nodes` or `:no`.
 
 - Move through the list with the navigation keys shown by `?`.
 - Press `Enter` or `d` to open read-only node details.

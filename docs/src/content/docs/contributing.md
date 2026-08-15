@@ -1,12 +1,12 @@
 ---
 title: Contributing
-description: Build, test, and extend t3s without crossing its architecture boundaries.
+description: Build, test, and extend t9s without crossing its architecture boundaries.
 ---
 
 Use Go 1.26.3 on Linux to match CI. The supported Talos SDK and cluster version is v1.13.3.
 
 ```bash
-go build ./cmd/t3s
+go build ./cmd/t9s
 go test ./...
 go test -race ./...
 go vet ./...
@@ -27,7 +27,7 @@ Dependencies point inward:
 - `internal/application` owns pure transitions, typed messages, session generations, and cancellable effects.
 - `internal/adapters/talos` is the only Talos SDK boundary.
 - `internal/tui` renders state and translates input; rendering remains network independent.
-- `cmd/t3s` and `internal/cli` are composition and process-lifecycle roots.
+- `cmd/t9s` and `internal/cli` are composition and process-lifecycle roots.
 
 ## Tests and fixtures
 
