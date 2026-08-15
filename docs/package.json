@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test": "bun test",
     "dev": "astro dev",
     "build": "astro build",
     "typecheck": "astro check",
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",
+    "@types/bun": "1.3.4",
     "typescript": "6.0.3"
   }
 }

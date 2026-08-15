@@ -14,6 +14,7 @@ export default defineConfig({
         { label: "Getting started", items: [{ autogenerate: { directory: "getting-started" } }] },
         { label: "Guides", items: [{ autogenerate: { directory: "guides" } }] },
         { label: "Reference", items: [{ autogenerate: { directory: "reference" } }] },
+        { label: "Project", items: [{ label: "Security", slug: "security" }, { label: "Contributing", slug: "contributing" }] },
       ],
       credits: true
     })
