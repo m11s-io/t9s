@@ -1,0 +1,33 @@
+---
+title: t3s
+description: A resource-first terminal UI for Talos Linux clusters.
+template: splash
+hero:
+  tagline: Explore a Talos cluster quickly, see what is healthy or unhealthy, and drill from any resource into the evidence.
+  actions:
+    - text: Get started
+      link: /getting-started/installation/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/m11s-io/t3s
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+:::caution[Early development]
+t3s currently provides the node and service explorer foundation, not the full MVP. Machine events, etcd membership, processes, disks, network, and other planned resource views are not available yet.
+:::
+
+<CardGrid>
+  <Card title="Resource first" icon="seti:config">
+    Open directly on objective cluster resources, then layer explainable health information over those snapshots.
+  </Card>
+  <Card title="Read only" icon="lock">
+    Explore nodes and services without mutation or an arbitrary command path.
+  </Card>
+  <Card title="Talos v1.13.3" icon="rocket">
+    The current release target supports Talos Linux v1.13.3.
+  </Card>
+</CardGrid>

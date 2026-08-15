@@ -1,0 +1,33 @@
+# Go binaries and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Astro and JavaScript dependencies/build output
+node_modules/
+dist/
+.astro/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs and local tooling
+*.log
+.DS_Store
+.idea/
+.vscode/
+.superpowers/
+.worktrees/
