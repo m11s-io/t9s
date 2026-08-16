@@ -40,6 +40,14 @@ func (m resourceKindsModel) setState(state application.ResourceBrowserState) res
 
 func (m resourceKindsModel) update(message tea.KeyPressMsg) resourceKindsModel {
 	key := message.Keystroke()
+	// Terminals using the Kitty keyboard protocol (e.g. Ghostty) report
+	// Shift+g as the base lowercase key plus a separate Shift modifier, so
+	// Keystroke() yields "shift+g" instead of "G". message.Text is always
+	// correctly-cased regardless of protocol; normalize once here so the
+	// "G" case below matches under both encodings.
+	if key == "shift+g" || message.Text == "G" {
+		key = "G"
+	}
 	if m.filtering {
 		switch key {
 		case "esc":
@@ -231,6 +239,14 @@ func (m resourceInstancesModel) setState(state application.ResourceBrowserState)
 
 func (m resourceInstancesModel) update(message tea.KeyPressMsg) resourceInstancesModel {
 	key := message.Keystroke()
+	// Terminals using the Kitty keyboard protocol (e.g. Ghostty) report
+	// Shift+g as the base lowercase key plus a separate Shift modifier, so
+	// Keystroke() yields "shift+g" instead of "G". message.Text is always
+	// correctly-cased regardless of protocol; normalize once here so the
+	// "G" case below matches under both encodings.
+	if key == "shift+g" || message.Text == "G" {
+		key = "G"
+	}
 	if m.filtering {
 		switch key {
 		case "esc":
@@ -395,7 +411,16 @@ func newResourceDetailModel() resourceDetailModel {
 }
 
 func (m resourceDetailModel) update(message tea.KeyPressMsg) resourceDetailModel {
-	switch message.Keystroke() {
+	key := message.Keystroke()
+	// Terminals using the Kitty keyboard protocol (e.g. Ghostty) report
+	// Shift+g as the base lowercase key plus a separate Shift modifier, so
+	// Keystroke() yields "shift+g" instead of "G". message.Text is always
+	// correctly-cased regardless of protocol; normalize once here so the
+	// "G" case below matches under both encodings.
+	if key == "shift+g" || message.Text == "G" {
+		key = "G"
+	}
+	switch key {
 	case "up", "k":
 		m.viewport.ScrollUp(1)
 	case "down", "j":

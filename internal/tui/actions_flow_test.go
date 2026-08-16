@@ -59,6 +59,26 @@ func TestRebootKeyWithWritesEnabledOpensConfirmPrompt(t *testing.T) {
 	assert.Contains(t, rootModel.activePrompt(), "(y/n)")
 }
 
+func TestRebootKeyHandlesKittyShiftEncoding(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+
+	updated, _ := root.Update(shiftKeyPress('R'))
+	rootModel := updated.(model)
+
+	require.NotNil(t, rootModel.application.PendingAction, "shift+r (Kitty protocol, e.g. Ghostty) must open the confirm prompt, same as legacy \"R\"")
+	assert.Equal(t, application.ActionReboot, rootModel.application.PendingAction.Kind)
+}
+
+func TestShutdownKeyHandlesKittyShiftEncoding(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+
+	updated, _ := root.Update(shiftKeyPress('X'))
+	rootModel := updated.(model)
+
+	require.NotNil(t, rootModel.application.PendingAction, "shift+x (Kitty protocol, e.g. Ghostty) must open the confirm prompt, same as legacy \"X\"")
+	assert.Equal(t, application.ActionShutdown, rootModel.application.PendingAction.Kind)
+}
+
 func TestSpaceKeyWithWritesDisabledDoesNotMarkRow(t *testing.T) {
 	appModel, _ := application.NewModel("prod")
 	appModel, _ = application.Update(appModel, application.NodesLoaded{

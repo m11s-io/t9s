@@ -516,14 +516,20 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
-		if message.Keystroke() == "R" && m.application.WritesEnabled && !m.nodes.filtering {
+		// Terminals using the Kitty keyboard protocol (e.g. Ghostty) report
+		// Shift+<letter> as the base lowercase key plus a separate Shift
+		// modifier, so Keystroke() yields "shift+r"/"shift+x" instead of
+		// "R"/"X". message.Text is always correctly-cased regardless of
+		// protocol; this dual check matches the existing pattern at
+		// logs.go's "C" (clear) binding.
+		if (message.Text == "R" || message.Keystroke() == "shift+r") && m.application.WritesEnabled && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionReboot, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
-		if message.Keystroke() == "X" && m.application.WritesEnabled && !m.nodes.filtering {
+		if (message.Text == "X" || message.Keystroke() == "shift+x") && m.application.WritesEnabled && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionShutdown, Targets: targets})

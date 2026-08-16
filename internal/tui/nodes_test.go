@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -308,6 +309,26 @@ func nodesTestState() application.NodeState {
 
 func keyPress(value rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: value, Text: string(value)}
+}
+
+// shiftKeyPress models a Shift+<letter> keypress as reported by terminals
+// using the Kitty keyboard protocol (e.g. Ghostty): the base lowercase key
+// plus a separate Shift modifier, rather than the single uppercase rune
+// keyPress produces. Keystroke() for this shape is "shift+<lower>", not
+// the bare uppercase letter — so it exercises a real, previously-unhandled
+// input path that keyPress(upper) never did.
+func shiftKeyPress(upper rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: unicode.ToLower(upper), Text: string(upper), Mod: tea.ModShift}
+}
+
+func TestNodesGotoBottomHandlesKittyShiftEncoding(t *testing.T) {
+	model := newNodesModel(nodesTestState())
+
+	updated := model.update(shiftKeyPress('G'))
+
+	nodes := updated.visibleNodes()
+	require.NotEmpty(t, nodes)
+	assert.Equal(t, nodes[len(nodes)-1].ID, updated.selectedValue().ID, "shift+g (Kitty protocol) must jump to the bottom, same as legacy \"G\"")
 }
 
 func TestRenderNodeDetailShowsKubernetesBlockWhenCorrelated(t *testing.T) {
