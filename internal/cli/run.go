@@ -14,6 +14,7 @@ import (
 	"github.com/m11s-io/t9s/internal/config"
 	"github.com/m11s-io/t9s/internal/ports"
 	"github.com/m11s-io/t9s/internal/tui"
+	"github.com/m11s-io/t9s/internal/version"
 )
 
 func resolveKubeContext(ctx context.Context, catalog ports.ContextCatalog, associations config.Associations, kubeContext string) (talosContext string, openPicker bool, err error) {
@@ -44,6 +45,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 	command := &cobra.Command{
 		Use:           "t9s",
 		Short:         "Inspect Talos clusters from the terminal",
+		Version:       version.String(),
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

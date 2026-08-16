@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/m11s-io/t9s/internal/cli"
+	"github.com/m11s-io/t9s/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -120,4 +121,15 @@ func (r *signalReader) Read(destination []byte) (int, error) {
 	case <-time.After(4 * time.Second):
 		return 0, context.DeadlineExceeded
 	}
+}
+
+func TestRunVersionFlagPrintsVersionString(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := cli.Run(t.Context(), []string{"--version"}, strings.NewReader(""), &stdout, &stderr)
+
+	assert.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout.String(), version.String())
+	assert.Empty(t, stderr.String())
 }
