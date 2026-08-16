@@ -20,15 +20,28 @@ type FakeNodeReader struct {
 	ListFunc func(context.Context) (domain.NodeSet, error)
 }
 
+func (f *FakeNodeReader) List(ctx context.Context) (domain.NodeSet, error) {
+	return f.ListFunc(ctx)
+}
+
+type FakeNodeController struct {
+	RebootFunc   func(ctx context.Context, target string, mode ports.RebootMode) error
+	ShutdownFunc func(ctx context.Context, target string, force bool) error
+}
+
+func (f *FakeNodeController) Reboot(ctx context.Context, target string, mode ports.RebootMode) error {
+	return f.RebootFunc(ctx, target, mode)
+}
+
+func (f *FakeNodeController) Shutdown(ctx context.Context, target string, force bool) error {
+	return f.ShutdownFunc(ctx, target, force)
+}
+
 type FakeServiceReader struct {
 	ListFunc func(context.Context) (domain.ServiceSet, error)
 }
 
 func (f *FakeServiceReader) List(ctx context.Context) (domain.ServiceSet, error) {
-	return f.ListFunc(ctx)
-}
-
-func (f *FakeNodeReader) List(ctx context.Context) (domain.NodeSet, error) {
 	return f.ListFunc(ctx)
 }
 
@@ -111,6 +124,7 @@ func (f *FakeKubernetesResolver) Resolve(ctx context.Context, talosContext strin
 
 type FakeSession struct {
 	NodeReader             ports.NodeReader
+	NodeController         ports.NodeController
 	ServiceReader          ports.ServiceReader
 	LogReader              ports.ServiceLogReader
 	EventReader            ports.EventReader
@@ -127,6 +141,8 @@ type FakeSession struct {
 }
 
 func (f *FakeSession) Nodes() ports.NodeReader { return f.NodeReader }
+
+func (f *FakeSession) NodeActions() ports.NodeController { return f.NodeController }
 
 func (f *FakeSession) Services() ports.ServiceReader { return f.ServiceReader }
 
