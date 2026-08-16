@@ -51,6 +51,8 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.logStream = nil
 		model.logGeneration++
 		model.Notice = ""
+		model.PendingAction = nil
+		model.ActionResults = nil
 		return model, openSession(message.Name, model.Generation)
 
 	case SessionOpened:
@@ -58,6 +60,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		model.nodeReader = message.Nodes
+		model.nodeController = message.NodeController
 		model.serviceReader = message.Services
 		model.logReader = message.Logs
 		model.eventReader = message.Events
@@ -258,6 +261,44 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Network.Status = Loading
 		model.Network.Err = ""
 		return model, loadNetwork(model.networkReader, model.Network.Node, model.Generation)
+
+	case RequestAction:
+		if len(message.Targets) == 0 {
+			return model, nil
+		}
+		model.PendingAction = &PendingAction{
+			Kind:    message.Kind,
+			Targets: append([]string(nil), message.Targets...),
+			Warning: computeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets),
+		}
+		model.ActionResults = nil
+		return model, nil
+
+	case CancelPendingAction:
+		model.PendingAction = nil
+		return model, nil
+
+	case ConfirmPendingAction:
+		model.PendingAction = nil
+		return model, nil
+
+	case ActionSucceeded:
+		if message.Generation != model.Generation {
+			return model, nil
+		}
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target})
+		return model, nil
+
+	case ActionFailed:
+		if message.Generation != model.Generation {
+			return model, nil
+		}
+		errText := "action failed"
+		if message.Err != nil {
+			errText = message.Err.Error()
+		}
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText})
+		return model, nil
 
 	case OpenResourceBrowser:
 		model.ResourceBrowser = ResourceBrowserState{KindsStatus: Loading}

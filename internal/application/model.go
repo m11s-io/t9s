@@ -24,6 +24,7 @@ type Model struct {
 	ContextName            string
 	NodeFocus              string
 	OpenContextPicker      bool
+	WritesEnabled          bool
 	Contexts               []domain.ClusterContext
 	Generation             uint64
 	Nodes                  NodeState
@@ -36,6 +37,7 @@ type Model struct {
 	ResourceBrowser        ResourceBrowserState
 	Kubernetes             KubernetesState
 	nodeReader             ports.NodeReader
+	nodeController         ports.NodeController
 	serviceReader          ports.ServiceReader
 	logReader              ports.ServiceLogReader
 	eventReader            ports.EventReader
@@ -50,6 +52,8 @@ type Model struct {
 	logGeneration          uint64
 	Notice                 string
 	Logs                   LogState
+	PendingAction          *PendingAction
+	ActionResults          []ActionResult
 }
 
 type NodeState struct {
@@ -229,9 +233,58 @@ type SelectContext struct {
 
 func (SelectContext) applicationMessage() {}
 
+type ActionKind string
+
+const (
+	ActionReboot   ActionKind = "reboot"
+	ActionShutdown ActionKind = "shutdown"
+)
+
+type PendingAction struct {
+	Kind    ActionKind
+	Targets []string
+	Warning string
+}
+
+type ActionResult struct {
+	Target string
+	Err    string
+}
+
+type RequestAction struct {
+	Kind    ActionKind
+	Targets []string
+}
+
+func (RequestAction) applicationMessage() {}
+
+type ConfirmPendingAction struct{}
+
+func (ConfirmPendingAction) applicationMessage() {}
+
+type CancelPendingAction struct{}
+
+func (CancelPendingAction) applicationMessage() {}
+
+type ActionSucceeded struct {
+	Generation uint64
+	Target     string
+}
+
+func (ActionSucceeded) applicationMessage() {}
+
+type ActionFailed struct {
+	Generation uint64
+	Target     string
+	Err        error
+}
+
+func (ActionFailed) applicationMessage() {}
+
 type SessionOpened struct {
 	Generation      uint64
 	Nodes           ports.NodeReader
+	NodeController  ports.NodeController
 	Services        ports.ServiceReader
 	Logs            ports.ServiceLogReader
 	Events          ports.EventReader

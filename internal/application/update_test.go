@@ -1250,3 +1250,106 @@ func withKubernetesReader(model application.Model, reader ports.KubernetesNodeRe
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, KubernetesNodes: reader})
 	return model
 }
+
+func TestRequestActionComputesControlPlaneQuorumWarning(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1"}, {Hostname: "cp-2"}, {Hostname: "cp-3"},
+	}}}
+
+	got, effect := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Equal(t, []string{"cp-1", "cp-2"}, got.PendingAction.Targets)
+	assert.Contains(t, got.PendingAction.Warning, "below quorum")
+	assert.Nil(t, effect)
+}
+
+func TestRequestActionNoWarningForWorkerOnlyTargets(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "worker-1", Role: domain.NodeRoleWorker},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionShutdown, Targets: []string{"worker-1"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Empty(t, got.PendingAction.Warning)
+}
+
+func TestRequestActionWarnsUnknownQuorumWhenEtcdNotLoaded(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Contains(t, got.PendingAction.Warning, "unknown")
+}
+
+func TestCancelPendingActionClearsWithoutEffect(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.PendingAction = &application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}}
+
+	got, effect := application.Update(model, application.CancelPendingAction{})
+
+	assert.Nil(t, got.PendingAction)
+	assert.Nil(t, effect)
+}
+
+func TestConfirmPendingActionClearsPendingLeavingEffectsToCaller(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.PendingAction = &application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}}
+
+	got, effect := application.Update(model, application.ConfirmPendingAction{})
+
+	assert.Nil(t, got.PendingAction)
+	assert.Nil(t, effect)
+}
+
+func TestSelectContextClearsPendingActionAndResults(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.PendingAction = &application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}}
+	model.ActionResults = []application.ActionResult{{Target: "cp-1"}}
+
+	got, _ := application.Update(model, application.SelectContext{Name: "dev"})
+
+	assert.Nil(t, got.PendingAction)
+	assert.Empty(t, got.ActionResults)
+}
+
+func TestActionSucceededAppendsResultForCurrentGeneration(t *testing.T) {
+	model, _ := application.NewModel("prod")
+
+	got, effect := application.Update(model, application.ActionSucceeded{Generation: model.Generation, Target: "cp-1"})
+
+	require.Len(t, got.ActionResults, 1)
+	assert.Equal(t, "cp-1", got.ActionResults[0].Target)
+	assert.Empty(t, got.ActionResults[0].Err)
+	assert.Nil(t, effect)
+}
+
+func TestActionFailedAppendsErrorResultForCurrentGeneration(t *testing.T) {
+	model, _ := application.NewModel("prod")
+
+	got, _ := application.Update(model, application.ActionFailed{Generation: model.Generation, Target: "cp-1", Err: errors.New("unreachable")})
+
+	require.Len(t, got.ActionResults, 1)
+	assert.Equal(t, "unreachable", got.ActionResults[0].Err)
+}
+
+func TestActionResultIgnoredFromOlderGeneration(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Generation = 2
+
+	got, _ := application.Update(model, application.ActionSucceeded{Generation: 1, Target: "cp-1"})
+
+	assert.Empty(t, got.ActionResults)
+}

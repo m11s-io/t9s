@@ -93,7 +93,7 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
 	}
 }
 
