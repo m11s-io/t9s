@@ -1,0 +1,20 @@
+context: fixture-prod
+contexts:
+  fixture-prod:
+    cluster: fixture-production
+    endpoints:
+      - https://prod.example.invalid:50000
+    nodes:
+      - 192.0.2.10
+    ca: fake-fixture-ca
+    crt: fake-fixture-certificate
+    key: fake-fixture-key
+  fixture-dev:
+    cluster: fixture-development
+    endpoints:
+      - https://dev.example.invalid:50000
+    nodes:
+      - 198.51.100.20
+    ca: fake-fixture-dev-ca
+    crt: fake-fixture-dev-certificate
+    key: fake-fixture-dev-key

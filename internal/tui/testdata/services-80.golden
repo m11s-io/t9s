@@ -1,0 +1,4 @@
+[38;2;0;255;255;48;2;0;0;0m  NODE             SERVICE          STATE      HEALTH LAST EVENT                [m
+[38;2;0;0;0;48;2;0;255;255m  node-alpha       etcd             Running    ✓      member is healthy         [m
+[38;2;0;255;255;48;2;0;0;0m  node-alpha       kubelet          Failed     !      failed to start after a d…[m
+[38;2;0;255;255;48;2;0;0;0m  node-beta        machined         Running    ?      health is not reported    [m

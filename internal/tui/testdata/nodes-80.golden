@@ -1,0 +1,4 @@
+[38;2;0;255;255;48;2;0;0;0m  NAME                      ROLE    STAGE       HEALTH SERVICES K8S     VERSION [m
+[38;2;0;0;0;48;2;0;255;255m  control-plane-node-with-… control running     ✓      7✓ 0! 0? Unknown v1.9.5  [m
+[38;2;0;255;255;48;2;0;0;0m  worker-1                  worker  maintenance !      6✓ 1! 0? Unknown v1.9.4  [m
+[38;2;0;255;255;48;2;0;0;0m  10.0.0.3                  unknown unreachable ?      ?        Unknown -       [m
