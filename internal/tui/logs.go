@@ -11,6 +11,14 @@ import (
 	"github.com/m11s-io/t9s/internal/application"
 )
 
+func sanitizeLogLines(lines []string) []string {
+	result := make([]string, len(lines))
+	for index, line := range lines {
+		result[index] = ansi.Strip(line)
+	}
+	return result
+}
+
 type logsModel struct {
 	state          application.LogState
 	filter         string
@@ -75,17 +83,18 @@ func (m logsModel) update(message tea.KeyPressMsg) logsModel {
 }
 
 func (m logsModel) visibleLines() []string {
+	lines := sanitizeLogLines(m.state.Lines)
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Lines
+		return lines
 	}
-	lines := make([]string, 0, len(m.state.Lines))
-	for _, line := range m.state.Lines {
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if strings.Contains(strings.ToLower(line), query) {
-			lines = append(lines, line)
+			filtered = append(filtered, line)
 		}
 	}
-	return lines
+	return filtered
 }
 
 func (m logsModel) viewSized(size contentSize) string {
@@ -136,14 +145,8 @@ func (m logsModel) renderedLines(width int) []string {
 			result = append(result, ansi.Truncate(line, width, "…"))
 			continue
 		}
-		for line != "" {
-			part := ansi.Truncate(line, width, "")
-			if part == "" {
-				break
-			}
-			result = append(result, part)
-			line = strings.TrimPrefix(line, part)
-		}
+		wrapped := ansi.Hardwrap(line, width, true)
+		result = append(result, strings.Split(wrapped, "\n")...)
 	}
 	return result
 }

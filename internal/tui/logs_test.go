@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
@@ -95,4 +96,31 @@ func TestServiceLogsRenderIsBoundedAndShowsRetainedFailure(t *testing.T) {
 	view := logs.viewSized(contentSize{Width: 20, Height: 3})
 	assert.LessOrEqual(t, len(strings.Split(view, "\n")), 3)
 	assert.Contains(t, view, "log stream")
+}
+
+func TestServiceLogsStripANSIBeforeFilteringAndRendering(t *testing.T) {
+	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+		"\x1b[31mcritical\x1b[0m service failure",
+	}})
+	logs.filter = "critical"
+
+	lines := logs.visibleLines()
+	require.Equal(t, []string{"critical service failure"}, lines)
+	assert.NotContains(t, logs.viewSized(contentSize{Width: 40, Height: 3}), "\x1b[")
+}
+
+func TestServiceLogsHardwrapANSIAndWideTextWithinDisplayWidth(t *testing.T) {
+	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+		"abcde\x1b[31mfghij\x1b[0m界界",
+	}})
+	logs.wrap = true
+
+	rendered := logs.renderedLines(6)
+
+	require.NotEmpty(t, rendered)
+	for _, line := range rendered {
+		assert.LessOrEqual(t, ansi.StringWidth(line), 6)
+		assert.NotContains(t, line, "\x1b[")
+	}
+	assert.Equal(t, "abcdefghij界界", strings.Join(rendered, ""))
 }
