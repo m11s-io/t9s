@@ -34,6 +34,17 @@ archives:
 checksum:
   name_template: "checksums.sha256"
 
+homebrew_casks:
+  - name: t9s
+    repository:
+      owner: m11s-io
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://t9s.m11s.io"
+    description: "A resource-first terminal UI for Talos Linux clusters"
+    binaries:
+      - t9s
+
 changelog:
   sort: asc
   groups:

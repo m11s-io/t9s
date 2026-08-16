@@ -31,7 +31,11 @@ The supported Talos version is **v1.13.3**.
 
 ## Install
 
-Prebuilt binaries for Linux and macOS are available on the
+```bash
+brew install m11s-io/tap/t9s
+```
+
+Prebuilt binaries for Linux and macOS are also available on the
 [GitHub Releases](https://github.com/m11s-io/t9s/releases) page. See
 [Installation](https://t9s.m11s.io/getting-started/installation/) for
 download, checksum verification, and `PATH` setup steps.

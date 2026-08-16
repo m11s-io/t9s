@@ -9,6 +9,14 @@ description: Build and run t9s against a Talos Linux cluster.
 - Access to a Talos v1.13.3 cluster
 - A valid Talos configuration with at least one context
 
+## Homebrew
+
+For macOS or Linux:
+
+```bash
+brew install m11s-io/tap/t9s
+```
+
 ## Download a release
 
 Prebuilt binaries for Linux and macOS (amd64 and arm64) are published on the
