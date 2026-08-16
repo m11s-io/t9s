@@ -76,6 +76,24 @@ func TestSpaceKeyWithWritesDisabledDoesNotMarkRow(t *testing.T) {
 	assert.False(t, rootModel.nodes.isMarked("n1"), "space must be inert on the nodes screen while writes are disabled")
 }
 
+func TestSpaceKeyWithWritesDisabledStillFiltersWhenFilteringActive(t *testing.T) {
+	appModel, _ := application.NewModel("prod")
+	appModel, _ = application.Update(appModel, application.NodesLoaded{
+		Generation: appModel.Generation,
+		Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+			{ID: "n1", Name: "cp-1", Role: domain.NodeRoleControl},
+		}},
+	})
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+	root.nodes = root.nodes.setState(root.application.Nodes)
+	root.nodes = root.nodes.startFilter("cp")
+
+	updated, _ := root.Update(keyPress(' '))
+	rootModel := updated.(model)
+
+	assert.Equal(t, "cp ", rootModel.nodes.filter, "space must still reach the active node filter while writes are disabled")
+}
+
 func TestSpaceKeyWithWritesEnabledStillMarksRow(t *testing.T) {
 	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
 

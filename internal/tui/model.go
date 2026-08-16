@@ -530,7 +530,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
-		if message.Keystroke() == "space" && !m.application.WritesEnabled {
+		if message.Keystroke() == "space" && !m.application.WritesEnabled && !m.nodes.filtering {
 			// Row-marking is a write-action affordance (feeds R/X); keep it
 			// inert while writes are disabled so the nodes screen behaves
 			// exactly as it did before this feature, per spec.
