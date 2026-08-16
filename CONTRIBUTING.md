@@ -72,3 +72,21 @@ context switching never displays old-context nodes, partial failures preserve
 reachable rows, `/` filters without changing the snapshot, and no key or
 command offers mutation or arbitrary execution. This live check is intentionally
 not part of normal CI.
+
+## Release packaging
+
+Release builds are produced by [GoReleaser](https://goreleaser.com/) via
+`.goreleaser.yml`, triggered in CI by pushing a `v*` tag
+(`.github/workflows/release.yml`). To validate changes to `.goreleaser.yml`
+without tagging or publishing anything, install GoReleaser locally and run a
+snapshot build:
+
+```bash
+go install github.com/goreleaser/goreleaser/v2@latest
+goreleaser release --snapshot --clean
+```
+
+This builds all configured platform/architecture targets, archives, and
+checksums the same way a real release does, skipping the GitHub Release
+publish step. Inspect the `dist/` directory it produces (gitignored) to
+confirm the output.

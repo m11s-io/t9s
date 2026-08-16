@@ -23,10 +23,18 @@ Kubernetes context matches the active Talos context, and the k9s Node-view
 launcher (`--kube-context`/`--node`, see [k9s integration](#k9s-integration)
 below).
 
-Not yet implemented: cross-platform release binaries, checksums, signed
-artifacts, and installation documentation.
+Cross-platform release binaries, checksums, and installation documentation
+are available — see [Install](#install) below. Signed artifacts are not yet
+implemented.
 
 The supported Talos version is **v1.13.3**.
+
+## Install
+
+Prebuilt binaries for Linux and macOS are available on the
+[GitHub Releases](https://github.com/m11s-io/t9s/releases) page. See
+[Installation](https://t9s.m11s.io/getting-started/installation/) for
+download, checksum verification, and `PATH` setup steps.
 
 ## Build, test, and run
 
