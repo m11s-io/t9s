@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -40,6 +41,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 	var contextOverride string
 	var node string
 	var kubeContext string
+	var enableWrites bool
 	started := false
 
 	command := &cobra.Command{
@@ -70,6 +72,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 			applicationModel, _ := application.NewModel(contextOverride)
 			applicationModel.NodeFocus = node
 			applicationModel.OpenContextPicker = openPicker
+			applicationModel.WritesEnabled = enableWrites || os.Getenv("T9S_ENABLE_WRITES") != ""
 			runner := application.NewRunner(application.Dependencies{
 				ContextCatalog:     catalog,
 				SessionFactory:     talos.NewSessionFactory(talosconfigs...),
@@ -92,6 +95,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 	command.Flags().StringVar(&contextOverride, "context", "", "Talos context override")
 	command.Flags().StringVar(&node, "node", "", "initial node focus hint")
 	command.Flags().StringVar(&kubeContext, "kube-context", "", "Kubernetes context hint for k9s-launcher association")
+	command.Flags().BoolVar(&enableWrites, "enable-writes", false, "enable node lifecycle actions (reboot, shutdown); read-only by default")
 	command.SetArgs(args)
 	command.SetIn(input)
 	command.SetOut(output)

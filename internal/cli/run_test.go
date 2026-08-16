@@ -123,6 +123,25 @@ func (r *signalReader) Read(destination []byte) (int, error) {
 	}
 }
 
+func TestRunAcceptsEnableWritesFlag(t *testing.T) {
+	const failure = "load talosconfig"
+	stdout := newSignalWriter(failure)
+	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	exitCode := cli.Run(ctx, []string{
+		"--enable-writes",
+		"--talosconfig", "/path/that/does/not/exist/talosconfig",
+		"--context", "prod",
+	}, stdin, stdout, &stderr)
+
+	require.NoError(t, ctx.Err())
+	assert.Equal(t, 0, exitCode)
+	assert.NotContains(t, stderr.String(), "unknown flag")
+}
+
 func TestRunVersionFlagPrintsVersionString(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
