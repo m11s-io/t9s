@@ -55,7 +55,7 @@ func renderMetadata(metadata shellMetadata, width int, skin k9sSkin) []string {
 		{"Context:", strings.TrimSpace(metadata.Context + " " + metadata.Mode)},
 		{"Cluster:", metadata.Cluster},
 		{"Nodes:", metadata.NodeSummary},
-		{"T9s Rev:", ""},
+		{"T9s Rev:", metadata.AppVersion},
 		{"Talos Rev:", metadata.TalosVersion},
 		{"Health:", metadata.Health},
 		{"Endpoints:", metadata.EndpointSummary},

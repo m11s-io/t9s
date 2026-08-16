@@ -24,14 +24,14 @@ func TestDeriveShellMetadataUsesActiveContextAndNodeSnapshot(t *testing.T) {
 
 	assert.Equal(t, shellMetadata{
 		Context: "prod", Cluster: "production", EndpointSummary: "2", NodeSummary: "2/3",
-		TalosVersion: "mixed", Health: "Degraded", Mode: "[RO]",
+		TalosVersion: "mixed", Health: "Degraded", Mode: "[RO]", AppVersion: "dev",
 	}, deriveShellMetadata(model))
 }
 
 func TestDeriveShellMetadataDoesNotInventUnavailableValues(t *testing.T) {
 	model := application.Model{ContextName: "prod", Nodes: application.NodeState{Status: application.Loading}}
 
-	assert.Equal(t, shellMetadata{Context: "prod", Health: "Loading", Mode: "[RO]"}, deriveShellMetadata(model))
+	assert.Equal(t, shellMetadata{Context: "prod", Health: "Loading", Mode: "[RO]", AppVersion: "dev"}, deriveShellMetadata(model))
 }
 
 func TestDeriveShellMetadataReportsUniformTalosVersion(t *testing.T) {

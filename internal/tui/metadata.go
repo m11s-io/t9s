@@ -5,6 +5,7 @@ import (
 
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/version"
 )
 
 type shellMetadata struct {
@@ -15,10 +16,11 @@ type shellMetadata struct {
 	TalosVersion    string
 	Health          string
 	Mode            string
+	AppVersion      string
 }
 
 func deriveShellMetadata(model application.Model) shellMetadata {
-	metadata := shellMetadata{Context: model.ContextName, Mode: "[RO]"}
+	metadata := shellMetadata{Context: model.ContextName, Mode: "[RO]", AppVersion: version.Version}
 	for _, clusterContext := range model.Contexts {
 		if clusterContext.Name != model.ContextName {
 			continue

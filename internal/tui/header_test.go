@@ -26,6 +26,16 @@ func TestK9sHeaderUsesSevenRowsAndRightAlignedLogo(t *testing.T) {
 	assert.Equal(t, 26, ansi.StringWidth(strings.Split(renderT9SLogo(defaultK9sSkin()), "\n")[0]))
 }
 
+func TestK9sHeaderShowsAppVersionInMetadataRow(t *testing.T) {
+	header := renderK9sHeader(layoutK9sHeader(160), shellMetadata{
+		Context: "mgmt", Health: "Healthy", Mode: "[RO]", AppVersion: "1.2.3",
+	}, actionHints(viewServices), defaultK9sSkin())
+
+	lines := strings.Split(header, "\n")
+	assert.Contains(t, lines[3], "T9s Rev:")
+	assert.Contains(t, lines[3], "1.2.3")
+}
+
 func TestK9sHeaderHidesLogoBeforeActionsOnNarrowScreens(t *testing.T) {
 	header := renderK9sHeader(layoutK9sHeader(80), shellMetadata{Context: "test", Health: "Healthy", Mode: "[RO]"}, actionHints(viewServices), defaultK9sSkin())
 
