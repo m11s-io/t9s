@@ -1,0 +1,55 @@
+# .goreleaser.yml
+version: 2
+
+project_name: t9s
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: t9s
+    main: ./cmd/t9s
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/m11s-io/t9s/internal/version.Version={{.Version}}
+      - -s -w -X github.com/m11s-io/t9s/internal/version.Commit={{.Commit}}
+      - -s -w -X github.com/m11s-io/t9s/internal/version.Date={{.Date}}
+
+archives:
+  - name_template: "t9s_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+
+checksum:
+  name_template: "checksums.sha256"
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix:'
+      order: 1
+    - title: Documentation
+      regexp: '^docs:'
+      order: 2
+    - title: Chores
+      regexp: '^chore:'
+      order: 3
+    - title: Other
+      order: 999
+
+release:
+  prerelease: false
