@@ -1253,6 +1253,7 @@ func withKubernetesReader(model application.Model, reader ports.KubernetesNodeRe
 
 func TestRequestActionComputesControlPlaneQuorumWarning(t *testing.T) {
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{Name: "cp-1", Role: domain.NodeRoleControl},
 		{Name: "cp-2", Role: domain.NodeRoleControl},
@@ -1270,8 +1271,33 @@ func TestRequestActionComputesControlPlaneQuorumWarning(t *testing.T) {
 	assert.Nil(t, effect)
 }
 
+func TestRequestActionCountsAlreadyUnhealthyEtcdMembersTowardQuorumLoss(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	// cp-1 is already unhealthy (status unknown) before any action is
+	// requested; rebooting the additional, currently-healthy cp-2 should
+	// still be flagged as dropping etcd below quorum (1 remaining of 3, need
+	// 2), not silently degrade to the bare control-plane message.
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: false},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-2"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Contains(t, got.PendingAction.Warning, "below quorum")
+}
+
 func TestRequestActionNoWarningForWorkerOnlyTargets(t *testing.T) {
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{Name: "worker-1", Role: domain.NodeRoleWorker},
 	}}}
@@ -1284,6 +1310,7 @@ func TestRequestActionNoWarningForWorkerOnlyTargets(t *testing.T) {
 
 func TestRequestActionWarnsUnknownQuorumWhenEtcdNotLoaded(t *testing.T) {
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{Name: "cp-1", Role: domain.NodeRoleControl},
 	}}}
@@ -1292,6 +1319,19 @@ func TestRequestActionWarnsUnknownQuorumWhenEtcdNotLoaded(t *testing.T) {
 
 	require.NotNil(t, got.PendingAction)
 	assert.Contains(t, got.PendingAction.Warning, "unknown")
+}
+
+func TestRequestActionIsInertWhenWritesDisabled(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = false
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+	}}}
+
+	got, effect := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+
+	assert.Nil(t, got.PendingAction, "RequestAction must be inert at the reducer level when WritesEnabled is false, regardless of what the TUI layer sent")
+	assert.Nil(t, effect)
 }
 
 func TestCancelPendingActionClearsWithoutEffect(t *testing.T) {
@@ -1311,6 +1351,17 @@ func TestConfirmPendingActionClearsPendingLeavingEffectsToCaller(t *testing.T) {
 	got, effect := application.Update(model, application.ConfirmPendingAction{})
 
 	assert.Nil(t, got.PendingAction)
+	assert.Nil(t, effect)
+}
+
+func TestConfirmPendingActionSetsActionTotalFromTargetCount(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.PendingAction = &application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2", "worker-1"}}
+
+	got, effect := application.Update(model, application.ConfirmPendingAction{})
+
+	assert.Nil(t, got.PendingAction)
+	assert.Equal(t, 3, got.ActionTotal)
 	assert.Nil(t, effect)
 }
 

@@ -54,6 +54,12 @@ type Model struct {
 	Logs                   LogState
 	PendingAction          *PendingAction
 	ActionResults          []ActionResult
+	// ActionTotal is the number of targets the currently-in-flight bulk
+	// action was confirmed against. ActionResults grows one entry at a time
+	// as ActionSucceeded/ActionFailed messages stream back independently, so
+	// len(ActionResults) alone cannot be used as a "total" denominator while
+	// results are still outstanding.
+	ActionTotal int
 }
 
 type NodeState struct {

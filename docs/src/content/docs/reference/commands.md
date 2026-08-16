@@ -28,5 +28,10 @@ These open from a selected row in `:nodes` rather than through the command palet
 | `p` | Open processes. See [Processes, disks, and network](/guides/processes-disks-network/). |
 | `k` | Open disks. |
 | `n` | Open network interfaces, addresses, and routes. |
+| `space` | Mark/unmark the selected node for a bulk action. Requires `--enable-writes`. |
+| `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
+| `X` | Shut down the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
 
 Each of these views supports `r` to refresh and `Esc`/`q` to return to `:nodes`.
+
+`space`, `R`, and `X` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).

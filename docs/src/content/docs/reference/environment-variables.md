@@ -22,3 +22,13 @@ export TALOSCONFIGS="$HOME/.talos/mgmt:$HOME/.talos/stage:$HOME/.talos/test"
 ```
 
 Use `:` as the separator on Unix and `;` on Windows. Repeated `--talosconfig` flags provide the equivalent explicit form. Duplicate context names are rejected.
+
+## `T9S_ENABLE_WRITES`
+
+Enables gated node reboot and shutdown from `:nodes` (equivalent to passing `--enable-writes`). Read-only by default:
+
+```bash
+export T9S_ENABLE_WRITES=true
+```
+
+Parsed as a standard boolean string (`1`, `t`, `T`, `TRUE`, `true`, `True` enable; `0`, `f`, `F`, `FALSE`, `false`, `False` and any unset or unparseable value leave writes disabled). See [Security](/security/) for what the write path allows.

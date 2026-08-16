@@ -3,7 +3,10 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
@@ -52,8 +55,97 @@ func TestRebootKeyWithWritesEnabledOpensConfirmPrompt(t *testing.T) {
 
 	require.NotNil(t, rootModel.application.PendingAction)
 	assert.Equal(t, application.ActionReboot, rootModel.application.PendingAction.Kind)
-	assert.Contains(t, rootModel.activePrompt(), "cp-1")
+	assert.Contains(t, rootModel.application.PendingAction.Targets, "cp-1")
 	assert.Contains(t, rootModel.activePrompt(), "(y/n)")
+}
+
+func TestSpaceKeyWithWritesDisabledDoesNotMarkRow(t *testing.T) {
+	appModel, _ := application.NewModel("prod")
+	appModel, _ = application.Update(appModel, application.NodesLoaded{
+		Generation: appModel.Generation,
+		Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+			{ID: "n1", Name: "cp-1", Role: domain.NodeRoleControl},
+		}},
+	})
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+	root.nodes = root.nodes.setState(root.application.Nodes)
+
+	updated, _ := root.Update(keyPress(' '))
+	rootModel := updated.(model)
+
+	assert.False(t, rootModel.nodes.isMarked("n1"), "space must be inert on the nodes screen while writes are disabled")
+}
+
+func TestSpaceKeyWithWritesEnabledStillMarksRow(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+
+	updated, _ := root.Update(keyPress(' '))
+	rootModel := updated.(model)
+
+	assert.True(t, rootModel.nodes.isMarked("n1"), "space must still mark rows once writes are enabled")
+}
+
+func TestMarksClearOnContextSwitch(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+	updated, _ := root.Update(keyPress(' '))
+	rootModel := updated.(model)
+	require.True(t, rootModel.nodes.isMarked("n1"))
+
+	updated, _ = rootModel.Update(applicationMessage{message: application.SelectContext{Name: "dev"}})
+	rootModel = updated.(model)
+
+	assert.False(t, rootModel.nodes.isMarked("n1"), "a mark must not survive a context switch and risk cross-cluster mistargeting")
+}
+
+func TestMarksClearAfterConfirmedAction(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
+		RebootFunc: func(_ context.Context, _ string, _ ports.RebootMode) error { return nil },
+	})
+	updated, _ := root.Update(keyPress(' '))
+	rootModel := updated.(model)
+	require.NotEmpty(t, rootModel.nodes.marked)
+
+	updated, _ = rootModel.Update(keyPress('R'))
+	rootModel = updated.(model)
+	require.NotNil(t, rootModel.application.PendingAction)
+
+	updated, _ = rootModel.Update(keyPress('y'))
+	rootModel = updated.(model)
+
+	assert.Empty(t, rootModel.nodes.marked, "marks must be cleared once a confirmed action has fired so a second R/X doesn't re-target already-actioned nodes")
+}
+
+func TestRenderPendingActionPromptSurvivesTruncationWithLongTargetsAndWarning(t *testing.T) {
+	targets := make([]string, 0, 12)
+	for i := 0; i < 12; i++ {
+		targets = append(targets, fmt.Sprintf("control-plane-node-with-a-long-hostname-%02d", i))
+	}
+	pending := application.PendingAction{
+		Kind:    application.ActionShutdown, // longest verb
+		Targets: targets,
+		// The actual longest warning computeActionWarning produces (the
+		// etcd quorum-loss message).
+		Warning: "control-plane node(s); would drop etcd to 1/3 — below quorum (need 2)",
+	}
+
+	prompt := renderPendingActionPrompt(pending)
+	require.LessOrEqual(t, len(prompt), 80, "the prompt itself must fit an 80-column terminal without relying on footer truncation")
+	truncated := fitK9sCell(prompt, 80)
+
+	assert.Contains(t, truncated, "(y/n)")
+	assert.Contains(t, truncated, "below quorum")
+}
+
+func TestRenderPendingActionPromptShortWarningIsUnaffected(t *testing.T) {
+	pending := application.PendingAction{
+		Kind:    application.ActionReboot,
+		Targets: []string{"worker-1"},
+		Warning: "control-plane node(s)",
+	}
+
+	prompt := renderPendingActionPrompt(pending)
+
+	assert.Equal(t, "!! control-plane node(s) — Reboot 1 node(s)? (y/n)", prompt)
 }
 
 func TestNonYKeyCancelsPendingAction(t *testing.T) {
@@ -102,4 +194,51 @@ func TestConfirmingRebootReportsFailureWithTargetAndError(t *testing.T) {
 
 	assert.Contains(t, rootModel.notice, "cp-1")
 	assert.Contains(t, rootModel.notice, "connection refused")
+}
+
+func TestActionResultsFooterDenominatorIsConfirmedTargetCountNotResultsSoFar(t *testing.T) {
+	controller := &testkit.FakeNodeController{
+		RebootFunc: func(_ context.Context, _ string, _ ports.RebootMode) error { return nil },
+	}
+	appModel, _ := application.NewModel("prod")
+	appModel.WritesEnabled = true
+	appModel, _ = application.Update(appModel, application.NodesLoaded{
+		Generation: appModel.Generation,
+		Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+			{ID: "n1", Name: "cp-1", Role: domain.NodeRoleControl},
+			{ID: "n2", Name: "cp-2", Role: domain.NodeRoleControl},
+			{ID: "n3", Name: "cp-3", Role: domain.NodeRoleControl},
+		}},
+	})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, NodeController: controller})
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+	root.nodes = root.nodes.setState(root.application.Nodes)
+	root.nodes = root.nodes.update(keyPress(' '))
+	root.nodes = root.nodes.moveSelection(1)
+	root.nodes = root.nodes.update(keyPress(' '))
+	root.nodes = root.nodes.moveSelection(1)
+	root.nodes = root.nodes.update(keyPress(' '))
+
+	updated, _ := root.Update(keyPress('R'))
+	rootModel := updated.(model)
+	require.NotNil(t, rootModel.application.PendingAction)
+	require.Len(t, rootModel.application.PendingAction.Targets, 3)
+
+	updated, cmd := rootModel.Update(keyPress('y'))
+	rootModel = updated.(model)
+	require.NotNil(t, cmd)
+
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok, "confirming a 3-target bulk action must batch 3 independent effects")
+	require.Len(t, batch, 3)
+
+	// Only the first of three results has arrived; the footer must still
+	// report against the full confirmed target count (3), not len(results)
+	// (which would misleadingly read "1/1 succeeded" as if fully complete).
+	firstResult := batch[0]()
+	updated, _ = rootModel.Update(firstResult)
+	rootModel = updated.(model)
+
+	assert.Contains(t, rootModel.notice, "1/3 succeeded")
+	assert.NotContains(t, rootModel.notice, "1/1 succeeded")
 }

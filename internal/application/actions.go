@@ -25,22 +25,36 @@ func computeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets [
 		return ""
 	}
 	if etcd.Status != Ready && etcd.Status != Partial {
-		return "control-plane node(s); etcd quorum impact unknown (etcd data not loaded)"
+		return "control-plane node(s); etcd quorum impact unknown (etcd data unavailable)"
 	}
 	total := len(etcd.Value.Members)
 	if total == 0 {
 		return "control-plane node(s); etcd membership unknown"
 	}
 	atRisk := 0
+	alreadyUnhealthy := 0
 	for _, member := range etcd.Value.Members {
+		isTarget := false
 		for _, target := range targets {
 			if member.Hostname == target {
-				atRisk++
+				isTarget = true
 				break
 			}
 		}
+		if isTarget {
+			atRisk++
+			continue // don't also count this member as already-unhealthy below
+		}
+		// Same predicate as evaluateEtcdMemberUnhealthy (health.go): a
+		// member already missing from quorum must reduce the "remaining"
+		// count the same way an about-to-be-rebooted member does, or a
+		// cluster with a pre-existing unhealthy member under-warns on the
+		// action that would actually drop it below quorum.
+		if !member.StatusKnown || len(member.Errors) > 0 {
+			alreadyUnhealthy++
+		}
 	}
-	remaining := total - atRisk
+	remaining := total - atRisk - alreadyUnhealthy
 	quorumFloor := total/2 + 1
 	if remaining < quorumFloor {
 		return fmt.Sprintf("control-plane node(s); would drop etcd to %d/%d — below quorum (need %d)", remaining, total, quorumFloor)

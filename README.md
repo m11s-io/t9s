@@ -21,7 +21,10 @@ interfaces (press `n`), a generic read-only Talos resource browser
 `:problems`, optional Kubernetes Node correlation on `:nodes` when a
 Kubernetes context matches the active Talos context, and the k9s Node-view
 launcher (`--kube-context`/`--node`, see [k9s integration](#k9s-integration)
-below).
+below). Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
+additionally enables gated node reboot and shutdown from `:nodes`
+(`space` to mark, `R`/`X` to act, each behind a confirm prompt) — see
+[Security](#security) below; the UI remains read-only by default.
 
 Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet

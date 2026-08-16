@@ -53,6 +53,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Notice = ""
 		model.PendingAction = nil
 		model.ActionResults = nil
+		model.ActionTotal = 0
 		return model, openSession(message.Name, model.Generation)
 
 	case SessionOpened:
@@ -263,7 +264,10 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, loadNetwork(model.networkReader, model.Network.Node, model.Generation)
 
 	case RequestAction:
-		if len(message.Targets) == 0 {
+		// Defense in depth: the TUI already refuses to send RequestAction
+		// while writes are disabled, but the reducer must not trust that —
+		// it is the last line of defense against a cluster-mutating action.
+		if !model.WritesEnabled || len(message.Targets) == 0 {
 			return model, nil
 		}
 		model.PendingAction = &PendingAction{
@@ -272,6 +276,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			Warning: computeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets),
 		}
 		model.ActionResults = nil
+		model.ActionTotal = 0
 		return model, nil
 
 	case CancelPendingAction:
@@ -279,6 +284,9 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case ConfirmPendingAction:
+		if model.PendingAction != nil {
+			model.ActionTotal = len(model.PendingAction.Targets)
+		}
 		model.PendingAction = nil
 		return model, nil
 

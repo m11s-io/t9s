@@ -142,6 +142,66 @@ func TestRunAcceptsEnableWritesFlag(t *testing.T) {
 	assert.NotContains(t, stderr.String(), "unknown flag")
 }
 
+func TestRunEnableWritesFlagRendersRWBadge(t *testing.T) {
+	const needle = "[RW]"
+	stdout := newSignalWriter(needle)
+	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	exitCode := cli.Run(ctx, []string{
+		"--enable-writes",
+		"--talosconfig", "/path/that/does/not/exist/talosconfig",
+		"--context", "prod",
+	}, stdin, stdout, &stderr)
+
+	require.NoError(t, ctx.Err())
+	assert.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout.String(), needle, "--enable-writes must flip the header badge to [RW]")
+}
+
+func TestRunEnableWritesEnvTrueRendersRWBadge(t *testing.T) {
+	const needle = "[RW]"
+	stdout := newSignalWriter(needle)
+	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	t.Setenv("T9S_ENABLE_WRITES", "true")
+
+	exitCode := cli.Run(ctx, []string{
+		"--talosconfig", "/path/that/does/not/exist/talosconfig",
+		"--context", "prod",
+	}, stdin, stdout, &stderr)
+
+	require.NoError(t, ctx.Err())
+	assert.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout.String(), needle, "T9S_ENABLE_WRITES=true must flip the header badge to [RW]")
+}
+
+func TestRunEnableWritesEnvFalseStringDoesNotEnableWrites(t *testing.T) {
+	const needle = "[RO]"
+	stdout := newSignalWriter(needle)
+	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// This is the regression case: T9S_ENABLE_WRITES="false" is a non-empty
+	// string. A gate that only checked "!= \"\"" would wrongly enable writes.
+	t.Setenv("T9S_ENABLE_WRITES", "false")
+
+	exitCode := cli.Run(ctx, []string{
+		"--talosconfig", "/path/that/does/not/exist/talosconfig",
+		"--context", "prod",
+	}, stdin, stdout, &stderr)
+
+	require.NoError(t, ctx.Err())
+	assert.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout.String(), needle)
+	assert.NotContains(t, stdout.String(), "[RW]")
+}
+
 func TestRunVersionFlagPrintsVersionString(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

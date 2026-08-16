@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -72,7 +73,14 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 			applicationModel, _ := application.NewModel(contextOverride)
 			applicationModel.NodeFocus = node
 			applicationModel.OpenContextPicker = openPicker
-			applicationModel.WritesEnabled = enableWrites || os.Getenv("T9S_ENABLE_WRITES") != ""
+			// T9S_ENABLE_WRITES is parsed as a standard Go bool string
+			// (accepts 1, t, T, TRUE, true, True and their false
+			// counterparts per strconv.ParseBool); unset, empty, or any
+			// unparseable value is treated as disabled — a safety gate must
+			// fail closed, not turn on for an arbitrary non-empty string
+			// like "false" or "0".
+			envEnabled, _ := strconv.ParseBool(os.Getenv("T9S_ENABLE_WRITES"))
+			applicationModel.WritesEnabled = enableWrites || envEnabled
 			runner := application.NewRunner(application.Dependencies{
 				ContextCatalog:     catalog,
 				SessionFactory:     talos.NewSessionFactory(talosconfigs...),

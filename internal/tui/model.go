@@ -148,6 +148,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				effects := application.BuildActionEffects(m.application, pending)
 				var confirmEffect application.Effect
 				m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
+				// A confirmed action has fired for the currently marked rows;
+				// clear marks so a subsequent R/X doesn't silently re-target
+				// already-actioned nodes.
+				m.nodes.marked = nil
 				cmds := make([]tea.Cmd, 0, len(effects)+1)
 				if cmd := m.command(confirmEffect); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -526,6 +530,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if message.Keystroke() == "space" && !m.application.WritesEnabled {
+			// Row-marking is a write-action affordance (feeds R/X); keep it
+			// inert while writes are disabled so the nodes screen behaves
+			// exactly as it did before this feature, per spec.
+			return m, nil
+		}
 		m.nodes = m.nodes.update(message)
 		return m, nil
 	case shutdownMessage:
@@ -536,6 +546,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case applicationMessage:
 		if message.message == nil {
 			return m, nil
+		}
+		if _, ok := message.message.(application.SelectContext); ok {
+			// A different Talos context may reuse the same node IDs/hostnames
+			// (e.g. cp-1 across clusters); never let a mark carry across a
+			// context switch and silently mistarget the new cluster.
+			m.nodes.marked = nil
 		}
 		var effect application.Effect
 		m.application, effect = application.Update(m.application, message.message)
@@ -566,7 +582,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.logs = m.logs.setState(m.application.Logs)
 		if len(m.application.ActionResults) > 0 {
-			m.notice = renderActionResults(m.application.ActionResults)
+			m.notice = renderActionResults(m.application.ActionResults, m.application.ActionTotal)
 		} else {
 			m.notice = ""
 		}

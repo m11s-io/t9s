@@ -5,18 +5,18 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/m11s-io/t9s/internal/ports"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
-	"github.com/m11s-io/t9s/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeNodeControlClient struct {
-	rebootReq    machineapi.RebootRequest
-	rebootErr    error
-	shutdownReq  machineapi.ShutdownRequest
-	shutdownErr  error
+	rebootReq   machineapi.RebootRequest
+	rebootErr   error
+	shutdownReq machineapi.ShutdownRequest
+	shutdownErr error
 }
 
 func (c *fakeNodeControlClient) Reboot(ctx context.Context, opts ...talosclient.RebootMode) error {
