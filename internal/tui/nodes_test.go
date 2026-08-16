@@ -314,11 +314,19 @@ func keyPress(value rune) tea.KeyPressMsg {
 // shiftKeyPress models a Shift+<letter> keypress as reported by terminals
 // using the Kitty keyboard protocol (e.g. Ghostty): the base lowercase key
 // plus a separate Shift modifier, rather than the single uppercase rune
-// keyPress produces. Keystroke() for this shape is "shift+<lower>", not
-// the bare uppercase letter — so it exercises a real, previously-unhandled
-// input path that keyPress(upper) never did.
+// keyPress produces. It is the realistic Kitty-protocol fixture used by
+// uppercase-binding tests.
 func shiftKeyPress(upper rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: unicode.ToLower(upper), Text: string(upper), Mod: tea.ModShift}
+}
+
+func TestKeyStringCanonicalizesLegacyAndKittyUppercase(t *testing.T) {
+	legacy := keyPress('G')
+	kitty := shiftKeyPress('G')
+
+	assert.Equal(t, "G", legacy.String())
+	assert.Equal(t, "G", kitty.String())
+	assert.Equal(t, "shift+g", kitty.Keystroke(), "the fixture must exercise the Kitty modifier encoding")
 }
 
 func TestNodesGotoBottomHandlesKittyShiftEncoding(t *testing.T) {

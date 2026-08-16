@@ -139,11 +139,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// Like k9s, any deliberate input skips the transient splash and is still
 		// handled by the active view.
 		m.splash = false
-		if message.Keystroke() == "ctrl+c" {
+		key := message.String()
+		if key == "ctrl+c" {
 			return m, m.shutdown()
 		}
 		if m.application.PendingAction != nil {
-			if message.Keystroke() == "y" {
+			if key == "y" {
 				pending := *m.application.PendingAction
 				effects := application.BuildActionEffects(m.application, pending)
 				var confirmEffect application.Effect
@@ -165,7 +166,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
 			return m, m.command(effect)
 		}
-		if message.Keystroke() == "esc" && !m.contexts.active && !m.palette.active && !m.filtering() {
+		if key == "esc" && !m.contexts.active && !m.palette.active && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			if views, ok := m.views.pop(); ok {
 				m.views = views
@@ -184,7 +185,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		}
 		if m.palette.active {
-			switch message.Keystroke() {
+			switch key {
 			case "esc":
 				m.palette = m.palette.close()
 				return m, nil
@@ -249,7 +250,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		switch message.Keystroke() {
+		switch key {
 		case ":":
 			if !m.filtering() {
 				m.notice = ""
@@ -347,7 +348,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewServices {
-			if message.Keystroke() == "l" && !m.services.filtering {
+			if key == "l" && !m.services.filtering {
 				if service, ok := m.services.selected(); ok {
 					label := fallback(service.Name) + "@" + fallback(service.Node)
 					m.views = m.views.push(viewFrame{Kind: viewServiceLogs, Label: label + " > logs"})
@@ -357,7 +358,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.command(effect)
 				}
 			}
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.services.filtering {
+			if (key == "enter" || key == "d") && !m.services.filtering {
 				if _, ok := m.services.selected(); ok {
 					service := m.services.selectedValue()
 					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: fallback(service.Name) + "@" + fallback(service.Node)})
@@ -376,7 +377,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewProcesses {
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.processes.filtering {
+			if (key == "enter" || key == "d") && !m.processes.filtering {
 				if _, ok := m.processes.selected(); ok {
 					process := m.processes.selectedValue()
 					m.views = m.views.push(viewFrame{Kind: viewProcessDetail, Label: fmt.Sprintf("pid %d", process.PID)})
@@ -387,7 +388,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewDisks {
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.disks.filtering {
+			if (key == "enter" || key == "d") && !m.disks.filtering {
 				if _, ok := m.disks.selected(); ok {
 					disk := m.disks.selectedValue()
 					m.views = m.views.push(viewFrame{Kind: viewDiskDetail, Label: fmt.Sprintf("disk %s", disk.DeviceName)})
@@ -398,7 +399,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewNetwork {
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.network.filtering {
+			if (key == "enter" || key == "d") && !m.network.filtering {
 				if _, ok := m.network.selected(); ok {
 					link := m.network.selectedValue()
 					m.views = m.views.push(viewFrame{Kind: viewLinkDetail, Label: fmt.Sprintf("link %s", link.Name)})
@@ -409,7 +410,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewProblems {
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.problems.filtering {
+			if (key == "enter" || key == "d") && !m.problems.filtering {
 				if diagnosis, ok := m.problems.selected(); ok {
 					switch diagnosis.ResourceKind {
 					case "node":
@@ -431,13 +432,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewResourceKinds {
-			if !m.filtering() && message.Keystroke() == "r" {
+			if !m.filtering() && key == "r" {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenResourceBrowser{})
 				m.resourceKinds = m.resourceKinds.setState(m.application.ResourceBrowser)
 				return m, m.command(effect)
 			}
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.resourceKinds.filtering {
+			if (key == "enter" || key == "d") && !m.resourceKinds.filtering {
 				if kind, ok := m.resourceKinds.selected(); ok {
 					m.views = m.views.push(viewFrame{Kind: viewResourceInstances, Label: kind.DisplayType})
 					var effect application.Effect
@@ -450,13 +451,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewResourceInstances {
-			if !m.filtering() && message.Keystroke() == "r" {
+			if !m.filtering() && key == "r" {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.SelectResourceKind{Kind: m.application.ResourceBrowser.SelectedKind, Node: m.application.ResourceBrowser.SelectedNode})
 				m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
 				return m, m.command(effect)
 			}
-			if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.resourceInstances.filtering {
+			if (key == "enter" || key == "d") && !m.resourceInstances.filtering {
 				if instance, ok := m.resourceInstances.selected(); ok {
 					m.views = m.views.push(viewFrame{Kind: viewResourceDetail, Label: instance.ID})
 					m.resourceDetail = newResourceDetailModel()
@@ -469,7 +470,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewResourceDetail {
-			if message.Keystroke() == "r" {
+			if key == "r" {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenResourceInstance{ID: m.application.ResourceBrowser.Detail.ID})
 				return m, m.command(effect)
@@ -480,13 +481,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.views.top().Kind == viewServiceDetail || m.views.top().Kind == viewHelp || m.views.top().Kind == viewProcessDetail || m.views.top().Kind == viewDiskDetail || m.views.top().Kind == viewLinkDetail || m.views.top().Kind == viewOverview {
 			return m, nil
 		}
-		if (message.Keystroke() == "enter" || message.Keystroke() == "d") && !m.nodes.filtering {
+		if (key == "enter" || key == "d") && !m.nodes.filtering {
 			if _, ok := m.nodes.selected(); ok {
 				m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue().DisplayName())})
 				return m, nil
 			}
 		}
-		if message.Keystroke() == "p" && !m.nodes.filtering {
+		if key == "p" && !m.nodes.filtering {
 			if _, ok := m.nodes.selected(); ok {
 				node := m.nodes.selectedValue()
 				m.views = m.views.push(viewFrame{Kind: viewProcesses, Label: fallback(node.DisplayName()) + " > processes"})
@@ -496,7 +497,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
-		if message.Keystroke() == "k" && !m.nodes.filtering {
+		if key == "k" && !m.nodes.filtering {
 			if _, ok := m.nodes.selected(); ok {
 				node := m.nodes.selectedValue()
 				m.views = m.views.push(viewFrame{Kind: viewDisks, Label: fallback(node.DisplayName()) + " > disks"})
@@ -506,7 +507,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
-		if message.Keystroke() == "n" && !m.nodes.filtering {
+		if key == "n" && !m.nodes.filtering {
 			if _, ok := m.nodes.selected(); ok {
 				node := m.nodes.selectedValue()
 				m.views = m.views.push(viewFrame{Kind: viewNetwork, Label: fallback(node.DisplayName()) + " > network"})
@@ -516,27 +517,21 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
-		// Terminals using the Kitty keyboard protocol (e.g. Ghostty) report
-		// Shift+<letter> as the base lowercase key plus a separate Shift
-		// modifier, so Keystroke() yields "shift+r"/"shift+x" instead of
-		// "R"/"X". message.Text is always correctly-cased regardless of
-		// protocol; this dual check matches the existing pattern at
-		// logs.go's "C" (clear) binding.
-		if (message.Text == "R" || message.Keystroke() == "shift+r") && m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "R" && m.application.WritesEnabled && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionReboot, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
-		if (message.Text == "X" || message.Keystroke() == "shift+x") && m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "X" && m.application.WritesEnabled && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionShutdown, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
-		if message.Keystroke() == "space" && !m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "space" && !m.application.WritesEnabled && !m.nodes.filtering {
 			// Row-marking is a write-action affordance (feeds R/X); keep it
 			// inert while writes are disabled so the nodes screen behaves
 			// exactly as it did before this feature, per spec.

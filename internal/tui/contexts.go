@@ -41,7 +41,7 @@ func newContextsModel(values []domain.ClusterContext, current string) contextsMo
 }
 
 func (m contextsModel) update(message tea.KeyPressMsg, current string) (contextsModel, tea.Cmd) {
-	switch message.Keystroke() {
+	switch message.String() {
 	case "esc":
 		m.active = false
 	case "up", "k":

@@ -37,15 +37,7 @@ func (m etcdModel) startFilter(value string) etcdModel {
 }
 
 func (m etcdModel) update(message tea.KeyPressMsg) etcdModel {
-	key := message.Keystroke()
-	// Terminals using the Kitty keyboard protocol (e.g. Ghostty) report
-	// Shift+g as the base lowercase key plus a separate Shift modifier, so
-	// Keystroke() yields "shift+g" instead of "G". message.Text is always
-	// correctly-cased regardless of protocol; normalize once here so the
-	// "G" case below matches under both encodings.
-	if key == "shift+g" || message.Text == "G" {
-		key = "G"
-	}
+	key := message.String()
 	if m.filtering {
 		switch key {
 		case "esc":
