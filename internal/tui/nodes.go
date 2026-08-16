@@ -17,6 +17,7 @@ type nodesModel struct {
 	filter     string
 	filtering  bool
 	selectedID string
+	marked     map[string]struct{}
 	table      table.Model
 	notice     string
 }
@@ -81,6 +82,17 @@ func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
 	case "G":
 		m.selectedID = ""
 		m = m.normalizeSelection(len(m.visibleNodes()) - 1)
+	case "space":
+		if node, ok := m.selected(); ok {
+			if m.marked == nil {
+				m.marked = make(map[string]struct{})
+			}
+			if _, ok := m.marked[node.ID]; ok {
+				delete(m.marked, node.ID)
+			} else {
+				m.marked[node.ID] = struct{}{}
+			}
+		}
 	}
 
 	return m
@@ -135,6 +147,30 @@ func (m nodesModel) selected() (domain.NodeSnapshot, bool) {
 
 func (m nodesModel) selectedValue() domain.NodeSnapshot { node, _ := m.selected(); return node }
 
+func (m nodesModel) isMarked(id string) bool {
+	if m.marked == nil {
+		return false
+	}
+	_, ok := m.marked[id]
+	return ok
+}
+
+func (m nodesModel) actionTargets() []string {
+	if len(m.marked) > 0 {
+		targets := make([]string, 0, len(m.marked))
+		for _, node := range m.state.Value.Nodes {
+			if m.isMarked(node.ID) {
+				targets = append(targets, node.Target())
+			}
+		}
+		return targets
+	}
+	if node, ok := m.selected(); ok {
+		return []string{node.Target()}
+	}
+	return nil
+}
+
 func (m nodesModel) visibleNodes() []domain.NodeSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
@@ -162,7 +198,7 @@ func (m nodesModel) visibleNodes() []domain.NodeSnapshot {
 }
 
 func (m nodesModel) view(width int) string {
-	contents := renderNodeTable(width, m.visibleNodes(), m.table.Cursor())
+	contents := renderNodeTable(width, m.visibleNodes(), m.table.Cursor(), m.marked)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -185,7 +221,7 @@ func (m nodesModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(nodes), m.table.Cursor(), rowCapacity)
-	return renderNodeTable(size.Width, nodes[start:end], m.table.Cursor()-start)
+	return renderNodeTable(size.Width, nodes[start:end], m.table.Cursor()-start, m.marked)
 }
 
 func renderNodes(width int, state application.NodeState) string {

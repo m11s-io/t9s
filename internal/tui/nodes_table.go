@@ -31,7 +31,7 @@ var nodeColumns = []nodeColumn{
 	{header: "VERSION", minWidth: 8, value: func(node domain.NodeSnapshot) string { return fallback(node.Version) }},
 }
 
-func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int) string {
+func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int, marked map[string]struct{}) string {
 	widths := nodeColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -42,7 +42,11 @@ func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int) 
 	for index, node := range nodes {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		if _, ok := marked[node.ID]; ok {
+			row.WriteString("● ")
+		} else {
+			row.WriteString("  ")
+		}
 		writeNodeCells(&row, nodeRowValues(node), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}

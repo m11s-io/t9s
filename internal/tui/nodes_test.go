@@ -189,6 +189,61 @@ func TestNodesRootPreservesSelectionAcrossLoadedSnapshot(t *testing.T) {
 	assert.Equal(t, "worker-1", updated.(model).nodes.selectedValue().DisplayName())
 }
 
+func TestSpaceTogglesMarkOnSelectedRow(t *testing.T) {
+	model := newNodesModel(nodesTestState())
+
+	toggled := model.update(keyPress(' '))
+
+	assert.True(t, toggled.isMarked(toggled.selectedValue().ID))
+
+	untoggled := toggled.update(keyPress(' '))
+	assert.False(t, untoggled.isMarked(untoggled.selectedValue().ID))
+}
+
+func TestMarksPersistAcrossFiltering(t *testing.T) {
+	model := newNodesModel(nodesTestState())
+	model = model.update(keyPress(' '))
+	markedID := model.selectedValue().ID
+
+	model = model.startFilter("")
+	model = model.update(keyPress('x')) // arbitrary filter text
+	model = model.update(tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	assert.True(t, model.isMarked(markedID))
+}
+
+func TestActionTargetsPrefersMarkedSetOverCursor(t *testing.T) {
+	model := newNodesModel(nodesTestState())
+	nodes := model.visibleNodes()
+	require.GreaterOrEqual(t, len(nodes), 2)
+	model = model.update(keyPress(' ')) // mark node at cursor 0
+	model = model.moveSelection(1)
+	model = model.update(keyPress(' ')) // mark node at cursor 1
+
+	targets := model.actionTargets()
+
+	assert.ElementsMatch(t, []string{nodes[0].Target(), nodes[1].Target()}, targets)
+}
+
+func TestActionTargetsFallsBackToCursorWhenNothingMarked(t *testing.T) {
+	model := newNodesModel(nodesTestState())
+
+	targets := model.actionTargets()
+
+	assert.Equal(t, []string{model.selectedValue().Target()}, targets)
+}
+
+func TestRenderNodeTableMarksRowWithIndicator(t *testing.T) {
+	nodes := nodesTestState().Value.Nodes
+	marked := map[string]struct{}{nodes[1].ID: {}}
+
+	rendered := renderNodeTable(120, nodes, 0, marked)
+	lines := strings.Split(rendered, "\n")
+
+	assert.True(t, strings.HasPrefix(ansi.Strip(lines[2]), "●"))
+	assert.False(t, strings.Contains(ansi.Strip(lines[1]), "●"))
+}
+
 func TestNodesGolden(t *testing.T) {
 	for _, width := range []int{80, 120} {
 		t.Run(strconv.Itoa(width), func(t *testing.T) {
