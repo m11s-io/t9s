@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 
@@ -141,14 +140,7 @@ func (m processesModel) viewSized(size contentSize) string {
 
 const defaultProcessesWidth = 120
 
-type processColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.ProcessSnapshot) string
-	grow     bool
-}
-
-var processColumns = []processColumn{
+var processColumns = []tableColumn[domain.ProcessSnapshot]{
 	{header: "PID", minWidth: 8, value: func(p domain.ProcessSnapshot) string { return fmt.Sprintf("%d", p.PID) }},
 	{header: "STATE", minWidth: 10, value: func(p domain.ProcessSnapshot) string { return fallback(p.State) }},
 	{header: "CPU", minWidth: 8, value: func(p domain.ProcessSnapshot) string { return fmt.Sprintf("%.1fs", p.CPUTime) }},
@@ -161,14 +153,14 @@ func renderProcessTable(width int, processes []domain.ProcessSnapshot, selectedI
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeProcessCells(&header, processHeaders(), widths)
+	writeTableCells(&header, processHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, process := range processes {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeProcessCells(&row, processRowValues(process), widths)
+		writeTableCells(&row, processRowValues(process), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -179,47 +171,13 @@ func processColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultProcessesWidth
 	}
-	widths := make([]int, len(processColumns))
-	used := selectionWidth + columnSpacing*(len(processColumns)-1)
-	growIndex := 0
-	for index, column := range processColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, processColumns)
 }
 
 func processHeaders() []string {
-	headers := make([]string, len(processColumns))
-	for index, column := range processColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(processColumns)
 }
 
 func processRowValues(process domain.ProcessSnapshot) []string {
-	values := make([]string, len(processColumns))
-	for index, column := range processColumns {
-		values[index] = column.value(process)
-	}
-	return values
-}
-
-func writeProcessCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(process, processColumns)
 }

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
@@ -137,14 +136,7 @@ func (m resourceKindsModel) viewSized(size contentSize) string {
 
 const defaultResourceKindsWidth = 120
 
-type resourceKindColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.ResourceKindSnapshot) string
-	grow     bool
-}
-
-var resourceKindColumns = []resourceKindColumn{
+var resourceKindColumns = []tableColumn[domain.ResourceKindSnapshot]{
 	{header: "TYPE", minWidth: 20, value: func(k domain.ResourceKindSnapshot) string { return fallback(k.DisplayType) }},
 	{header: "NAMESPACE", minWidth: 14, value: func(k domain.ResourceKindSnapshot) string { return fallback(k.DefaultNamespace) }},
 	{header: "ALIASES", minWidth: 20, grow: true, value: func(k domain.ResourceKindSnapshot) string {
@@ -157,22 +149,14 @@ func renderResourceKindTable(width int, kinds []domain.ResourceKindSnapshot, sel
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	headers := make([]string, len(resourceKindColumns))
-	for index, column := range resourceKindColumns {
-		headers[index] = column.header
-	}
-	writeResourceCells(&header, headers, widths)
+	writeTableCells(&header, tableHeaders(resourceKindColumns), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, kind := range kinds {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		values := make([]string, len(resourceKindColumns))
-		for columnIndex, column := range resourceKindColumns {
-			values[columnIndex] = column.value(kind)
-		}
-		writeResourceCells(&row, values, widths)
+		writeTableCells(&row, tableRowValues(kind, resourceKindColumns), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -183,33 +167,7 @@ func resourceKindColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultResourceKindsWidth
 	}
-	widths := make([]int, len(resourceKindColumns))
-	used := selectionWidth + columnSpacing*(len(resourceKindColumns)-1)
-	growIndex := 0
-	for index, column := range resourceKindColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
-}
-
-func writeResourceCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return calculateColumnWidths(width, resourceKindColumns)
 }
 
 type resourceInstancesModel struct {
@@ -302,14 +260,7 @@ func (m resourceInstancesModel) visibleInstances() []domain.ResourceInstanceSnap
 	return filtered
 }
 
-type resourceInstanceColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.ResourceInstanceSnapshot) string
-	grow     bool
-}
-
-var resourceInstanceColumns = []resourceInstanceColumn{
+var resourceInstanceColumns = []tableColumn[domain.ResourceInstanceSnapshot]{
 	{header: "NAMESPACE", minWidth: 14, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.Namespace) }},
 	{header: "ID", minWidth: 20, grow: true, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.ID) }},
 	{header: "PHASE", minWidth: 10, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.Phase) }},
@@ -319,20 +270,7 @@ func resourceInstanceColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultResourceKindsWidth
 	}
-	widths := make([]int, len(resourceInstanceColumns))
-	used := selectionWidth + columnSpacing*(len(resourceInstanceColumns)-1)
-	growIndex := 0
-	for index, column := range resourceInstanceColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, resourceInstanceColumns)
 }
 
 func (m resourceInstancesModel) view(width int) string {
@@ -364,22 +302,14 @@ func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceS
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	headers := make([]string, len(resourceInstanceColumns))
-	for index, column := range resourceInstanceColumns {
-		headers[index] = column.header
-	}
-	writeResourceCells(&header, headers, widths)
+	writeTableCells(&header, tableHeaders(resourceInstanceColumns), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, instance := range instances {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		values := make([]string, len(resourceInstanceColumns))
-		for columnIndex, column := range resourceInstanceColumns {
-			values[columnIndex] = column.value(instance)
-		}
-		writeResourceCells(&row, values, widths)
+		writeTableCells(&row, tableRowValues(instance, resourceInstanceColumns), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 

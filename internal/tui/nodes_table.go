@@ -3,8 +3,6 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
-
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -14,14 +12,7 @@ const (
 	columnSpacing     = 1
 )
 
-type nodeColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.NodeSnapshot) string
-	grow     bool
-}
-
-var nodeColumns = []nodeColumn{
+var nodeColumns = []tableColumn[domain.NodeSnapshot]{
 	{header: "NAME", minWidth: 12, grow: true, value: func(node domain.NodeSnapshot) string { return node.DisplayName() }},
 	{header: "ROLE", minWidth: 7, value: func(node domain.NodeSnapshot) string { return fallback(string(node.Role)) }},
 	{header: "STAGE", minWidth: 11, value: func(node domain.NodeSnapshot) string { return fallback(node.Stage) }},
@@ -36,7 +27,7 @@ func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int, 
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeNodeCells(&header, nodeHeaders(), widths)
+	writeTableCells(&header, nodeHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, node := range nodes {
@@ -47,7 +38,7 @@ func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int, 
 		} else {
 			row.WriteString("  ")
 		}
-		writeNodeCells(&row, nodeRowValues(node), widths)
+		writeTableCells(&row, nodeRowValues(node), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -58,50 +49,15 @@ func nodeColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultNodesWidth
 	}
-
-	widths := make([]int, len(nodeColumns))
-	used := selectionWidth + columnSpacing*(len(nodeColumns)-1)
-	growIndex := 0
-	for index, column := range nodeColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, nodeColumns)
 }
 
 func nodeHeaders() []string {
-	headers := make([]string, len(nodeColumns))
-	for index, column := range nodeColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(nodeColumns)
 }
 
 func nodeRowValues(node domain.NodeSnapshot) []string {
-	values := make([]string, len(nodeColumns))
-	for index, column := range nodeColumns {
-		values[index] = column.value(node)
-	}
-	return values
-}
-
-func writeNodeCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(node, nodeColumns)
 }
 
 func healthSymbol(health domain.Health) string {

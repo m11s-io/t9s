@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 
@@ -145,14 +144,7 @@ func joinLinkAddresses(link domain.LinkSnapshot) string {
 	return strings.Join(values, ", ")
 }
 
-type linkColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.LinkSnapshot) string
-	grow     bool
-}
-
-var linkColumns = []linkColumn{
+var linkColumns = []tableColumn[domain.LinkSnapshot]{
 	{header: "LINK", minWidth: 10, value: func(l domain.LinkSnapshot) string { return fallback(l.Name) }},
 	{header: "TYPE", minWidth: 8, value: func(l domain.LinkSnapshot) string { return fallback(l.Type) }},
 	{header: "STATE", minWidth: 8, value: func(l domain.LinkSnapshot) string { return fallback(l.OperationalState) }},
@@ -165,14 +157,14 @@ func renderLinkTable(width int, links []domain.LinkSnapshot, selectedIndex int) 
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeLinkCells(&header, linkHeaders(), widths)
+	writeTableCells(&header, linkHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, link := range links {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeLinkCells(&row, linkRowValues(link), widths)
+		writeTableCells(&row, linkRowValues(link), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -183,47 +175,13 @@ func linkColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultNetworkWidth
 	}
-	widths := make([]int, len(linkColumns))
-	used := selectionWidth + columnSpacing*(len(linkColumns)-1)
-	growIndex := 0
-	for index, column := range linkColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, linkColumns)
 }
 
 func linkHeaders() []string {
-	headers := make([]string, len(linkColumns))
-	for index, column := range linkColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(linkColumns)
 }
 
 func linkRowValues(link domain.LinkSnapshot) []string {
-	values := make([]string, len(linkColumns))
-	for index, column := range linkColumns {
-		values[index] = column.value(link)
-	}
-	return values
-}
-
-func writeLinkCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(link, linkColumns)
 }

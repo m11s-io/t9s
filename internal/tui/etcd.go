@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 
@@ -136,14 +135,7 @@ func renderEtcd(width int, state application.EtcdState) string {
 
 const defaultEtcdWidth = 120
 
-type etcdColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.EtcdMemberSnapshot) string
-	grow     bool
-}
-
-var etcdColumns = []etcdColumn{
+var etcdColumns = []tableColumn[domain.EtcdMemberSnapshot]{
 	{header: "MEMBER", minWidth: 14, grow: true, value: func(member domain.EtcdMemberSnapshot) string { return fallback(member.Hostname) }},
 	{header: "ROLE", minWidth: 8, value: etcdRole},
 	{header: "DB SIZE", minWidth: 10, value: etcdDBSize},
@@ -206,14 +198,14 @@ func renderEtcdTable(width int, members []domain.EtcdMemberSnapshot, selectedInd
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeEtcdCells(&header, etcdHeaders(), widths)
+	writeTableCells(&header, etcdHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, member := range members {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeEtcdCells(&row, etcdRowValues(member), widths)
+		writeTableCells(&row, etcdRowValues(member), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -224,47 +216,13 @@ func etcdColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultEtcdWidth
 	}
-	widths := make([]int, len(etcdColumns))
-	used := selectionWidth + columnSpacing*(len(etcdColumns)-1)
-	growIndex := 0
-	for index, column := range etcdColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, etcdColumns)
 }
 
 func etcdHeaders() []string {
-	headers := make([]string, len(etcdColumns))
-	for index, column := range etcdColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(etcdColumns)
 }
 
 func etcdRowValues(member domain.EtcdMemberSnapshot) []string {
-	values := make([]string, len(etcdColumns))
-	for index, column := range etcdColumns {
-		values[index] = column.value(member)
-	}
-	return values
-}
-
-func writeEtcdCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(member, etcdColumns)
 }

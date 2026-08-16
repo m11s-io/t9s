@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 
@@ -147,14 +146,7 @@ func diskSystemSymbol(systemDisk bool) string {
 	return ""
 }
 
-type diskColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.DiskSnapshot) string
-	grow     bool
-}
-
-var diskColumns = []diskColumn{
+var diskColumns = []tableColumn[domain.DiskSnapshot]{
 	{header: "DEVICE", minWidth: 10, value: func(d domain.DiskSnapshot) string { return fallback(d.DeviceName) }},
 	{header: "TYPE", minWidth: 6, value: func(d domain.DiskSnapshot) string { return fallback(d.Type) }},
 	{header: "SIZE", minWidth: 10, value: func(d domain.DiskSnapshot) string { return formatBytes(int64(d.SizeBytes)) }},
@@ -167,14 +159,14 @@ func renderDiskTable(width int, disks []domain.DiskSnapshot, selectedIndex int) 
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeDiskCells(&header, diskHeaders(), widths)
+	writeTableCells(&header, diskHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, disk := range disks {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeDiskCells(&row, diskRowValues(disk), widths)
+		writeTableCells(&row, diskRowValues(disk), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -185,47 +177,13 @@ func diskColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultDisksWidth
 	}
-	widths := make([]int, len(diskColumns))
-	used := selectionWidth + columnSpacing*(len(diskColumns)-1)
-	growIndex := 0
-	for index, column := range diskColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, diskColumns)
 }
 
 func diskHeaders() []string {
-	headers := make([]string, len(diskColumns))
-	for index, column := range diskColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(diskColumns)
 }
 
 func diskRowValues(disk domain.DiskSnapshot) []string {
-	values := make([]string, len(diskColumns))
-	for index, column := range diskColumns {
-		values[index] = column.value(disk)
-	}
-	return values
-}
-
-func writeDiskCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(disk, diskColumns)
 }

@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 
@@ -139,14 +138,7 @@ func renderEvents(width int, state application.EventState) string {
 
 const defaultEventsWidth = 120
 
-type eventColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.EventSnapshot) string
-	grow     bool
-}
-
-var eventColumns = []eventColumn{
+var eventColumns = []tableColumn[domain.EventSnapshot]{
 	{header: "NODE", minWidth: 14, value: func(event domain.EventSnapshot) string { return fallback(event.Node) }},
 	{header: "KIND", minWidth: 12, value: func(event domain.EventSnapshot) string { return fallback(event.Kind) }},
 	{header: "MESSAGE", minWidth: 20, grow: true, value: func(event domain.EventSnapshot) string { return fallback(event.Message) }},
@@ -158,14 +150,14 @@ func renderEventTable(width int, events []domain.EventSnapshot, selectedIndex in
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeEventCells(&header, eventHeaders(), widths)
+	writeTableCells(&header, eventHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, event := range events {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeEventCells(&row, eventRowValues(event), widths)
+		writeTableCells(&row, eventRowValues(event), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -176,47 +168,13 @@ func eventColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultEventsWidth
 	}
-	widths := make([]int, len(eventColumns))
-	used := selectionWidth + columnSpacing*(len(eventColumns)-1)
-	growIndex := 0
-	for index, column := range eventColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, eventColumns)
 }
 
 func eventHeaders() []string {
-	headers := make([]string, len(eventColumns))
-	for index, column := range eventColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(eventColumns)
 }
 
 func eventRowValues(event domain.EventSnapshot) []string {
-	values := make([]string, len(eventColumns))
-	for index, column := range eventColumns {
-		values[index] = column.value(event)
-	}
-	return values
-}
-
-func writeEventCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(event, eventColumns)
 }

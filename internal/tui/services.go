@@ -206,14 +206,7 @@ func renderServices(width int, state application.ServiceState) string {
 	return newServicesModel(state).view(width)
 }
 
-type serviceColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.ServiceSnapshot) string
-	grow     bool
-}
-
-var serviceColumns = []serviceColumn{
+var serviceColumns = []tableColumn[domain.ServiceSnapshot]{
 	{header: "NODE", minWidth: 16, value: func(service domain.ServiceSnapshot) string { return fallback(service.Node) }},
 	{header: "SERVICE", minWidth: 16, value: func(service domain.ServiceSnapshot) string { return fallback(service.Name) }},
 	{header: "STATE", minWidth: 10, value: func(service domain.ServiceSnapshot) string { return fallback(service.State) }},
@@ -227,13 +220,13 @@ func renderServiceTable(width int, services []domain.ServiceSnapshot, selectedIn
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeServiceCells(&header, serviceHeaders(), widths)
+	writeTableCells(&header, serviceHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 	for index, service := range services {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeServiceCells(&row, serviceRowValues(service), widths)
+		writeTableCells(&row, serviceRowValues(service), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 	if len(services) == 0 {
@@ -247,18 +240,18 @@ func renderServiceTableWithProblems(width int, services []domain.ServiceSnapshot
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeServiceCells(&header, serviceHeaders(), widths)
+	writeTableCells(&header, serviceHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 	for index, service := range services {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeServiceCells(&row, serviceRowValues(service), widths)
+		writeTableCells(&row, serviceRowValues(service), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 	for _, problem := range problems {
 		output.WriteString("\n! ")
-		writeServiceCells(&output, []string{fallback(problem.Node), "<error>", "Error", "!", fallback(problem.Message)}, widths)
+		writeTableCells(&output, []string{fallback(problem.Node), "<error>", "Error", "!", fallback(problem.Message)}, widths)
 	}
 	return output.String()
 }
@@ -267,49 +260,15 @@ func serviceColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultServicesWidth
 	}
-	widths := make([]int, len(serviceColumns))
-	used := selectionWidth + columnSpacing*(len(serviceColumns)-1)
-	growIndex := 0
-	for index, column := range serviceColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, serviceColumns)
 }
 
 func serviceHeaders() []string {
-	headers := make([]string, len(serviceColumns))
-	for index, column := range serviceColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(serviceColumns)
 }
 
 func serviceRowValues(service domain.ServiceSnapshot) []string {
-	values := make([]string, len(serviceColumns))
-	for index, column := range serviceColumns {
-		values[index] = column.value(service)
-	}
-	return values
-}
-
-func writeServiceCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(service, serviceColumns)
 }
 
 func serviceHealthSymbol(healthy *bool) string {

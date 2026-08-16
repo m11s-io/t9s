@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/table"
 
@@ -133,14 +132,7 @@ func (m problemsModel) viewSized(size contentSize) string {
 
 const defaultProblemsWidth = 120
 
-type problemColumn struct {
-	header   string
-	minWidth int
-	value    func(domain.Diagnosis) string
-	grow     bool
-}
-
-var problemColumns = []problemColumn{
+var problemColumns = []tableColumn[domain.Diagnosis]{
 	{header: "SEVERITY", minWidth: 8, value: func(d domain.Diagnosis) string { return d.Severity.String() }},
 	{header: "KIND", minWidth: 12, value: func(d domain.Diagnosis) string { return fallback(d.ResourceKind) }},
 	{header: "RESOURCE", minWidth: 16, value: func(d domain.Diagnosis) string { return fallback(d.ResourceName) }},
@@ -152,14 +144,14 @@ func renderProblemTable(width int, diagnoses []domain.Diagnosis, selectedIndex i
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeProblemCells(&header, problemHeaders(), widths)
+	writeTableCells(&header, problemHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, diagnosis := range diagnoses {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeProblemCells(&row, problemRowValues(diagnosis), widths)
+		writeTableCells(&row, problemRowValues(diagnosis), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -170,47 +162,13 @@ func problemColumnWidths(width int) []int {
 	if width <= 0 {
 		width = defaultProblemsWidth
 	}
-	widths := make([]int, len(problemColumns))
-	used := selectionWidth + columnSpacing*(len(problemColumns)-1)
-	growIndex := 0
-	for index, column := range problemColumns {
-		widths[index] = column.minWidth
-		used += column.minWidth
-		if column.grow {
-			growIndex = index
-		}
-	}
-	if remaining := width - used; remaining > 0 {
-		widths[growIndex] += remaining
-	}
-	return widths
+	return calculateColumnWidths(width, problemColumns)
 }
 
 func problemHeaders() []string {
-	headers := make([]string, len(problemColumns))
-	for index, column := range problemColumns {
-		headers[index] = column.header
-	}
-	return headers
+	return tableHeaders(problemColumns)
 }
 
 func problemRowValues(diagnosis domain.Diagnosis) []string {
-	values := make([]string, len(problemColumns))
-	for index, column := range problemColumns {
-		values[index] = column.value(diagnosis)
-	}
-	return values
-}
-
-func writeProblemCells(output *strings.Builder, values []string, widths []int) {
-	for index, value := range values {
-		if index > 0 {
-			output.WriteByte(' ')
-		}
-		cell := ansi.Truncate(value, widths[index], "…")
-		output.WriteString(cell)
-		if padding := widths[index] - ansi.StringWidth(cell); padding > 0 && index < len(values)-1 {
-			output.WriteString(strings.Repeat(" ", padding))
-		}
-	}
+	return tableRowValues(diagnosis, problemColumns)
 }
