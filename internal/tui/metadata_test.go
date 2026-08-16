@@ -44,3 +44,19 @@ func TestDeriveShellMetadataReportsUniformTalosVersion(t *testing.T) {
 	assert.Equal(t, "Healthy", metadata.Health)
 	assert.Equal(t, "2/2", metadata.NodeSummary)
 }
+
+func TestDeriveShellMetadataShowsReadWriteWhenWritesEnabled(t *testing.T) {
+	model := application.Model{ContextName: "prod", WritesEnabled: true, Nodes: application.NodeState{Status: application.Loading}}
+
+	metadata := deriveShellMetadata(model)
+
+	assert.Equal(t, "[RW]", metadata.Mode)
+}
+
+func TestDeriveShellMetadataShowsReadOnlyByDefault(t *testing.T) {
+	model := application.Model{ContextName: "prod", Nodes: application.NodeState{Status: application.Loading}}
+
+	metadata := deriveShellMetadata(model)
+
+	assert.Equal(t, "[RO]", metadata.Mode)
+}

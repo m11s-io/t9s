@@ -20,7 +20,11 @@ type shellMetadata struct {
 }
 
 func deriveShellMetadata(model application.Model) shellMetadata {
-	metadata := shellMetadata{Context: model.ContextName, Mode: "[RO]", AppVersion: version.Version}
+	mode := "[RO]"
+	if model.WritesEnabled {
+		mode = "[RW]"
+	}
+	metadata := shellMetadata{Context: model.ContextName, Mode: mode, AppVersion: version.Version}
 	for _, clusterContext := range model.Contexts {
 		if clusterContext.Name != model.ContextName {
 			continue

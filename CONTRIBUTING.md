@@ -73,6 +73,14 @@ reachable rows, `/` filters without changing the snapshot, and no key or
 command offers mutation or arbitrary execution. This live check is intentionally
 not part of normal CI.
 
+When `--enable-writes` is set, additionally verify: `space` marks/unmarks
+a row and the mark persists across a `/` filter round-trip, `R`/`X` open
+an inline confirm prompt naming the correct target(s) and any
+control-plane/etcd-quorum warning, any key other than `y` cancels without
+calling the cluster, `y` fires the action and the footer reports
+per-target success/failure, and that omitting `--enable-writes` leaves
+`R`/`X`/`space` fully inert with the header still reading `[RO]`.
+
 ## Release packaging
 
 Release builds are produced by [GoReleaser](https://goreleaser.com/) via

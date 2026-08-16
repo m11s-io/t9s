@@ -21,7 +21,7 @@ func TestK9sCompatibilityActionMatrix(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			actual := make([]string, 0, len(test.keys))
-			for _, hint := range actionHints(test.view) {
+			for _, hint := range actionHints(test.view, false) {
 				actual = append(actual, hint.Key)
 			}
 			assert.Equal(t, test.keys, actual)
@@ -30,7 +30,7 @@ func TestK9sCompatibilityActionMatrix(t *testing.T) {
 }
 
 func TestK9sCompatibilityDocumentsReadOnlyTalosDeviations(t *testing.T) {
-	serviceHints := renderActionHints(actionHints(viewServices))
+	serviceHints := renderActionHints(actionHints(viewServices, false))
 	assert.Contains(t, serviceHints, "<d> Detail", "Talos services use Enter/d for the same read-only detail")
 	for _, destructive := range []string{"Delete", "Kill", "Drain", "Edit"} {
 		assert.NotContains(t, serviceHints, destructive, "t9s deliberately omits unsupported destructive Kubernetes actions")

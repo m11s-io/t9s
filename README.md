@@ -75,10 +75,15 @@ unchanged.
 
 ## Security
 
-The current UI is read-only and offers no mutation or arbitrary command path.
-However, the Talos credentials supplied to `t9s` may themselves be privileged.
-Protect the talosconfig as a sensitive secret, grant only the permissions the
-operator needs, and do not commit real endpoints or credentials as test data.
+By default the UI is read-only and offers no mutation or arbitrary
+command path. Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
+additionally allows reboot and shutdown of selected node(s) from the
+nodes screen, each gated behind an inline confirmation that flags
+control-plane and etcd-quorum risk. The header's `[RO]`/`[RW]` badge
+always reflects the active mode. As before, the Talos credentials
+supplied to `t9s` may themselves be privileged — protect the talosconfig
+as a sensitive secret and grant only the permissions the operator needs.
+Do not commit real endpoints or credentials as test data.
 
 ## k9s integration
 

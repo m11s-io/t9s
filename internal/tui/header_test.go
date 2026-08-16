@@ -11,7 +11,7 @@ import (
 func TestK9sHeaderUsesSevenRowsAndRightAlignedLogo(t *testing.T) {
 	header := renderK9sHeader(layoutK9sHeader(160), shellMetadata{
 		Context: "mgmt", Cluster: "management", NodeSummary: "6/6", TalosVersion: "v1.13.2", Health: "Healthy", Mode: "[RO]",
-	}, actionHints(viewServices), defaultK9sSkin())
+	}, actionHints(viewServices, false), defaultK9sSkin())
 
 	lines := strings.Split(header, "\n")
 	assert.Len(t, lines, 7)
@@ -29,7 +29,7 @@ func TestK9sHeaderUsesSevenRowsAndRightAlignedLogo(t *testing.T) {
 func TestK9sHeaderShowsAppVersionInMetadataRow(t *testing.T) {
 	header := renderK9sHeader(layoutK9sHeader(160), shellMetadata{
 		Context: "mgmt", Health: "Healthy", Mode: "[RO]", AppVersion: "1.2.3",
-	}, actionHints(viewServices), defaultK9sSkin())
+	}, actionHints(viewServices, false), defaultK9sSkin())
 
 	lines := strings.Split(header, "\n")
 	assert.Contains(t, lines[3], "T9s Rev:")
@@ -37,7 +37,7 @@ func TestK9sHeaderShowsAppVersionInMetadataRow(t *testing.T) {
 }
 
 func TestK9sHeaderHidesLogoBeforeActionsOnNarrowScreens(t *testing.T) {
-	header := renderK9sHeader(layoutK9sHeader(80), shellMetadata{Context: "test", Health: "Healthy", Mode: "[RO]"}, actionHints(viewServices), defaultK9sSkin())
+	header := renderK9sHeader(layoutK9sHeader(80), shellMetadata{Context: "test", Health: "Healthy", Mode: "[RO]"}, actionHints(viewServices, false), defaultK9sSkin())
 
 	assert.NotContains(t, header, "T9S")
 	assert.Contains(t, header, "<r>")
@@ -47,7 +47,7 @@ func TestK9sHeaderHidesLogoBeforeActionsOnNarrowScreens(t *testing.T) {
 }
 
 func TestK9sHeaderNeverExceedsTinyWidth(t *testing.T) {
-	header := renderK9sHeader(layoutK9sHeader(20), shellMetadata{Context: "very-long-context", Mode: "[RO]"}, actionHints(viewServices), defaultK9sSkin())
+	header := renderK9sHeader(layoutK9sHeader(20), shellMetadata{Context: "very-long-context", Mode: "[RO]"}, actionHints(viewServices, false), defaultK9sSkin())
 	for _, line := range strings.Split(header, "\n") {
 		assert.LessOrEqual(t, ansi.StringWidth(line), 20)
 	}

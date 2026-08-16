@@ -7,7 +7,7 @@ type actionHint struct {
 	Label string
 }
 
-func actionHints(kind viewKind) []actionHint {
+func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 	global := []actionHint{{Key: "?", Label: "Help"}, {Key: ":", Label: "Command"}}
 	switch kind {
 	case viewNodes, viewServices:
@@ -24,6 +24,13 @@ func actionHints(kind viewKind) []actionHint {
 				actionHint{Key: "k", Label: "Disks"},
 				actionHint{Key: "n", Label: "Network"},
 			)
+			if writesEnabled {
+				hints = append(hints,
+					actionHint{Key: "space", Label: "Mark"},
+					actionHint{Key: "R", Label: "Reboot"},
+					actionHint{Key: "X", Label: "Shutdown"},
+				)
+			}
 		}
 		return hints
 	case viewEvents:

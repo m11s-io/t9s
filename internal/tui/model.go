@@ -142,6 +142,25 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.Keystroke() == "ctrl+c" {
 			return m, m.shutdown()
 		}
+		if m.application.PendingAction != nil {
+			if message.Keystroke() == "y" {
+				pending := *m.application.PendingAction
+				effects := application.BuildActionEffects(m.application, pending)
+				var confirmEffect application.Effect
+				m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
+				cmds := make([]tea.Cmd, 0, len(effects)+1)
+				if cmd := m.command(confirmEffect); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				for _, effect := range effects {
+					cmds = append(cmds, m.command(effect))
+				}
+				return m, tea.Batch(cmds...)
+			}
+			var effect application.Effect
+			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
+			return m, m.command(effect)
+		}
 		if message.Keystroke() == "esc" && !m.contexts.active && !m.palette.active && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			if views, ok := m.views.pop(); ok {
@@ -493,6 +512,20 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if message.Keystroke() == "R" && m.application.WritesEnabled && !m.nodes.filtering {
+			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionReboot, Targets: targets})
+				return m, m.command(effect)
+			}
+		}
+		if message.Keystroke() == "X" && m.application.WritesEnabled && !m.nodes.filtering {
+			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionShutdown, Targets: targets})
+				return m, m.command(effect)
+			}
+		}
 		m.nodes = m.nodes.update(message)
 		return m, nil
 	case shutdownMessage:
@@ -532,7 +565,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingContextPicker = false
 		}
 		m.logs = m.logs.setState(m.application.Logs)
-		m.notice = ""
+		if len(m.application.ActionResults) > 0 {
+			m.notice = renderActionResults(m.application.ActionResults)
+		} else {
+			m.notice = ""
+		}
 		return m, m.command(effect)
 	}
 
@@ -549,7 +586,7 @@ func (m model) View() tea.View {
 	header := renderK9sHeader(
 		layoutK9sHeader(layout.Width),
 		deriveShellMetadata(m.application),
-		actionHints(headerKind),
+		actionHints(headerKind, m.application.WritesEnabled),
 		m.styles.k9s,
 	)
 
@@ -641,7 +678,7 @@ func (m model) activeContent(size contentSize) string {
 		}
 		view.WriteString(m.resourceDetail.viewSized(innerSize, m.application.ResourceBrowser.Detail, sensitive))
 	case viewHelp:
-		view.WriteString("HELP\n\n" + renderActionHints(actionHints(viewNodes)) + "\n" + renderActionHints(actionHints(viewNodeDetail)))
+		view.WriteString("HELP\n\n" + renderActionHints(actionHints(viewNodes, m.application.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.application.WritesEnabled)))
 	default:
 		view.WriteString(m.nodes.viewSized(innerSize))
 	}
@@ -683,6 +720,9 @@ func (m model) filtering() bool {
 }
 
 func (m model) activePrompt() string {
+	if m.application.PendingAction != nil {
+		return renderPendingActionPrompt(*m.application.PendingAction)
+	}
 	if prompt := m.palette.view(); prompt != "" {
 		return prompt
 	}
