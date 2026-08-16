@@ -5,7 +5,7 @@ description: Build and run t9s against a Talos Linux cluster.
 
 ## Requirements
 
-- Go 1.26.3
+- Go 1.26.3 (only required to build from source)
 - Access to a Talos v1.13.3 cluster
 - A valid Talos configuration with at least one context
 
@@ -25,8 +25,8 @@ curl -LO "https://github.com/m11s-io/t9s/releases/download/v${VERSION}/t9s_${OS}
 curl -LO "https://github.com/m11s-io/t9s/releases/download/v${VERSION}/checksums.sha256"
 
 sha256sum -c checksums.sha256 --ignore-missing
-tar xzf "t9s_${OS}_${ARCH}.tar.gz"
-install -m 0755 t9s /usr/local/bin/t9s
+tar xzf "t9s_${OS}_${ARCH}.tar.gz" t9s
+sudo install -m 0755 t9s /usr/local/bin/t9s
 ```
 
 On macOS, verify the checksum with `shasum -a 256 -c checksums.sha256 --ignore-missing`
