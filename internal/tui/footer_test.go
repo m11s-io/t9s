@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,4 +25,34 @@ func TestK9sFooterPromptTakesTheStatusRow(t *testing.T) {
 	footer := renderK9sFooter(60, "prod > nodes", "COMMAND :svc", "ignored", defaultK9sSkin())
 	assert.Contains(t, strings.Split(footer, "\n")[0], "COMMAND :svc")
 	assert.NotContains(t, footer, "ignored")
+}
+
+func TestRenderUpgradeNoticeShowsBoundedKnownProgress(t *testing.T) {
+	notice := renderUpgradeNotice(application.UpgradeState{
+		Active: true,
+		Target: "worker-2",
+		Event:  ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling installer", Current: 125, Total: 100},
+	})
+
+	assert.Equal(t, "Upgrading worker-2: pulling 100% — pulling installer", notice)
+}
+
+func TestRenderUpgradeNoticeOmitsPercentageWithoutATotal(t *testing.T) {
+	notice := renderUpgradeNotice(application.UpgradeState{
+		Active: true,
+		Target: "worker-2",
+		Event:  ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: "installing"},
+	})
+
+	assert.Equal(t, "Upgrading worker-2: installing — installing", notice)
+}
+
+func TestRenderUpgradeNoticeKeepsFailedPhaseAndCancellation(t *testing.T) {
+	notice := renderUpgradeNotice(application.UpgradeState{
+		Target: "worker-2",
+		Event:  ports.UpgradeEvent{Phase: ports.UpgradeRebooting},
+		Err:    "context canceled",
+	})
+
+	assert.Equal(t, "Upgrade worker-2 failed during rebooting: context canceled", notice)
 }

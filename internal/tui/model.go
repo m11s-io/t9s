@@ -397,21 +397,21 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-			if key == "S" && m.application.WritesEnabled && !m.services.filtering {
+			if key == "S" && m.writeActionsEnabled() && !m.services.filtering {
 				if service, ok := m.services.selected(); ok {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionStart, Node: service.Node, Service: service.Name})
 					return m, m.command(effect)
 				}
 			}
-			if key == "T" && m.application.WritesEnabled && !m.services.filtering {
+			if key == "T" && m.writeActionsEnabled() && !m.services.filtering {
 				if service, ok := m.services.selected(); ok {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionStop, Node: service.Node, Service: service.Name})
 					return m, m.command(effect)
 				}
 			}
-			if key == "R" && m.application.WritesEnabled && !m.services.filtering {
+			if key == "R" && m.writeActionsEnabled() && !m.services.filtering {
 				if service, ok := m.services.selected(); ok {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: service.Node, Service: service.Name})
@@ -570,35 +570,35 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
-		if key == "R" && m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "R" && m.writeActionsEnabled() && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionReboot, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
-		if key == "X" && m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "X" && m.writeActionsEnabled() && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionShutdown, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
-		if key == "B" && m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "B" && m.writeActionsEnabled() && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionRollback, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
-		if key == "U" && m.application.WritesEnabled && !m.nodes.filtering && m.upgradePrompt == nil {
+		if key == "U" && m.writeActionsEnabled() && !m.nodes.filtering && m.upgradePrompt == nil {
 			if node, ok := m.nodes.selected(); ok {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestUpgradePrompt{Target: node.Target()})
 				return m, m.command(effect)
 			}
 		}
-		if key == "space" && !m.application.WritesEnabled && !m.nodes.filtering {
+		if key == "space" && !m.writeActionsEnabled() && !m.nodes.filtering {
 			// Row-marking is a write-action affordance (feeds R/X); keep it
 			// inert while writes are disabled so the nodes screen behaves
 			// exactly as it did before this feature, per spec.
@@ -651,7 +651,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingContextPicker = false
 		}
 		m.logs = m.logs.setState(m.application.Logs)
-		if len(m.application.ActionResults) > 0 {
+		if upgradeNotice := renderUpgradeNotice(m.application.Upgrade); upgradeNotice != "" {
+			m.notice = upgradeNotice
+		} else if len(m.application.ActionResults) > 0 {
 			m.notice = renderActionResults(m.application.ActionResults, m.application.ActionTotal)
 		} else {
 			m.notice = ""
@@ -681,7 +683,7 @@ func (m model) View() tea.View {
 	header := renderK9sHeader(
 		layoutK9sHeader(layout.Width),
 		deriveShellMetadata(m.application),
-		actionHints(headerKind, m.application.WritesEnabled),
+		actionHints(headerKind, m.writeActionsEnabled()),
 		m.styles.k9s,
 	)
 
@@ -773,7 +775,7 @@ func (m model) activeContent(size contentSize) string {
 		}
 		view.WriteString(m.resourceDetail.viewSized(innerSize, m.application.ResourceBrowser.Detail, sensitive))
 	case viewHelp:
-		view.WriteString("HELP\n\n" + renderActionHints(actionHints(viewNodes, m.application.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.application.WritesEnabled)))
+		view.WriteString("HELP\n\n" + renderActionHints(actionHints(viewNodes, m.writeActionsEnabled())) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.writeActionsEnabled())))
 	default:
 		view.WriteString(m.nodes.viewSized(innerSize))
 	}
@@ -861,6 +863,10 @@ func (m model) activePrompt() string {
 		return "/" + m.resourceInstances.filter
 	}
 	return ""
+}
+
+func (m model) writeActionsEnabled() bool {
+	return m.application.WritesEnabled && !m.application.Upgrade.Active
 }
 
 func (m model) command(effect application.Effect) tea.Cmd {

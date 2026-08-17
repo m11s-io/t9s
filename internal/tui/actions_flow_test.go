@@ -327,6 +327,48 @@ func TestRollbackKeyHandlesKittyShiftEncoding(t *testing.T) {
 	assert.Equal(t, application.ActionRollback, rootModel.application.PendingAction.Kind)
 }
 
+func TestUpgradeProgressMessageRendersKnownProgressInGlobalNotice(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+	root.application.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
+
+	updated, _ := root.Update(applicationMessage{message: application.UpgradeProgressed{
+		Generation: root.application.Generation,
+		Target:     "cp-1",
+		Event:      ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling installer", Current: 1, Total: 4},
+	}})
+
+	assert.Equal(t, "Upgrading cp-1: pulling 25% — pulling installer", updated.(model).notice)
+}
+
+func TestUpgradeFailureKeepsPhaseAndNormalizedErrorInNotice(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+	root.application.Upgrade = application.UpgradeState{
+		Active: true,
+		Target: "cp-1",
+		Event:  ports.UpgradeEvent{Phase: ports.UpgradeWaiting},
+	}
+
+	updated, _ := root.Update(applicationMessage{message: application.UpgradeFailed{
+		Generation: root.application.Generation,
+		Target:     "cp-1",
+		Err:        context.Canceled,
+	}})
+
+	assert.Equal(t, "Upgrade cp-1 failed during waiting: upgrade failed", updated.(model).notice)
+}
+
+func TestActiveUpgradeBlocksWritesButAllowsReadOnlyNavigation(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+	root.application.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
+
+	updated, _ := root.Update(keyPress('R'))
+	root = updated.(model)
+	assert.Nil(t, root.application.PendingAction)
+
+	updated, _ = root.Update(keyPress('p'))
+	assert.Equal(t, viewProcesses, updated.(model).views.top().Kind)
+}
+
 func TestUpgradeKeyOpensPromptPrefilledWithCurrentImage(t *testing.T) {
 	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
 		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
@@ -364,6 +406,35 @@ func TestUpgradePromptEnterOpensPendingActionWithEditedImage(t *testing.T) {
 	assert.Equal(t, application.ActionUpgrade, rootModel.application.PendingAction.Kind)
 	assert.Equal(t, []string{"cp-1"}, rootModel.application.PendingAction.Targets)
 	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", rootModel.application.PendingAction.Image)
+}
+
+func TestUpgradePromptWarnsOnlyWhenItSkipsMinorVersions(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		image string
+		want  string
+	}{
+		{name: "skipped minor", image: "factory.talos.dev/metal-installer/id:v1.15.0", want: "skips intermediate Talos minor releases"},
+		{name: "patch", image: "factory.talos.dev/metal-installer/id:v1.13.4"},
+		{name: "one minor", image: "factory.talos.dev/metal-installer/id:v1.14.0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+			root.application.Nodes.Value.Nodes[0].Version = "v1.13.3"
+			prompt := newUpgradePromptModel("cp-1", test.image)
+			root.upgradePrompt = &prompt
+
+			updated, _ := root.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			pending := updated.(model).application.PendingAction
+			require.NotNil(t, pending)
+			if test.want == "" {
+				assert.NotContains(t, pending.Warning, "skips intermediate Talos minor releases")
+			} else {
+				assert.Contains(t, pending.Warning, test.want)
+			}
+		})
+	}
 }
 
 func TestUpgradePromptEscCancelsWithoutRequestingAction(t *testing.T) {
