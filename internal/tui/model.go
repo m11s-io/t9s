@@ -531,6 +531,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if key == "B" && m.application.WritesEnabled && !m.nodes.filtering {
+			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionRollback, Targets: targets})
+				return m, m.command(effect)
+			}
+		}
 		if key == "space" && !m.application.WritesEnabled && !m.nodes.filtering {
 			// Row-marking is a write-action affordance (feeds R/X); keep it
 			// inert while writes are disabled so the nodes screen behaves

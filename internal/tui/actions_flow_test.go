@@ -296,3 +296,33 @@ func TestActionResultsFooterDenominatorIsConfirmedTargetCountNotResultsSoFar(t *
 	assert.Contains(t, rootModel.notice, "1/3 succeeded")
 	assert.NotContains(t, rootModel.notice, "1/1 succeeded")
 }
+
+func TestRollbackKeyWithWritesDisabledIsInert(t *testing.T) {
+	appModel, _ := application.NewModel("prod")
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+
+	updated, _ := root.Update(keyPress('B'))
+
+	assert.Nil(t, updated.(model).application.PendingAction)
+}
+
+func TestRollbackKeyWithWritesEnabledOpensConfirmPrompt(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+
+	updated, _ := root.Update(keyPress('B'))
+	rootModel := updated.(model)
+
+	require.NotNil(t, rootModel.application.PendingAction)
+	assert.Equal(t, application.ActionRollback, rootModel.application.PendingAction.Kind)
+	assert.Contains(t, rootModel.application.PendingAction.Targets, "cp-1")
+}
+
+func TestRollbackKeyHandlesKittyShiftEncoding(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
+
+	updated, _ := root.Update(shiftKeyPress('B'))
+	rootModel := updated.(model)
+
+	require.NotNil(t, rootModel.application.PendingAction, "shift+b (Kitty protocol) must open the confirm prompt, same as legacy \"B\"")
+	assert.Equal(t, application.ActionRollback, rootModel.application.PendingAction.Kind)
+}
