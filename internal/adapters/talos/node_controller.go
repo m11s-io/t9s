@@ -3,6 +3,7 @@ package talos
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
@@ -38,6 +39,25 @@ func (c machineryNodeControlClient) Upgrade(ctx context.Context, opts ...taloscl
 	return err
 }
 
+// deriveUpgradeImage combines a declared install image's registry/repository
+// prefix with the currently-running Talos version tag. Talos does not
+// rewrite the declared machine config's install.image field after an
+// out-of-band `talosctl upgrade`, so the declared value alone can be stale —
+// prefilling the Upgrade prompt with it verbatim risks a silent downgrade if
+// an operator accepts the prefill without editing it. Digest references
+// (containing "@") are left untouched, since there is no tag to replace.
+func deriveUpgradeImage(declaredImage, runningTag string) string {
+	if declaredImage == "" || runningTag == "" || strings.Contains(declaredImage, "@") {
+		return declaredImage
+	}
+	lastSlash := strings.LastIndex(declaredImage, "/")
+	lastSegment := declaredImage[lastSlash+1:]
+	if colon := strings.LastIndex(lastSegment, ":"); colon >= 0 {
+		return declaredImage[:lastSlash+1+colon] + ":" + runningTag
+	}
+	return declaredImage + ":" + runningTag
+}
+
 func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (string, error) {
 	cfg, err := safe.StateGet[*talosconfig.MachineConfig](
 		ctx, c.client.COSI,
@@ -46,7 +66,21 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 	if err != nil {
 		return "", err
 	}
-	return cfg.Provider().Machine().Install().Image(), nil
+	declaredImage := cfg.Provider().Machine().Install().Image()
+
+	versionResponse, err := c.client.Version(ctx)
+	if err != nil {
+		// The declared image is still a valid, if possibly stale, prefill —
+		// don't fail the whole prompt just because the live version query
+		// failed.
+		return declaredImage, nil
+	}
+	for _, message := range versionResponse.GetMessages() {
+		if version := message.GetVersion(); version != nil {
+			return deriveUpgradeImage(declaredImage, version.GetTag()), nil
+		}
+	}
+	return declaredImage, nil
 }
 
 type nodeController struct{ client nodeControlClient }

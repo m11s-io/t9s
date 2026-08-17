@@ -12,6 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDeriveUpgradeImageReplacesTagKeepingRepo(t *testing.T) {
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.2", deriveUpgradeImage("ghcr.io/siderolabs/installer:v1.13.0", "v1.13.2"))
+}
+
+func TestDeriveUpgradeImagePreservesRegistryPort(t *testing.T) {
+	assert.Equal(t, "registry.internal:5000/talos/installer:v1.13.2", deriveUpgradeImage("registry.internal:5000/talos/installer:v1.13.0", "v1.13.2"))
+}
+
+func TestDeriveUpgradeImageAppendsTagWhenDeclaredImageHasNone(t *testing.T) {
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.2", deriveUpgradeImage("ghcr.io/siderolabs/installer", "v1.13.2"))
+}
+
+func TestDeriveUpgradeImageLeavesDigestReferencesUntouched(t *testing.T) {
+	assert.Equal(t, "ghcr.io/siderolabs/installer@sha256:abcd", deriveUpgradeImage("ghcr.io/siderolabs/installer@sha256:abcd", "v1.13.2"))
+}
+
+func TestDeriveUpgradeImageHandlesEmptyInputs(t *testing.T) {
+	assert.Equal(t, "", deriveUpgradeImage("", "v1.13.2"))
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.0", deriveUpgradeImage("ghcr.io/siderolabs/installer:v1.13.0", ""))
+}
+
 type fakeNodeControlClient struct {
 	rebootReq       machineapi.RebootRequest
 	rebootErr       error
