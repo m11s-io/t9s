@@ -205,3 +205,9 @@ func TestParseSchematicAuthor(t *testing.T) {
 	assert.Equal(t, "metal", flavor)
 	assert.Equal(t, "https://factory.example", factory)
 }
+func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
+	assert.False(t, supportsLifecycleUpgradeAPI("v1.12.9"))
+	assert.True(t, supportsLifecycleUpgradeAPI("v1.13.3"))
+	assert.False(t, supportsLifecycleUpgradeAPI("v2.0.0"))
+	assert.False(t, supportsLifecycleUpgradeAPI("not-a-version"))
+}

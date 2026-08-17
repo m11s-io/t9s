@@ -3,15 +3,26 @@ package talos
 import (
 	"context"
 	"fmt"
+	"github.com/blang/semver/v4"
+	"io"
 	"strings"
 
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/m11s-io/t9s/internal/ports"
+	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
 	runtimeresource "github.com/siderolabs/talos/pkg/machinery/resources/runtime"
 )
+
+type lifecycleUpgradeClient interface {
+	lifecycleUpgrade(context.Context, string, func(ports.UpgradeEvent)) error
+}
+
+type versionedUpgradeClient interface {
+	upgradeVersion(context.Context) (string, error)
+}
 
 type nodeControlClient interface {
 	Reboot(ctx context.Context, opts ...talosclient.RebootMode) error
@@ -155,7 +166,32 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 	go func() {
 		defer close(stream.results)
 		defer cancel()
-		stream.results <- ports.UpgradeResult{Err: c.Upgrade(streamCtx, target, image), Done: true}
+		stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeChecking, Message: "checking Talos upgrade API"}}
+		err := error(nil)
+		if versioned, ok := c.client.(versionedUpgradeClient); ok {
+			if version, versionErr := versioned.upgradeVersion(streamCtx); versionErr != nil {
+				stream.results <- ports.UpgradeResult{Err: versionErr, Done: true}
+				return
+			} else if !supportsLifecycleUpgradeAPI(version) {
+				err := c.Upgrade(streamCtx, target, image)
+				if err == nil {
+					stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Done: true}
+				} else {
+					stream.results <- ports.UpgradeResult{Err: err, Done: true}
+				}
+				return
+			}
+		}
+		if lifecycle, ok := c.client.(lifecycleUpgradeClient); ok {
+			err = lifecycle.lifecycleUpgrade(streamCtx, image, func(event ports.UpgradeEvent) { stream.results <- ports.UpgradeResult{Event: &event} })
+		} else {
+			err = c.Upgrade(streamCtx, target, image)
+		}
+		if err == nil {
+			stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "upgrade complete"}, Done: true}
+		} else {
+			stream.results <- ports.UpgradeResult{Err: err, Done: true}
+		}
 	}()
 	return stream
 }
@@ -179,4 +215,53 @@ func parseSchematicAuthor(author string) (flavor, factory string) {
 		return author, "factory.talos.dev"
 	}
 	return author[:idx], strings.TrimSuffix(author[idx+2:], ")")
+}
+func supportsLifecycleUpgradeAPI(raw string) bool {
+	version, err := semver.Parse(strings.TrimPrefix(raw, "v"))
+	if err != nil {
+		return false
+	}
+	min, _ := semver.Parse("1.13.0-alpha.2")
+	max, _ := semver.Parse("2.0.0")
+	return version.GT(min) && version.LT(max)
+}
+func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
+	stream, err := c.client.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{Source: &machineapi.InstallArtifactsSource{ImageName: image}})
+	if err != nil {
+		return err
+	}
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: "installing Talos image"})
+	for {
+		response, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			return fmt.Errorf("lifecycle upgrade ended without exit code")
+		}
+		if recvErr != nil {
+			return recvErr
+		}
+		if response.GetProgress() == nil {
+			continue
+		}
+		switch value := response.GetProgress().GetResponse().(type) {
+		case *machineapi.LifecycleServiceInstallProgress_Message:
+			progress(ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: value.Message})
+		case *machineapi.LifecycleServiceInstallProgress_ExitCode:
+			if value.ExitCode != 0 {
+				return fmt.Errorf("lifecycle upgrade failed with exit code %d", value.ExitCode)
+			}
+			return nil
+		}
+	}
+}
+func (c machineryNodeControlClient) upgradeVersion(ctx context.Context) (string, error) {
+	response, err := c.client.Version(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, message := range response.GetMessages() {
+		if version := message.GetVersion(); version != nil {
+			return version.GetTag(), nil
+		}
+	}
+	return "", fmt.Errorf("Talos version response contained no version")
 }
