@@ -25,7 +25,7 @@ Use `:` as the separator on Unix and `;` on Windows. Repeated `--talosconfig` fl
 
 ## `T9S_ENABLE_WRITES`
 
-Enables gated node reboot and shutdown from `:nodes` (equivalent to passing `--enable-writes`). Read-only by default:
+Enables gated node reboot, shutdown, rollback, and Talos upgrade from `:nodes` (equivalent to passing `--enable-writes`), plus service actions. Read-only by default:
 
 ```bash
 export T9S_ENABLE_WRITES=true

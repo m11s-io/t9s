@@ -32,7 +32,7 @@ Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
 implemented.
 
-The supported Talos version is **v1.13.3**.
+The supported Talos version is **v1.13.3**. Talos upgrades are node-level operations: t9s upgrades the Talos OS on the selected node; it does not perform a Kubernetes control-plane upgrade.
 
 ## Install
 
@@ -86,7 +86,7 @@ additionally allows reboot, shutdown, rollback, and upgrade of selected
 node(s) from the nodes screen, and start/stop/restart of the selected
 service from the services screen, each gated behind an inline confirmation
 that flags control-plane and etcd-quorum risk. The header's `[RO]`/`[RW]` badge
-always reflects the active mode. As before, the Talos credentials
+always reflects the active mode. Talos upgrade progress covers image pull, install, drain, reboot, readiness, and uncordon when the lifecycle API is available; unsupported versions use the legacy upgrade RPC. A target skipping more than one Talos minor release receives an advisory warning. Kubernetes control-plane upgrades are separate. As before, the Talos credentials
 supplied to `t9s` may themselves be privileged — protect the talosconfig
 as a sensitive secret and grant only the permissions the operator needs.
 Do not commit real endpoints or credentials as test data.

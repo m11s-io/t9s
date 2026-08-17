@@ -32,7 +32,7 @@ These open from a selected row in `:nodes` rather than through the command palet
 | `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
 | `X` | Shut down the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
 | `B` | Roll back the marked node(s) (or the selected node if none are marked) to the previous Talos OS install, behind a confirm prompt. Requires `--enable-writes`. |
-| `U` | Upgrade the selected node to a specified Talos OS image, behind a prompt prefilled with the node's current install image and a confirm step. Requires `--enable-writes`. |
+| `U` | Upgrade the selected node to a specified Talos OS image, behind a prompt prefilled from the running node's schematic/current version and a confirm step. Shows lifecycle progress when supported; requires `--enable-writes`. |
 
 Each of these views supports `r` to refresh and `Esc`/`q` to return to `:nodes`.
 
