@@ -18,4 +18,4 @@ Upgrades remain gated by `--enable-writes`/`T9S_ENABLE_WRITES` and confirmation.
 
 ## Concerns
 
-Verify the intended `ImageFactorySchematic` runtime-resource shape before claiming live schematic discovery is universally available. Keep undecodable metadata on the declared-image fallback.
+Pinned Talos machinery v1.13.3 does not expose `ImageFactorySchematic`; live discovery uses the `ExtensionStatus` resource named `schematic`. Keep unavailable or undecodable metadata on the declared-image fallback.
