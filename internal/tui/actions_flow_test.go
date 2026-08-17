@@ -326,3 +326,68 @@ func TestRollbackKeyHandlesKittyShiftEncoding(t *testing.T) {
 	require.NotNil(t, rootModel.application.PendingAction, "shift+b (Kitty protocol) must open the confirm prompt, same as legacy \"B\"")
 	assert.Equal(t, application.ActionRollback, rootModel.application.PendingAction.Kind)
 }
+
+func TestUpgradeKeyOpensPromptPrefilledWithCurrentImage(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	})
+
+	updated, cmd := root.Update(keyPress('U'))
+	require.NotNil(t, cmd)
+	msg := cmd()
+	updated, _ = updated.(model).Update(msg)
+	rootModel := updated.(model)
+
+	require.NotNil(t, rootModel.upgradePrompt)
+	assert.Equal(t, "cp-1", rootModel.upgradePrompt.target)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.2", rootModel.upgradePrompt.input.Value())
+}
+
+func TestUpgradePromptEnterOpensPendingActionWithEditedImage(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	})
+	updated, cmd := root.Update(keyPress('U'))
+	updated, _ = updated.(model).Update(cmd())
+	rootModel := updated.(model)
+
+	rootModel.upgradePrompt.input.SetValue("ghcr.io/siderolabs/installer:v1.13.3")
+	updatedAny, _ := rootModel.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	rootModel = updatedAny.(model)
+
+	require.Nil(t, rootModel.upgradePrompt, "Enter must close the text-input step")
+	require.NotNil(t, rootModel.application.PendingAction)
+	assert.Equal(t, application.ActionUpgrade, rootModel.application.PendingAction.Kind)
+	assert.Equal(t, []string{"cp-1"}, rootModel.application.PendingAction.Targets)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", rootModel.application.PendingAction.Image)
+}
+
+func TestUpgradePromptEscCancelsWithoutRequestingAction(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	})
+	updated, cmd := root.Update(keyPress('U'))
+	updated, _ = updated.(model).Update(cmd())
+	rootModel := updated.(model)
+
+	updatedAny, _ := rootModel.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	rootModel = updatedAny.(model)
+
+	assert.Nil(t, rootModel.upgradePrompt)
+	assert.Nil(t, rootModel.application.PendingAction)
+}
+
+func TestUpgradeKeyWithWritesDisabledIsInert(t *testing.T) {
+	appModel, _ := application.NewModel("prod")
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+
+	_, cmd := root.Update(keyPress('U'))
+
+	assert.Nil(t, cmd)
+}

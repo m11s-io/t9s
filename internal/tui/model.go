@@ -37,6 +37,7 @@ type model struct {
 	logs              logsModel
 	palette           commandModel
 	contexts          contextsModel
+	upgradePrompt     *upgradePromptModel
 	notice            string
 	views             viewStack
 	splash            bool
@@ -166,7 +167,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
 			return m, m.command(effect)
 		}
-		if key == "esc" && !m.contexts.active && !m.palette.active && !m.filtering() {
+		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			if views, ok := m.views.pop(); ok {
 				m.views = views
@@ -248,6 +249,23 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var command tea.Cmd
 			m.palette, command = m.palette.update(message)
+			return m, command
+		}
+		if m.upgradePrompt != nil {
+			switch key {
+			case "esc":
+				m.upgradePrompt = nil
+				return m, nil
+			case "enter":
+				target := m.upgradePrompt.target
+				image := m.upgradePrompt.input.Value()
+				m.upgradePrompt = nil
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionUpgrade, Targets: []string{target}, Image: image})
+				return m, m.command(effect)
+			}
+			var command tea.Cmd
+			*m.upgradePrompt, command = m.upgradePrompt.update(message)
 			return m, command
 		}
 		switch key {
@@ -538,6 +556,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if key == "U" && m.application.WritesEnabled && !m.nodes.filtering && m.upgradePrompt == nil {
+			if node, ok := m.nodes.selected(); ok {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestUpgradePrompt{Target: node.Target(), Generation: m.application.Generation})
+				return m, m.command(effect)
+			}
+		}
 		if key == "space" && !m.application.WritesEnabled && !m.nodes.filtering {
 			// Row-marking is a write-action affordance (feeds R/X); keep it
 			// inert while writes are disabled so the nodes screen behaves
@@ -557,9 +582,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if _, ok := message.message.(application.SelectContext); ok {
 			// A different Talos context may reuse the same node IDs/hostnames
-			// (e.g. cp-1 across clusters); never let a mark carry across a
-			// context switch and silently mistarget the new cluster.
+			// (e.g. cp-1 across clusters); never let a mark or an in-flight
+			// upgrade prompt carry across a context switch and silently
+			// mistarget the new cluster.
 			m.nodes.marked = nil
+			m.upgradePrompt = nil
 		}
 		var effect application.Effect
 		m.application, effect = application.Update(m.application, message.message)
@@ -594,7 +621,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = ""
 		}
-		return m, m.command(effect)
+		var upgradeFocus tea.Cmd
+		if opened, ok := message.message.(application.UpgradePromptOpened); ok && opened.Generation == m.application.Generation {
+			prompt := newUpgradePromptModel(opened.Target, opened.Image)
+			m.upgradePrompt = &prompt
+			upgradeFocus = m.upgradePrompt.input.Focus()
+		}
+		return m, tea.Batch(m.command(effect), upgradeFocus)
 	}
 
 	return m, nil
@@ -749,6 +782,9 @@ func (m model) activePrompt() string {
 	}
 	if m.application.PendingServiceAction != nil {
 		return renderPendingServiceActionPrompt(*m.application.PendingServiceAction)
+	}
+	if m.upgradePrompt != nil {
+		return m.upgradePrompt.view()
 	}
 	if prompt := m.palette.view(); prompt != "" {
 		return prompt
