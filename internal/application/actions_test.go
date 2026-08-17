@@ -94,3 +94,7 @@ func TestBuildActionEffectsUsesUpgradeWithImageForUpgradeKind(t *testing.T) {
 	assert.Equal(t, "cp-1", gotTarget)
 	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", gotImage)
 }
+func TestUpgradeMinorWarning(t *testing.T) {
+	assert.Equal(t, "skips intermediate Talos minor releases", application.UpgradeMinorWarning("v1.13.3", "factory.talos.dev/metal-installer/id:v1.15.0"))
+	assert.Equal(t, "", application.UpgradeMinorWarning("v1.13.3", "factory.talos.dev/metal-installer/id:v1.14.0"))
+}

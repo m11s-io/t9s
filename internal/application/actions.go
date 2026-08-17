@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 	"fmt"
+	"github.com/blang/semver/v4"
+	"strings"
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -121,4 +123,41 @@ func BuildActionEffects(model Model, pending PendingAction) []Effect {
 		effects = append(effects, actionEffect(model.nodeController, pending, target, model.Generation))
 	}
 	return effects
+}
+func UpgradeMinorWarning(running, image string) string {
+	run, err := semver.Parse(strings.TrimPrefix(running, "v"))
+	if err != nil {
+		return ""
+	}
+	colon := strings.LastIndex(image, ":")
+	if colon < 0 {
+		return ""
+	}
+	target, err := semver.Parse(strings.TrimPrefix(image[colon+1:], "v"))
+	if err != nil {
+		return ""
+	}
+	if target.Major == run.Major && target.Minor > run.Minor+1 {
+		return "skips intermediate Talos minor releases"
+	}
+	return ""
+}
+func UpgradeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string, image string) string {
+	warning := computeActionWarning(nodes, etcd, targets)
+	if len(targets) == 0 {
+		return warning
+	}
+	for _, node := range nodes {
+		for _, target := range targets {
+			if node.Target() == target {
+				if minor := UpgradeMinorWarning(node.Version, image); minor != "" {
+					if warning != "" {
+						return warning + "; " + minor
+					}
+					return minor
+				}
+			}
+		}
+	}
+	return warning
 }

@@ -275,8 +275,13 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.PendingAction = &PendingAction{
 			Kind:    message.Kind,
 			Targets: append([]string(nil), message.Targets...),
-			Warning: computeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets),
-			Image:   message.Image,
+			Warning: func() string {
+				if message.Kind == ActionUpgrade {
+					return UpgradeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets, message.Image)
+				}
+				return computeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets)
+			}(),
+			Image: message.Image,
 		}
 		model.ActionResults = nil
 		model.ActionTotal = 0
