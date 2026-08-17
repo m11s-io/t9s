@@ -52,6 +52,24 @@ func (f *FakeNodeController) CurrentInstallImage(ctx context.Context, target str
 	return f.CurrentInstallImageFunc(ctx, target)
 }
 
+type FakeServiceController struct {
+	StartFunc   func(ctx context.Context, node, service string) error
+	StopFunc    func(ctx context.Context, node, service string) error
+	RestartFunc func(ctx context.Context, node, service string) error
+}
+
+func (f *FakeServiceController) Start(ctx context.Context, node, service string) error {
+	return f.StartFunc(ctx, node, service)
+}
+
+func (f *FakeServiceController) Stop(ctx context.Context, node, service string) error {
+	return f.StopFunc(ctx, node, service)
+}
+
+func (f *FakeServiceController) Restart(ctx context.Context, node, service string) error {
+	return f.RestartFunc(ctx, node, service)
+}
+
 type FakeServiceReader struct {
 	ListFunc func(context.Context) (domain.ServiceSet, error)
 }
@@ -140,6 +158,7 @@ func (f *FakeKubernetesResolver) Resolve(ctx context.Context, talosContext strin
 type FakeSession struct {
 	NodeReader             ports.NodeReader
 	NodeController         ports.NodeController
+	ServiceController      ports.ServiceController
 	ServiceReader          ports.ServiceReader
 	LogReader              ports.ServiceLogReader
 	EventReader            ports.EventReader
@@ -158,6 +177,8 @@ type FakeSession struct {
 func (f *FakeSession) Nodes() ports.NodeReader { return f.NodeReader }
 
 func (f *FakeSession) NodeActions() ports.NodeController { return f.NodeController }
+
+func (f *FakeSession) ServiceActions() ports.ServiceController { return f.ServiceController }
 
 func (f *FakeSession) Services() ports.ServiceReader { return f.ServiceReader }
 
