@@ -26,14 +26,35 @@ const pendingActionWarningBudget = 40
 // warning and the line is short enough not to need truncation.
 func renderPendingActionPrompt(pending application.PendingAction) string {
 	verb := "Reboot"
-	if pending.Kind == application.ActionShutdown {
+	switch pending.Kind {
+	case application.ActionShutdown:
 		verb = "Shutdown"
+	case application.ActionRollback:
+		verb = "Rollback"
+	case application.ActionUpgrade:
+		verb = "Upgrade to " + pending.Image
 	}
 	if pending.Warning != "" {
 		warning := truncateWarningTail(pending.Warning, pendingActionWarningBudget)
 		return fmt.Sprintf("!! %s — %s %d node(s)? (y/n)", warning, verb, len(pending.Targets))
 	}
 	return verb + " " + strings.Join(pending.Targets, ", ") + "? (y/n)"
+}
+
+func renderPendingServiceActionPrompt(pending application.PendingServiceAction) string {
+	verb := "Start"
+	switch pending.Kind {
+	case application.ServiceActionStop:
+		verb = "Stop"
+	case application.ServiceActionRestart:
+		verb = "Restart"
+	}
+	target := pending.Service + "@" + pending.Node
+	if pending.Warning != "" {
+		warning := truncateWarningTail(pending.Warning, pendingActionWarningBudget)
+		return fmt.Sprintf("!! %s — %s %s? (y/n)", warning, verb, target)
+	}
+	return verb + " " + target + "? (y/n)"
 }
 
 // truncateWarningTail keeps the tail of a long warning — where the concrete

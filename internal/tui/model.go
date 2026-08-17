@@ -740,6 +740,9 @@ func (m model) activePrompt() string {
 	if m.application.PendingAction != nil {
 		return renderPendingActionPrompt(*m.application.PendingAction)
 	}
+	if m.application.PendingServiceAction != nil {
+		return renderPendingServiceActionPrompt(*m.application.PendingServiceAction)
+	}
 	if prompt := m.palette.view(); prompt != "" {
 		return prompt
 	}
