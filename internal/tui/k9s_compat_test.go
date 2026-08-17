@@ -33,6 +33,6 @@ func TestK9sCompatibilityDocumentsReadOnlyTalosDeviations(t *testing.T) {
 	serviceHints := renderActionHints(actionHints(viewServices, false))
 	assert.Contains(t, serviceHints, "<d> Detail", "Talos services use Enter/d for the same read-only detail")
 	for _, destructive := range []string{"Delete", "Kill", "Drain", "Edit"} {
-		assert.NotContains(t, serviceHints, destructive, "t9s deliberately omits unsupported destructive Kubernetes actions")
+		assert.NotContains(t, serviceHints, destructive, "t9s deliberately omits Kubernetes-pod-style destructive actions; Talos-level service start/stop/restart (S/T/R, WritesEnabled-gated) is a deliberate, separate addition")
 	}
 }

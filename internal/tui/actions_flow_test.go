@@ -391,3 +391,77 @@ func TestUpgradeKeyWithWritesDisabledIsInert(t *testing.T) {
 
 	assert.Nil(t, cmd)
 }
+
+func writesEnabledServicesTestModel(t *testing.T, controller *testkit.FakeServiceController) model {
+	t.Helper()
+	appModel, _ := application.NewModel("prod")
+	appModel.WritesEnabled = true
+	appModel, _ = application.Update(appModel, application.ServicesLoaded{
+		Generation: appModel.Generation,
+		Services:   domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}},
+	})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, ServiceController: controller})
+	runner := application.NewRunner(application.Dependencies{})
+	root := newModel(t.Context(), false, appModel, runner)
+	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+	root.services = root.services.setState(root.application.Services)
+	return root
+}
+
+func TestServiceRestartKeyWithWritesEnabledOpensConfirmPrompt(t *testing.T) {
+	root := writesEnabledServicesTestModel(t, &testkit.FakeServiceController{})
+
+	updated, _ := root.Update(keyPress('R'))
+	rootModel := updated.(model)
+
+	require.NotNil(t, rootModel.application.PendingServiceAction)
+	assert.Equal(t, application.ServiceActionRestart, rootModel.application.PendingServiceAction.Kind)
+	assert.Equal(t, "etcd", rootModel.application.PendingServiceAction.Service)
+	assert.Equal(t, "cp-1", rootModel.application.PendingServiceAction.Node)
+}
+
+func TestServiceStartKeyWithWritesDisabledIsInert(t *testing.T) {
+	appModel, _ := application.NewModel("prod")
+	appModel, _ = application.Update(appModel, application.ServicesLoaded{
+		Generation: appModel.Generation,
+		Services:   domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}},
+	})
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+	root.services = root.services.setState(root.application.Services)
+
+	updated, _ := root.Update(keyPress('S'))
+
+	assert.Nil(t, updated.(model).application.PendingServiceAction)
+}
+
+func TestServiceStopKeyConfirmedCallsController(t *testing.T) {
+	var stopCalled bool
+	root := writesEnabledServicesTestModel(t, &testkit.FakeServiceController{
+		StopFunc: func(context.Context, string, string) error {
+			stopCalled = true
+			return nil
+		},
+	})
+	updated, _ := root.Update(keyPress('T'))
+	rootModel := updated.(model)
+	require.NotNil(t, rootModel.application.PendingServiceAction)
+
+	updatedAny, cmd := rootModel.Update(keyPress('y'))
+	require.NotNil(t, cmd)
+	cmd()
+
+	assert.Nil(t, updatedAny.(model).application.PendingServiceAction)
+	assert.True(t, stopCalled)
+}
+
+func TestServiceActionOtherKeyCancelsPrompt(t *testing.T) {
+	root := writesEnabledServicesTestModel(t, &testkit.FakeServiceController{})
+	updated, _ := root.Update(keyPress('S'))
+	rootModel := updated.(model)
+	require.NotNil(t, rootModel.application.PendingServiceAction)
+
+	updatedAny, _ := rootModel.Update(keyPress('n'))
+
+	assert.Nil(t, updatedAny.(model).application.PendingServiceAction)
+}

@@ -144,22 +144,36 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+c" {
 			return m, m.shutdown()
 		}
-		if m.application.PendingAction != nil {
+		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil {
 			if key == "y" {
-				pending := *m.application.PendingAction
-				effects := application.BuildActionEffects(m.application, pending)
+				if m.application.PendingAction != nil {
+					pending := *m.application.PendingAction
+					effects := application.BuildActionEffects(m.application, pending)
+					var confirmEffect application.Effect
+					m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
+					// A confirmed action has fired for the currently marked rows;
+					// clear marks so a subsequent R/X doesn't silently re-target
+					// already-actioned nodes.
+					m.nodes.marked = nil
+					cmds := make([]tea.Cmd, 0, len(effects)+1)
+					if cmd := m.command(confirmEffect); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					for _, effect := range effects {
+						cmds = append(cmds, m.command(effect))
+					}
+					return m, tea.Batch(cmds...)
+				}
+				pending := *m.application.PendingServiceAction
+				effect := application.BuildServiceActionEffect(m.application, pending)
 				var confirmEffect application.Effect
 				m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
-				// A confirmed action has fired for the currently marked rows;
-				// clear marks so a subsequent R/X doesn't silently re-target
-				// already-actioned nodes.
-				m.nodes.marked = nil
-				cmds := make([]tea.Cmd, 0, len(effects)+1)
+				cmds := make([]tea.Cmd, 0, 2)
 				if cmd := m.command(confirmEffect); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-				for _, effect := range effects {
-					cmds = append(cmds, m.command(effect))
+				if cmd := m.command(effect); cmd != nil {
+					cmds = append(cmds, cmd)
 				}
 				return m, tea.Batch(cmds...)
 			}
@@ -381,6 +395,27 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					service := m.services.selectedValue()
 					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: fallback(service.Name) + "@" + fallback(service.Node)})
 					return m, nil
+				}
+			}
+			if key == "S" && m.application.WritesEnabled && !m.services.filtering {
+				if service, ok := m.services.selected(); ok {
+					var effect application.Effect
+					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionStart, Node: service.Node, Service: service.Name})
+					return m, m.command(effect)
+				}
+			}
+			if key == "T" && m.application.WritesEnabled && !m.services.filtering {
+				if service, ok := m.services.selected(); ok {
+					var effect application.Effect
+					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionStop, Node: service.Node, Service: service.Name})
+					return m, m.command(effect)
+				}
+			}
+			if key == "R" && m.application.WritesEnabled && !m.services.filtering {
+				if service, ok := m.services.selected(); ok {
+					var effect application.Effect
+					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: service.Node, Service: service.Name})
+					return m, m.command(effect)
 				}
 			}
 			m.services = m.services.update(message)

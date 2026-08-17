@@ -18,6 +18,13 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 		)
 		if kind == viewServices {
 			hints = append(hints, actionHint{Key: "l", Label: "Logs"})
+			if writesEnabled {
+				hints = append(hints,
+					actionHint{Key: "S", Label: "Start"},
+					actionHint{Key: "T", Label: "Stop"},
+					actionHint{Key: "R", Label: "Restart"},
+				)
+			}
 		} else {
 			hints = append(hints,
 				actionHint{Key: "p", Label: "Processes"},
