@@ -57,7 +57,35 @@ type nodeControlClient interface {
 	CurrentInstallImage(ctx context.Context) (string, error)
 }
 
-type machineryNodeControlClient struct{ client *talosclient.Client }
+type imagePullStream interface {
+	Recv() (*machineapi.ImageServicePullResponse, error)
+}
+
+type lifecycleInstallStream interface {
+	Recv() (*machineapi.LifecycleServiceUpgradeResponse, error)
+}
+
+// lifecycleOperations isolates generated streaming clients for focused tests.
+// It remains adapter-private; ports continue to expose only normalized events.
+type lifecycleOperations interface {
+	Pull(context.Context, string) (imagePullStream, error)
+	Upgrade(context.Context, string) (lifecycleInstallStream, error)
+}
+
+type machineryLifecycleOperations struct{ client *talosclient.Client }
+
+func (o machineryLifecycleOperations) Pull(ctx context.Context, image string) (imagePullStream, error) {
+	return o.client.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{ImageRef: image})
+}
+
+func (o machineryLifecycleOperations) Upgrade(ctx context.Context, image string) (lifecycleInstallStream, error) {
+	return o.client.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{Source: &machineapi.InstallArtifactsSource{ImageName: image}})
+}
+
+type machineryNodeControlClient struct {
+	client    *talosclient.Client
+	lifecycle lifecycleOperations
+}
 
 func (c machineryNodeControlClient) Reboot(ctx context.Context, opts ...talosclient.RebootMode) error {
 	return c.client.Reboot(ctx, opts...)
@@ -543,7 +571,11 @@ func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
 	return nil
 }
 func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
-	pull, err := c.client.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{ImageRef: image})
+	lifecycle := c.lifecycle
+	if lifecycle == nil {
+		lifecycle = machineryLifecycleOperations{client: c.client}
+	}
+	pull, err := lifecycle.Pull(ctx, image)
 	if err != nil {
 		return fmt.Errorf("pull upgrade image: %w", err)
 	}
@@ -560,7 +592,7 @@ func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image 
 			progress(ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling upgrade image", Current: layer.GetOffset(), Total: layer.GetTotal()})
 		}
 	}
-	stream, err := c.client.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{Source: &machineapi.InstallArtifactsSource{ImageName: image}})
+	stream, err := lifecycle.Upgrade(ctx, image)
 	if err != nil {
 		return err
 	}

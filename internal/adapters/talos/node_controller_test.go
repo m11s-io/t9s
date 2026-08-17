@@ -3,6 +3,7 @@ package talos
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -251,6 +252,93 @@ func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
 	assert.True(t, supportsLifecycleUpgradeAPI("v1.13.3"))
 	assert.False(t, supportsLifecycleUpgradeAPI("v2.0.0"))
 	assert.False(t, supportsLifecycleUpgradeAPI("not-a-version"))
+}
+
+type fakeLifecycleOperations struct {
+	order      []string
+	pull       imagePullStream
+	pullErr    error
+	install    lifecycleInstallStream
+	installErr error
+}
+
+func (f *fakeLifecycleOperations) Pull(context.Context, string) (imagePullStream, error) {
+	f.order = append(f.order, "pull")
+	return f.pull, f.pullErr
+}
+
+func (f *fakeLifecycleOperations) Upgrade(context.Context, string) (lifecycleInstallStream, error) {
+	f.order = append(f.order, "install")
+	return f.install, f.installErr
+}
+
+type fakeImagePullStream struct {
+	responses []*machineapi.ImageServicePullResponse
+}
+
+func (s *fakeImagePullStream) Recv() (*machineapi.ImageServicePullResponse, error) {
+	if len(s.responses) == 0 {
+		return nil, io.EOF
+	}
+	response := s.responses[0]
+	s.responses = s.responses[1:]
+	return response, nil
+}
+
+type fakeLifecycleInstallStream struct {
+	responses []*machineapi.LifecycleServiceUpgradeResponse
+}
+
+func (s *fakeLifecycleInstallStream) Recv() (*machineapi.LifecycleServiceUpgradeResponse, error) {
+	if len(s.responses) == 0 {
+		return nil, io.EOF
+	}
+	response := s.responses[0]
+	s.responses = s.responses[1:]
+	return response, nil
+}
+
+func lifecycleExitCode(code int32) *machineapi.LifecycleServiceUpgradeResponse {
+	return &machineapi.LifecycleServiceUpgradeResponse{Progress: &machineapi.LifecycleServiceInstallProgress{
+		Response: &machineapi.LifecycleServiceInstallProgress_ExitCode{ExitCode: code},
+	}}
+}
+
+func TestMachineryLifecycleUpgradePullsBeforeInstalling(t *testing.T) {
+	ops := &fakeLifecycleOperations{
+		pull:    &fakeImagePullStream{},
+		install: &fakeLifecycleInstallStream{responses: []*machineapi.LifecycleServiceUpgradeResponse{lifecycleExitCode(0)}},
+	}
+	client := machineryNodeControlClient{lifecycle: ops}
+	var events []ports.UpgradeEvent
+
+	err := client.lifecycleUpgrade(t.Context(), "image:v1.13.4", func(event ports.UpgradeEvent) { events = append(events, event) })
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pull", "install"}, ops.order)
+	assert.Equal(t, ports.UpgradeInstalling, events[len(events)-1].Phase)
+}
+
+func TestMachineryLifecycleUpgradeRejectsNonzeroExitCode(t *testing.T) {
+	client := machineryNodeControlClient{lifecycle: &fakeLifecycleOperations{
+		pull:    &fakeImagePullStream{},
+		install: &fakeLifecycleInstallStream{responses: []*machineapi.LifecycleServiceUpgradeResponse{lifecycleExitCode(17)}},
+	}}
+
+	err := client.lifecycleUpgrade(t.Context(), "image:v1.13.4", func(ports.UpgradeEvent) {})
+
+	require.ErrorContains(t, err, "exit code 17")
+}
+
+func TestMachineryLifecycleUpgradeRejectsEOFBeforeExitCode(t *testing.T) {
+	client := machineryNodeControlClient{lifecycle: &fakeLifecycleOperations{
+		pull:    &fakeImagePullStream{},
+		install: &fakeLifecycleInstallStream{},
+	}}
+
+	err := client.lifecycleUpgrade(t.Context(), "image:v1.13.4", func(ports.UpgradeEvent) {})
+
+	require.ErrorContains(t, err, "ended without exit code")
 }
 
 type fakeLifecycleMaintenanceClient struct {
