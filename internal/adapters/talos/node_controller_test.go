@@ -195,3 +195,13 @@ func TestNodeControllerCurrentInstallImageWrapsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cp-1")
 }
+func TestDeriveSchematicInstallerImage(t *testing.T) {
+	assert.Equal(t, "factory.talos.dev/metal-installer/abc123:v1.13.4", deriveSchematicInstallerImage("factory.talos.dev", "metal", "abc123", "v1.13.4"))
+	assert.Equal(t, "factory.talos.dev/aws-installer/abc123:v1.13.4", deriveSchematicInstallerImage("factory.talos.dev", "aws", "abc123", "v1.13.4"))
+	assert.Equal(t, "", deriveSchematicInstallerImage("factory.talos.dev", "", "abc123", "v1.13.4"))
+}
+func TestParseSchematicAuthor(t *testing.T) {
+	flavor, factory := parseSchematicAuthor("metal (https://factory.example)")
+	assert.Equal(t, "metal", flavor)
+	assert.Equal(t, "https://factory.example", factory)
+}

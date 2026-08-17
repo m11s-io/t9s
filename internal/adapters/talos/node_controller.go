@@ -10,6 +10,7 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
+	runtimeresource "github.com/siderolabs/talos/pkg/machinery/resources/runtime"
 )
 
 type nodeControlClient interface {
@@ -67,6 +68,19 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 		return "", err
 	}
 	declaredImage := cfg.Provider().Machine().Install().Image()
+	var schematicFactory, schematicFlavor, schematicID, schematicAuthor string
+	if extensions, listErr := safe.StateListAll[*runtimeresource.ExtensionStatus](ctx, c.client.COSI); listErr == nil {
+		for extension := range extensions.All() {
+			if extension.TypedSpec().Metadata.Name == "schematic" {
+				schematicID = extension.TypedSpec().Metadata.Version
+				schematicAuthor = extension.TypedSpec().Metadata.Author
+				break
+			}
+		}
+		if schematicID != "" {
+			schematicFlavor, schematicFactory = parseSchematicAuthor(schematicAuthor)
+		}
+	}
 
 	versionResponse, err := c.client.Version(ctx)
 	if err != nil {
@@ -77,6 +91,9 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 	}
 	for _, message := range versionResponse.GetMessages() {
 		if version := message.GetVersion(); version != nil {
+			if image := deriveSchematicInstallerImage(schematicFactory, schematicFlavor, schematicID, version.GetTag()); image != "" {
+				return image, nil
+			}
 			return deriveUpgradeImage(declaredImage, version.GetTag()), nil
 		}
 	}
@@ -84,6 +101,13 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 }
 
 type nodeController struct{ client nodeControlClient }
+type upgradeStream struct {
+	results chan ports.UpgradeResult
+	cancel  context.CancelFunc
+}
+
+func (s *upgradeStream) Results() <-chan ports.UpgradeResult { return s.results }
+func (s *upgradeStream) Cancel()                             { s.cancel() }
 
 func newNodeController(client nodeControlClient) ports.NodeController {
 	return &nodeController{client: client}
@@ -125,10 +149,34 @@ func (c *nodeController) Upgrade(ctx context.Context, target, image string) erro
 	return nil
 }
 
+func (c *nodeController) UpgradeStream(ctx context.Context, target, image string) ports.UpgradeStream {
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream := &upgradeStream{results: make(chan ports.UpgradeResult, 1), cancel: cancel}
+	go func() {
+		defer close(stream.results)
+		defer cancel()
+		stream.results <- ports.UpgradeResult{Err: c.Upgrade(streamCtx, target, image), Done: true}
+	}()
+	return stream
+}
+
 func (c *nodeController) CurrentInstallImage(ctx context.Context, target string) (string, error) {
 	image, err := c.client.CurrentInstallImage(talosclient.WithNode(ctx, target))
 	if err != nil {
 		return "", fmt.Errorf("current install image %s: %w", target, err)
 	}
 	return image, nil
+}
+func deriveSchematicInstallerImage(factory, flavor, schematic, tag string) string {
+	if factory == "" || flavor == "" || schematic == "" || tag == "" {
+		return ""
+	}
+	return factory + "/" + flavor + "-installer/" + schematic + ":" + tag
+}
+func parseSchematicAuthor(author string) (flavor, factory string) {
+	idx := strings.LastIndex(author, " (")
+	if idx < 0 {
+		return author, "factory.talos.dev"
+	}
+	return author[:idx], strings.TrimSuffix(author[idx+2:], ")")
 }
