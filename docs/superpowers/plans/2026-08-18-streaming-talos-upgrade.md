@@ -33,9 +33,9 @@ Files: internal/ports/node.go, internal/ports/kubernetes.go, internal/testkit/fa
 
 Files: internal/adapters/talos/node_controller.go, node_controller_test.go, session.go if wiring changes.
 
-- [ ] Write failing tests for ImageFactorySchematic ID/flavor/API URL, metal-installer and aws-installer paths, extension metadata fallback, declared-image fallback, and digest preservation.
+- [ ] Write failing tests for `ExtensionStatus` `schematic` version/author decoding, metal-installer and aws-installer paths, declared-image fallback, and digest preservation.
 - [ ] Run focused adapter tests and confirm failures.
-- [ ] Read the singleton ImageFactorySchematic first; fall back to schematic extension metadata, then declared image. Use a pure helper matching Talos images.NewInstallerImage and running version tag replacement.
+- [ ] Read the installed `ExtensionStatus` resource named `schematic`; its version supplies the schematic ID and its author supplies flavor/factory metadata. The pinned v1.13.3 SDK has no `ImageFactorySchematic` resource. Fall back to the declared image. Use a pure helper matching Talos images.NewInstallerImage and running version tag replacement.
 - [ ] Run adapter tests and commit: feat: preserve Talos schematic in upgrade suggestions.
 
 ### Task 3: Lifecycle orchestration and legacy fallback

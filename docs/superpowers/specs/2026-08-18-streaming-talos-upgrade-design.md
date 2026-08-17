@@ -53,9 +53,14 @@ image-pull, drain, reboot, readiness, and uncordon behavior.
 its existing port shape. For the selected node it reads:
 
 1. the live Talos version tag;
-2. the singleton runtime `ImageFactorySchematic`, which carries the schematic
-   ID, platform flavor, and Image Factory API URL;
+2. the installed `ExtensionStatus` resource named `schematic`: its version is
+   the schematic ID and its author encodes the installer flavor and Image
+   Factory URL;
 3. the declared machine-config install image as a final fallback.
+
+The pinned Talos machinery v1.13.3 SDK does not expose the newer first-class
+`ImageFactorySchematic` runtime resource, so t9s must not claim or attempt to
+read it.
 
 When a non-empty schematic ID and flavor are available, the suggestion follows
 Talos's own `images.NewInstallerImage` shape:
@@ -75,11 +80,9 @@ t9s retains the current repository-preserving behavior: replace the declared
 image tag with the running version. Digest references remain unchanged because
 there is no safe tag substitution.
 
-On early or partially-upgraded v1.13 nodes where `ImageFactorySchematic` is not
-available, t9s may derive the same fields from the installed `schematic`
-extension metadata: its version is the schematic ID and its author encodes the
-flavor/factory metadata. If that compatibility fallback cannot be decoded,
-t9s uses the declared-image fallback instead of inventing a repository.
+On v1.13.3, the installed `schematic` extension metadata is the live
+schematic-discovery source. If it is unavailable or cannot be decoded, t9s
+uses the declared-image fallback instead of inventing a repository.
 
 No Crane, Skopeo, registry HTTP request, or Image Factory mutation is required.
 
