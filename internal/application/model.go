@@ -244,12 +244,15 @@ type ActionKind string
 const (
 	ActionReboot   ActionKind = "reboot"
 	ActionShutdown ActionKind = "shutdown"
+	ActionRollback ActionKind = "rollback"
+	ActionUpgrade  ActionKind = "upgrade"
 )
 
 type PendingAction struct {
 	Kind    ActionKind
 	Targets []string
 	Warning string
+	Image   string
 }
 
 type ActionResult struct {
@@ -260,6 +263,7 @@ type ActionResult struct {
 type RequestAction struct {
 	Kind    ActionKind
 	Targets []string
+	Image   string
 }
 
 func (RequestAction) applicationMessage() {}

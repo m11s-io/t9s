@@ -1404,3 +1404,34 @@ func TestActionResultIgnoredFromOlderGeneration(t *testing.T) {
 
 	assert.Empty(t, got.ActionResults)
 }
+
+func TestRequestActionCarriesImageForUpgradeKind(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "worker-1", Role: domain.NodeRoleWorker},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionUpgrade, Targets: []string{"worker-1"}, Image: "ghcr.io/siderolabs/installer:v1.13.3"})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", got.PendingAction.Image)
+}
+
+func TestRequestActionComputesQuorumWarningForRollbackKind(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1"}, {Hostname: "cp-2"}, {Hostname: "cp-3"},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionRollback, Targets: []string{"cp-1", "cp-2"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Contains(t, got.PendingAction.Warning, "below quorum", "Rollback must reuse the same quorum warning Reboot/Shutdown use, since it also reboots the node")
+}

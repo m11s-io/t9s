@@ -9,21 +9,31 @@ import (
 )
 
 func computeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string) string {
-	controlPlane := false
+	if !targetsIncludeControlPlane(nodes, targets) {
+		return ""
+	}
+	return computeEtcdQuorumWarning(nodes, etcd, targets)
+}
+
+func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) bool {
 	for _, target := range targets {
 		for _, node := range nodes {
 			if node.Target() != target {
 				continue
 			}
 			if node.Role == domain.NodeRoleControl {
-				controlPlane = true
+				return true
 			}
 			break
 		}
 	}
-	if !controlPlane {
-		return ""
-	}
+	return false
+}
+
+// computeEtcdQuorumWarning is shared by every action that reboots a
+// control-plane node (Reboot, Shutdown, Rollback, Upgrade) and by service
+// actions that stop or restart the etcd service directly.
+func computeEtcdQuorumWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string) string {
 	if etcd.Status != Ready && etcd.Status != Partial {
 		return "control-plane node(s); etcd quorum impact unknown (etcd data unavailable)"
 	}
@@ -62,19 +72,23 @@ func computeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets [
 	return "control-plane node(s)"
 }
 
-func actionEffect(controller ports.NodeController, kind ActionKind, target string, generation uint64) Effect {
+func actionEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if controller == nil {
 			return ActionFailed{Generation: generation, Target: target, Err: fmt.Errorf("node controller is not configured")}
 		}
 		var err error
-		switch kind {
+		switch pending.Kind {
 		case ActionReboot:
 			err = controller.Reboot(ctx, target, ports.RebootDefault)
 		case ActionShutdown:
 			err = controller.Shutdown(ctx, target, false)
+		case ActionRollback:
+			err = controller.Rollback(ctx, target)
+		case ActionUpgrade:
+			err = controller.Upgrade(ctx, target, pending.Image)
 		default:
-			err = fmt.Errorf("unsupported action %q", kind)
+			err = fmt.Errorf("unsupported action %q", pending.Kind)
 		}
 		if err != nil {
 			return ActionFailed{Generation: generation, Target: target, Err: err}
@@ -92,7 +106,7 @@ func actionEffect(controller ports.NodeController, kind ActionKind, target strin
 func BuildActionEffects(model Model, pending PendingAction) []Effect {
 	effects := make([]Effect, 0, len(pending.Targets))
 	for _, target := range pending.Targets {
-		effects = append(effects, actionEffect(model.nodeController, pending.Kind, target, model.Generation))
+		effects = append(effects, actionEffect(model.nodeController, pending, target, model.Generation))
 	}
 	return effects
 }

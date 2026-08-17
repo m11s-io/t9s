@@ -274,6 +274,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			Kind:    message.Kind,
 			Targets: append([]string(nil), message.Targets...),
 			Warning: computeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets),
+			Image:   message.Image,
 		}
 		model.ActionResults = nil
 		model.ActionTotal = 0

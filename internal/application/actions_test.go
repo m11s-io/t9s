@@ -55,3 +55,42 @@ func TestBuildActionEffectsUsesShutdownForShutdownKind(t *testing.T) {
 	effects[0](t.Context(), application.Dependencies{})
 	assert.True(t, shutdownCalled)
 }
+
+func TestBuildActionEffectsUsesRollbackForRollbackKind(t *testing.T) {
+	var rollbackCalled bool
+	controller := &testkit.FakeNodeController{
+		RollbackFunc: func(context.Context, string) error {
+			rollbackCalled = true
+			return nil
+		},
+	}
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	pending := application.PendingAction{Kind: application.ActionRollback, Targets: []string{"cp-1"}}
+
+	effects := application.BuildActionEffects(model, pending)
+
+	require.Len(t, effects, 1)
+	effects[0](t.Context(), application.Dependencies{})
+	assert.True(t, rollbackCalled)
+}
+
+func TestBuildActionEffectsUsesUpgradeWithImageForUpgradeKind(t *testing.T) {
+	var gotTarget, gotImage string
+	controller := &testkit.FakeNodeController{
+		UpgradeFunc: func(_ context.Context, target, image string) error {
+			gotTarget, gotImage = target, image
+			return nil
+		},
+	}
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	pending := application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "ghcr.io/siderolabs/installer:v1.13.3"}
+
+	effects := application.BuildActionEffects(model, pending)
+
+	require.Len(t, effects, 1)
+	effects[0](t.Context(), application.Dependencies{})
+	assert.Equal(t, "cp-1", gotTarget)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", gotImage)
+}
