@@ -109,6 +109,43 @@ func TestServiceLogsStripANSIBeforeFilteringAndRendering(t *testing.T) {
 	assert.NotContains(t, logs.viewSized(contentSize{Width: 40, Height: 3}), "\x1b[")
 }
 
+func TestServiceLogsSanitizeNeutralizesControlCharacters(t *testing.T) {
+	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+		"safe log\rEVIL",
+		"abc\b\b\bXYZ",
+		"hello\x0eworld",
+		"a\tb",
+	}})
+
+	lines := logs.visibleLines()
+
+	require.Equal(t, []string{"safe logEVIL", "abcXYZ", "helloworld", "a b"}, lines)
+	for _, line := range lines {
+		assert.NotContains(t, line, "\r")
+		assert.NotContains(t, line, "\b")
+		assert.NotContains(t, line, "\x0e")
+		assert.NotContains(t, line, "\t")
+		// With control characters neutralized, StringWidth is an accurate
+		// predictor of what actually renders (no zero-width \t, no
+		// cursor-repositioning \r/\b hiding in the count).
+		assert.Equal(t, len(line), ansi.StringWidth(line))
+	}
+}
+
+func TestServiceLogsSanitizesErrBeforeRendering(t *testing.T) {
+	logs := newLogsModel(application.LogState{
+		Status: application.Failed,
+		Lines:  []string{"line one"},
+		Err:    "\x1b[31mstream closed\x1b[0m\rEVIL",
+	})
+
+	view := logs.viewSized(contentSize{Width: 40, Height: 4})
+
+	assert.NotContains(t, view, "\x1b[")
+	assert.NotContains(t, view, "\r")
+	assert.Contains(t, view, "stream closedEVIL")
+}
+
 func TestServiceLogsHardwrapANSIAndWideTextWithinDisplayWidth(t *testing.T) {
 	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
 		"abcde\x1b[31mfghij\x1b[0m界界",

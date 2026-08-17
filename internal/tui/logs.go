@@ -11,10 +11,31 @@ import (
 	"github.com/m11s-io/t9s/internal/application"
 )
 
+// sanitizeLogLine strips ANSI escape sequences and neutralizes remaining C0
+// control characters (and DEL) so the result is safe to measure with
+// ansi.StringWidth and safe to render without corrupting the terminal state
+// (e.g. \r/\b repositioning the cursor, \x0e switching character sets).
+// Tabs are converted to a single space rather than dropped, since dropping
+// them would misrepresent the log content; expanding to a tab stop is not
+// done here because callers only need an accurate, stable width, not
+// column-alignment fidelity.
+func sanitizeLogLine(line string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, ansi.Strip(line))
+}
+
 func sanitizeLogLines(lines []string) []string {
 	result := make([]string, len(lines))
 	for index, line := range lines {
-		result[index] = ansi.Strip(line)
+		result[index] = sanitizeLogLine(line)
 	}
 	return result
 }
@@ -30,10 +51,17 @@ type logsModel struct {
 }
 
 func newLogsModel(state application.LogState) logsModel {
-	return logsModel{state: state, following: true, viewport: viewport.New()}
+	m := logsModel{following: true, viewport: viewport.New()}
+	return m.setState(state)
 }
 
+// setState is the single point where log content enters logsModel. It
+// sanitizes Lines and Err so that m.state is always sanitized thereafter;
+// visibleLines and viewSized can rely on that invariant instead of
+// re-sanitizing on every render frame.
 func (m logsModel) setState(state application.LogState) logsModel {
+	state.Lines = sanitizeLogLines(state.Lines)
+	state.Err = sanitizeLogLine(state.Err)
 	m.state = state
 	return m
 }
@@ -83,7 +111,8 @@ func (m logsModel) update(message tea.KeyPressMsg) logsModel {
 }
 
 func (m logsModel) visibleLines() []string {
-	lines := sanitizeLogLines(m.state.Lines)
+	// m.state.Lines is sanitized once in setState; no per-call sanitization needed here.
+	lines := m.state.Lines
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
 		return lines
@@ -121,6 +150,7 @@ func (m logsModel) viewSized(size contentSize) string {
 	lines = append(lines, header)
 	lines = append(lines, body[start:end]...)
 	if m.state.Err != "" {
+		// m.state.Err is sanitized in setState alongside m.state.Lines.
 		lines = append(lines, m.state.Err)
 	} else if m.state.Status == application.Loading {
 		lines = append(lines, "Opening log stream…")
