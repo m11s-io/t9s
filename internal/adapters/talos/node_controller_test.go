@@ -345,6 +345,7 @@ type fakeLifecycleMaintenanceClient struct {
 	*fakeNodeControlClient
 	version         string
 	versionErr      error
+	versionTarget   string
 	lifecycleTarget string
 	steps           []string
 	lifecycleErr    error
@@ -352,7 +353,13 @@ type fakeLifecycleMaintenanceClient struct {
 	maintenance     *fakeUpgradeMaintenance
 }
 
-func (c *fakeLifecycleMaintenanceClient) upgradeVersion(context.Context) (string, error) {
+func (c *fakeLifecycleMaintenanceClient) upgradeVersion(ctx context.Context) (string, error) {
+	if outgoing, ok := metadata.FromOutgoingContext(ctx); ok {
+		nodes := outgoing.Get("node")
+		if len(nodes) > 0 {
+			c.versionTarget = nodes[0]
+		}
+	}
 	return c.version, c.versionErr
 }
 
@@ -450,6 +457,7 @@ func TestNodeControllerUpgradeStreamTargetsLifecycleThenSafelyMaintainsNode(t *t
 	require.NotEmpty(t, results)
 	require.NoError(t, results[len(results)-1].Err)
 	assert.True(t, results[len(results)-1].Done)
+	assert.Equal(t, "10.0.0.12", client.versionTarget)
 	assert.Equal(t, "10.0.0.12", client.lifecycleTarget)
 	assert.Equal(t, []string{"lifecycle", "cordon", "drain", "reboot", "wait-talos", "wait-kubernetes", "uncordon"}, client.steps)
 	assert.Equal(t, ports.UpgradeComplete, results[len(results)-1].Event.Phase)

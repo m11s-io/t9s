@@ -273,7 +273,7 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 			emit(ports.UpgradeResult{Err: errors.New("Talos client cannot determine upgrade API version"), Done: true})
 			return
 		}
-		version, versionErr := versioned.upgradeVersion(streamCtx)
+		version, versionErr := versioned.upgradeVersion(talosclient.WithNode(streamCtx, target))
 		if versionErr != nil {
 			emit(ports.UpgradeResult{Err: fmt.Errorf("check Talos upgrade API version: %w", versionErr), Done: true})
 			return
