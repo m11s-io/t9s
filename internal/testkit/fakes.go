@@ -25,8 +25,11 @@ func (f *FakeNodeReader) List(ctx context.Context) (domain.NodeSet, error) {
 }
 
 type FakeNodeController struct {
-	RebootFunc   func(ctx context.Context, target string, mode ports.RebootMode) error
-	ShutdownFunc func(ctx context.Context, target string, force bool) error
+	RebootFunc              func(ctx context.Context, target string, mode ports.RebootMode) error
+	ShutdownFunc            func(ctx context.Context, target string, force bool) error
+	RollbackFunc            func(ctx context.Context, target string) error
+	UpgradeFunc             func(ctx context.Context, target, image string) error
+	CurrentInstallImageFunc func(ctx context.Context, target string) (string, error)
 }
 
 func (f *FakeNodeController) Reboot(ctx context.Context, target string, mode ports.RebootMode) error {
@@ -35,6 +38,18 @@ func (f *FakeNodeController) Reboot(ctx context.Context, target string, mode por
 
 func (f *FakeNodeController) Shutdown(ctx context.Context, target string, force bool) error {
 	return f.ShutdownFunc(ctx, target, force)
+}
+
+func (f *FakeNodeController) Rollback(ctx context.Context, target string) error {
+	return f.RollbackFunc(ctx, target)
+}
+
+func (f *FakeNodeController) Upgrade(ctx context.Context, target, image string) error {
+	return f.UpgradeFunc(ctx, target, image)
+}
+
+func (f *FakeNodeController) CurrentInstallImage(ctx context.Context, target string) (string, error) {
+	return f.CurrentInstallImageFunc(ctx, target)
 }
 
 type FakeServiceReader struct {

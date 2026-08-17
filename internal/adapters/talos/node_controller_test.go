@@ -13,10 +13,15 @@ import (
 )
 
 type fakeNodeControlClient struct {
-	rebootReq   machineapi.RebootRequest
-	rebootErr   error
-	shutdownReq machineapi.ShutdownRequest
-	shutdownErr error
+	rebootReq       machineapi.RebootRequest
+	rebootErr       error
+	shutdownReq     machineapi.ShutdownRequest
+	shutdownErr     error
+	rollbackErr     error
+	upgradeReq      talosclient.UpgradeOptions
+	upgradeErr      error
+	currentImage    string
+	currentImageErr error
 }
 
 func (c *fakeNodeControlClient) Reboot(ctx context.Context, opts ...talosclient.RebootMode) error {
@@ -31,6 +36,21 @@ func (c *fakeNodeControlClient) Shutdown(ctx context.Context, opts ...talosclien
 		opt(&c.shutdownReq)
 	}
 	return c.shutdownErr
+}
+
+func (c *fakeNodeControlClient) Rollback(ctx context.Context) error {
+	return c.rollbackErr
+}
+
+func (c *fakeNodeControlClient) Upgrade(ctx context.Context, opts ...talosclient.UpgradeOption) error {
+	for _, opt := range opts {
+		opt(&c.upgradeReq)
+	}
+	return c.upgradeErr
+}
+
+func (c *fakeNodeControlClient) CurrentInstallImage(ctx context.Context) (string, error) {
+	return c.currentImage, c.currentImageErr
 }
 
 func TestNodeControllerRebootDefaultModeSendsNoModeOverride(t *testing.T) {
@@ -89,6 +109,67 @@ func TestNodeControllerShutdownWrapsError(t *testing.T) {
 	controller := newNodeController(client)
 
 	err := controller.Shutdown(t.Context(), "cp-1", false)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cp-1")
+}
+
+func TestNodeControllerRollbackWrapsError(t *testing.T) {
+	client := &fakeNodeControlClient{rollbackErr: errors.New("no previous version")}
+	controller := newNodeController(client)
+
+	err := controller.Rollback(t.Context(), "cp-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cp-1")
+	assert.Contains(t, err.Error(), "no previous version")
+}
+
+func TestNodeControllerRollbackSucceeds(t *testing.T) {
+	client := &fakeNodeControlClient{}
+	controller := newNodeController(client)
+
+	err := controller.Rollback(t.Context(), "cp-1")
+
+	require.NoError(t, err)
+}
+
+func TestNodeControllerUpgradeSendsImage(t *testing.T) {
+	client := &fakeNodeControlClient{}
+	controller := newNodeController(client)
+
+	err := controller.Upgrade(t.Context(), "cp-1", "ghcr.io/siderolabs/installer:v1.13.3")
+
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", client.upgradeReq.Request.Image)
+}
+
+func TestNodeControllerUpgradeWrapsError(t *testing.T) {
+	client := &fakeNodeControlClient{upgradeErr: errors.New("incompatible image")}
+	controller := newNodeController(client)
+
+	err := controller.Upgrade(t.Context(), "cp-1", "bad:image")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cp-1")
+	assert.Contains(t, err.Error(), "incompatible image")
+}
+
+func TestNodeControllerCurrentInstallImageReturnsImage(t *testing.T) {
+	client := &fakeNodeControlClient{currentImage: "ghcr.io/siderolabs/installer:v1.13.2"}
+	controller := newNodeController(client)
+
+	image, err := controller.CurrentInstallImage(t.Context(), "cp-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.2", image)
+}
+
+func TestNodeControllerCurrentInstallImageWrapsError(t *testing.T) {
+	client := &fakeNodeControlClient{currentImageErr: errors.New("resource not found")}
+	controller := newNodeController(client)
+
+	_, err := controller.CurrentInstallImage(t.Context(), "cp-1")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cp-1")
