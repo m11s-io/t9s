@@ -86,7 +86,19 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 		case ActionRollback:
 			err = controller.Rollback(ctx, target)
 		case ActionUpgrade:
-			err = controller.Upgrade(ctx, target, pending.Image)
+			stream := controller.UpgradeStream(ctx, target, pending.Image)
+			if stream == nil {
+				err = fmt.Errorf("upgrade stream is not configured")
+			} else {
+				for result := range stream.Results() {
+					if result.Err != nil {
+						err = result.Err
+					}
+					if result.Done {
+						break
+					}
+				}
+			}
 		default:
 			err = fmt.Errorf("unsupported action %q", pending.Kind)
 		}
