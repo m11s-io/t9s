@@ -11,31 +11,10 @@ import (
 	"github.com/m11s-io/t9s/internal/application"
 )
 
-// sanitizeLogLine strips ANSI escape sequences and neutralizes remaining C0
-// control characters (and DEL) so the result is safe to measure with
-// ansi.StringWidth and safe to render without corrupting the terminal state
-// (e.g. \r/\b repositioning the cursor, \x0e switching character sets).
-// Tabs are converted to a single space rather than dropped, since dropping
-// them would misrepresent the log content; expanding to a tab stop is not
-// done here because callers only need an accurate, stable width, not
-// column-alignment fidelity.
-func sanitizeLogLine(line string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\t':
-			return ' '
-		case r < 0x20 || r == 0x7f:
-			return -1
-		default:
-			return r
-		}
-	}, ansi.Strip(line))
-}
-
 func sanitizeLogLines(lines []string) []string {
 	result := make([]string, len(lines))
 	for index, line := range lines {
-		result[index] = sanitizeLogLine(line)
+		result[index] = sanitizeUntrustedText(line)
 	}
 	return result
 }
@@ -61,7 +40,7 @@ func newLogsModel(state application.LogState) logsModel {
 // re-sanitizing on every render frame.
 func (m logsModel) setState(state application.LogState) logsModel {
 	state.Lines = sanitizeLogLines(state.Lines)
-	state.Err = sanitizeLogLine(state.Err)
+	state.Err = sanitizeUntrustedText(state.Err)
 	m.state = state
 	return m
 }

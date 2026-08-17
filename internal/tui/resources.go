@@ -149,14 +149,14 @@ func renderResourceKindTable(width int, kinds []domain.ResourceKindSnapshot, sel
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeTableCells(&header, tableHeaders(resourceKindColumns), widths)
+	writeTableCells(&header, resourceKindHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, kind := range kinds {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeTableCells(&row, tableRowValues(kind, resourceKindColumns), widths)
+		writeTableCells(&row, resourceKindRowValues(kind), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
@@ -168,6 +168,14 @@ func resourceKindColumnWidths(width int) []int {
 		width = defaultResourceKindsWidth
 	}
 	return calculateColumnWidths(width, resourceKindColumns)
+}
+
+func resourceKindHeaders() []string {
+	return tableHeaders(resourceKindColumns)
+}
+
+func resourceKindRowValues(kind domain.ResourceKindSnapshot) []string {
+	return tableRowValues(kind, resourceKindColumns)
 }
 
 type resourceInstancesModel struct {
@@ -302,18 +310,26 @@ func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceS
 	var output strings.Builder
 	header := strings.Builder{}
 	header.WriteString("  ")
-	writeTableCells(&header, tableHeaders(resourceInstanceColumns), widths)
+	writeTableCells(&header, resourceInstanceHeaders(), widths)
 	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
 
 	for index, instance := range instances {
 		output.WriteByte('\n')
 		row := strings.Builder{}
 		row.WriteString("  ")
-		writeTableCells(&row, tableRowValues(instance, resourceInstanceColumns), widths)
+		writeTableCells(&row, resourceInstanceRowValues(instance), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
 
 	return output.String()
+}
+
+func resourceInstanceHeaders() []string {
+	return tableHeaders(resourceInstanceColumns)
+}
+
+func resourceInstanceRowValues(instance domain.ResourceInstanceSnapshot) []string {
+	return tableRowValues(instance, resourceInstanceColumns)
 }
 
 type resourceDetailModel struct {

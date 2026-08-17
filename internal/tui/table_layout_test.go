@@ -35,3 +35,24 @@ func TestWriteTableCellsUsesDisplayWidthForTruncationAndPadding(t *testing.T) {
 	assert.Contains(t, ansi.Strip(rendered), "界界…")
 	assert.Contains(t, ansi.Strip(rendered), "hea…")
 }
+
+func TestWriteTableCellsIgnoresValuesBeyondWidths(t *testing.T) {
+	var output strings.Builder
+
+	assert.NotPanics(t, func() {
+		writeTableCells(&output, []string{"first", "second", "third"}, []int{5, 6})
+	}, "a caller-supplied values slice longer than widths must not panic")
+
+	assert.Equal(t, []string{"first", "second"}, strings.Fields(output.String()))
+}
+
+func TestWriteTableCellsSanitizesUntrustedContentBeforeMeasuring(t *testing.T) {
+	var output strings.Builder
+	writeTableCells(&output, []string{"safe\rEVIL", "abc\x1b[2Jxyz"}, []int{20, 20})
+
+	rendered := output.String()
+	assert.NotContains(t, rendered, "\r")
+	assert.NotContains(t, rendered, "\x1b[")
+	assert.Contains(t, rendered, "safeEVIL")
+	assert.Contains(t, rendered, "abcxyz")
+}

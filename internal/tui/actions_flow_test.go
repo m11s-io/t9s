@@ -79,6 +79,22 @@ func TestShutdownKeyHandlesKittyShiftEncoding(t *testing.T) {
 	assert.Equal(t, application.ActionShutdown, rootModel.application.PendingAction.Kind)
 }
 
+// On the Kitty keyboard protocol (e.g. Ghostty), shifted punctuation is
+// reported as the unshifted base key (";") plus a separate Shift modifier
+// and Text set to the shifted character (":"), rather than the single ":"
+// rune a legacy terminal sends. This is the realistic Kitty-protocol
+// fixture for the command-palette key, distinct from shiftKeyPress (which
+// models shifted letters, not shifted punctuation).
+func TestCommandPaletteKeyHandlesKittyShiftedPunctuationEncoding(t *testing.T) {
+	appModel, _ := application.NewModel("prod")
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+
+	updated, _ := root.Update(tea.KeyPressMsg{Code: ';', Text: ":", Mod: tea.ModShift})
+	rootModel := updated.(model)
+
+	assert.True(t, rootModel.palette.active, "shift+; (Kitty protocol) producing \":\" must open the command palette, same as legacy \":\"")
+}
+
 func TestSpaceKeyWithWritesDisabledDoesNotMarkRow(t *testing.T) {
 	appModel, _ := application.NewModel("prod")
 	appModel, _ = application.Update(appModel, application.NodesLoaded{
