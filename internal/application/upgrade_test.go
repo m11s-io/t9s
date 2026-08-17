@@ -2,6 +2,8 @@ package application_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,7 +85,7 @@ func TestUpgradeBridgeFailsWhenStreamClosesWithoutTerminalResult(t *testing.T) {
 	assert.ErrorContains(t, failed.(application.UpgradeFailed).Err, "closed without a terminal result")
 	model, _ = application.Update(model, failed)
 	assert.False(t, model.Upgrade.Active)
-	assert.Contains(t, model.ActionResults[0].Err, "closed without a terminal result")
+	assert.Equal(t, "upgrade failed", model.ActionResults[0].Err)
 }
 
 func TestUpgradeBridgeIgnoresStaleProgressMessages(t *testing.T) {
@@ -136,4 +138,81 @@ func TestUpgradeBridgeCancellationFailsAndCancelsControllerStream(t *testing.T) 
 			return false
 		}
 	}, time.Second, time.Millisecond)
+}
+
+func TestUpgradeBridgeRejectsBlankImageWithoutCallingController(t *testing.T) {
+	called := false
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+		called = true
+		return nil
+	}}})
+
+	effects := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}})
+	require.Len(t, effects, 1)
+	message := effects[0](t.Context(), application.Dependencies{})
+	require.IsType(t, application.UpgradeStarted{}, message)
+	model, next := application.Update(model, message)
+	failed := next(t.Context(), application.Dependencies{})
+	require.IsType(t, application.UpgradeFailed{}, failed)
+	assert.ErrorContains(t, failed.(application.UpgradeFailed).Err, "image is required")
+	assert.False(t, called)
+}
+
+func TestUpgradeBridgeReturnsStartedBeforeBlockingStreamConstruction(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+		close(entered)
+		<-release
+		results := make(chan ports.UpgradeResult, 1)
+		results <- ports.UpgradeResult{Done: true}
+		close(results)
+		return &controlledUpgradeStream{results: results}
+	}}})
+
+	returned := make(chan application.Message, 1)
+	go func() {
+		returned <- application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
+	}()
+	require.Eventually(t, func() bool {
+		select {
+		case message := <-returned:
+			returned <- message
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+	started := <-returned
+	model, _ = application.Update(model, started)
+	assert.True(t, model.Upgrade.Active)
+	got, effect := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-2"}})
+	assert.True(t, got.Upgrade.Active)
+	assert.Equal(t, "cp-1", got.Upgrade.Target)
+	assert.Nil(t, got.PendingAction)
+	assert.Nil(t, effect)
+	require.Eventually(t, func() bool {
+		select {
+		case <-entered:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+}
+
+func TestUpgradeBridgeDoesNotPersistUntrustedErrorText(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
+	model, _ = application.Update(model, application.UpgradeFailed{Generation: model.Generation, Target: "cp-1", Err: errors.New("request failed\n\x1b[31mBearer super-secret-token\x1b[0m")})
+
+	assert.Equal(t, "upgrade failed", model.Upgrade.Err)
+	assert.Equal(t, "upgrade failed", model.ActionResults[0].Err)
+	assert.NotContains(t, model.Upgrade.Err, "super-secret-token")
+	assert.NotContains(t, model.Upgrade.Err, "\n")
+	assert.False(t, strings.Contains(model.Upgrade.Err, "\x1b"))
 }

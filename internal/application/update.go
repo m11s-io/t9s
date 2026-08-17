@@ -372,10 +372,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
 			return model, nil
 		}
-		errText := "upgrade failed"
-		if message.Err != nil {
-			errText = message.Err.Error()
-		}
+		errText := safeUpgradeError(message.Err)
 		finishUpgrade(&model)
 		model.Upgrade.Err = errText
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText})
@@ -636,6 +633,10 @@ func controlPlaneHostnames(nodes []domain.NodeSnapshot) []string {
 // package application_test, which cannot see unexported identifiers.
 func ControlPlaneHostnamesForTest(nodes []domain.NodeSnapshot) []string {
 	return controlPlaneHostnames(nodes)
+}
+
+func safeUpgradeError(_ error) string {
+	return "upgrade failed"
 }
 
 func cancelActiveUpgrade(model *Model) {

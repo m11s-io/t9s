@@ -164,20 +164,36 @@ func startUpgradeEffect(controller ports.NodeController, pending PendingAction, 
 		streamCtx, cancel := context.WithCancel(ctx)
 		updates := make(chan upgradeStreamResult, 1)
 		started := UpgradeStarted{Generation: generation, Target: target, results: updates, cancel: cancel}
-		if controller == nil {
-			updates <- upgradeStreamResult{Err: fmt.Errorf("node controller is not configured"), Done: true}
+		if strings.TrimSpace(target) == "" {
+			updates <- upgradeStreamResult{Err: fmt.Errorf("upgrade target is required"), Done: true}
 			close(updates)
 			return started
 		}
-		stream := controller.UpgradeStream(streamCtx, target, pending.Image)
-		if stream == nil {
-			updates <- upgradeStreamResult{Err: fmt.Errorf("upgrade stream is not configured"), Done: true}
+		if strings.TrimSpace(pending.Image) == "" {
+			updates <- upgradeStreamResult{Err: fmt.Errorf("upgrade image is required"), Done: true}
 			close(updates)
 			return started
 		}
-		go forwardUpgradeStream(streamCtx, stream, updates, cancel)
+		go startUpgradeStream(streamCtx, controller, target, pending.Image, updates, cancel)
 		return started
 	}
+}
+
+func startUpgradeStream(ctx context.Context, controller ports.NodeController, target, image string, updates chan<- upgradeStreamResult, cancel context.CancelFunc) {
+	if controller == nil {
+		updates <- upgradeStreamResult{Err: fmt.Errorf("node controller is not configured"), Done: true}
+		close(updates)
+		cancel()
+		return
+	}
+	stream := controller.UpgradeStream(ctx, target, image)
+	if stream == nil {
+		updates <- upgradeStreamResult{Err: fmt.Errorf("upgrade stream is not configured"), Done: true}
+		close(updates)
+		cancel()
+		return
+	}
+	forwardUpgradeStream(ctx, stream, updates, cancel)
 }
 
 func forwardUpgradeStream(ctx context.Context, stream ports.UpgradeStream, updates chan<- upgradeStreamResult, cancel context.CancelFunc) {

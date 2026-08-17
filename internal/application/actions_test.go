@@ -76,11 +76,16 @@ func TestBuildActionEffectsUsesRollbackForRollbackKind(t *testing.T) {
 }
 
 func TestBuildActionEffectsUsesUpgradeWithImageForUpgradeKind(t *testing.T) {
-	var gotTarget, gotImage string
+	targets := make(chan string, 1)
+	images := make(chan string, 1)
 	controller := &testkit.FakeNodeController{
-		UpgradeFunc: func(_ context.Context, target, image string) error {
-			gotTarget, gotImage = target, image
-			return nil
+		UpgradeStreamFunc: func(_ context.Context, target, image string) ports.UpgradeStream {
+			targets <- target
+			images <- image
+			results := make(chan ports.UpgradeResult, 1)
+			results <- ports.UpgradeResult{Done: true}
+			close(results)
+			return &controlledUpgradeStream{results: results}
 		},
 	}
 	model, _ := application.NewModel("prod")
@@ -91,8 +96,8 @@ func TestBuildActionEffectsUsesUpgradeWithImageForUpgradeKind(t *testing.T) {
 
 	require.Len(t, effects, 1)
 	effects[0](t.Context(), application.Dependencies{})
-	assert.Equal(t, "cp-1", gotTarget)
-	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", gotImage)
+	assert.Equal(t, "cp-1", <-targets)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.3", <-images)
 }
 func TestUpgradeMinorWarning(t *testing.T) {
 	assert.Equal(t, "skips intermediate Talos minor releases", application.UpgradeMinorWarning("v1.13.3", "factory.talos.dev/metal-installer/id:v1.15.0"))
