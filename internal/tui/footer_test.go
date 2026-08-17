@@ -56,3 +56,37 @@ func TestRenderUpgradeNoticeKeepsFailedPhaseAndCancellation(t *testing.T) {
 
 	assert.Equal(t, "Upgrade worker-2 failed during rebooting: context canceled", notice)
 }
+
+func TestRenderUpgradeNoticeSanitizesUntrustedFields(t *testing.T) {
+	notice := renderUpgradeNotice(application.UpgradeState{
+		Active: true,
+		Target: "worker-\x1b[31m2\x1b[0m\n",
+		Event: ports.UpgradeEvent{
+			Phase:   ports.UpgradePhase("pulling\x1b[31m"),
+			Message: "pulling\ninstaller\x1b[0m",
+		},
+	})
+
+	assert.Equal(t, "Upgrading worker-2: pulling — pullinginstaller", notice)
+	assert.NotContains(t, notice, "\x1b")
+	assert.NotContains(t, notice, "\n")
+
+	failure := renderUpgradeNotice(application.UpgradeState{
+		Target: "worker-\r2",
+		Event:  ports.UpgradeEvent{Phase: ports.UpgradePhase("rebooting\x1b[31m")},
+		Err:    "request failed\nBearer token",
+	})
+	assert.Equal(t, "Upgrade worker-2 failed during rebooting: request failedBearer token", failure)
+	assert.NotContains(t, failure, "\x1b")
+	assert.NotContains(t, failure, "\n")
+}
+
+func TestUpgradePercentStaysBoundedAtInt64Extrema(t *testing.T) {
+	maxInt64 := int64(^uint64(0) >> 1)
+
+	percent, known := upgradePercent(maxInt64-2, maxInt64-1)
+	assert.True(t, known)
+	assert.Equal(t, int64(99), percent)
+	assert.GreaterOrEqual(t, percent, int64(0))
+	assert.LessOrEqual(t, percent, int64(100))
+}

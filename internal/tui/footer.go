@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math/bits"
 	"strings"
 
 	"github.com/m11s-io/t9s/internal/application"
@@ -12,7 +13,7 @@ import (
 // when Talos supplies them, so a percentage is intentionally absent otherwise.
 func renderUpgradeNotice(upgrade application.UpgradeState) string {
 	if upgrade.Active {
-		phase := string(upgrade.Event.Phase)
+		phase := sanitizeUntrustedText(string(upgrade.Event.Phase))
 		if phase == "" {
 			phase = "starting"
 		}
@@ -20,20 +21,20 @@ func renderUpgradeNotice(upgrade application.UpgradeState) string {
 		if percent, known := upgradePercent(upgrade.Event.Current, upgrade.Event.Total); known {
 			progress = fmt.Sprintf("%s %d%%", phase, percent)
 		}
-		notice := fmt.Sprintf("Upgrading %s: %s", fallback(upgrade.Target), progress)
+		notice := fmt.Sprintf("Upgrading %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), progress)
 		if upgrade.Event.Message != "" {
-			notice += " — " + upgrade.Event.Message
+			notice += " — " + sanitizeUntrustedText(upgrade.Event.Message)
 		}
 		return notice
 	}
 	if upgrade.Err == "" {
 		return ""
 	}
-	phase := string(upgrade.Event.Phase)
+	phase := sanitizeUntrustedText(string(upgrade.Event.Phase))
 	if phase == "" {
 		phase = "upgrade"
 	}
-	return fmt.Sprintf("Upgrade %s failed during %s: %s", fallback(upgrade.Target), phase, upgrade.Err)
+	return fmt.Sprintf("Upgrade %s failed during %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), phase, sanitizeUntrustedText(upgrade.Err))
 }
 
 // upgradePercent returns a percentage only when Talos supplied a positive byte
@@ -49,7 +50,9 @@ func upgradePercent(current, total int64) (int64, bool) {
 	if current >= total {
 		return 100, true
 	}
-	return (current/total)*100 + (current%total)*100/total, true
+	hi, lo := bits.Mul64(uint64(current), 100)
+	percent, _ := bits.Div64(hi, lo, uint64(total))
+	return int64(percent), true
 }
 
 func renderK9sFooter(width int, breadcrumb, prompt, flash string, skin k9sSkin) string {
