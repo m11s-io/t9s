@@ -383,6 +383,58 @@ func TestUpgradePromptEscCancelsWithoutRequestingAction(t *testing.T) {
 	assert.Nil(t, rootModel.application.PendingAction)
 }
 
+func TestUpgradePromptOpenedIgnoredWhenAnotherConfirmOpenedMeanwhile(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	})
+
+	// Press U: this kicks off the CurrentInstallImage fetch effect, but we
+	// deliberately don't run the returned Cmd yet — it hasn't "come back"
+	// from the network.
+	updated, cmd := root.Update(keyPress('U'))
+	require.NotNil(t, cmd)
+	rootModel := updated.(model)
+
+	// While that fetch is still in flight, the user presses R, opening the
+	// Reboot confirm prompt instead.
+	updated, _ = rootModel.Update(keyPress('R'))
+	rootModel = updated.(model)
+	require.NotNil(t, rootModel.application.PendingAction)
+	require.Equal(t, application.ActionReboot, rootModel.application.PendingAction.Kind)
+
+	// Now the deferred upgrade-image fetch finally completes.
+	msg := cmd()
+	updatedAny, _ := rootModel.Update(msg)
+	rootModel = updatedAny.(model)
+
+	assert.Nil(t, rootModel.upgradePrompt, "a late-arriving UpgradePromptOpened must not install itself under an already-open confirm prompt")
+	require.NotNil(t, rootModel.application.PendingAction, "the reboot confirm must remain untouched")
+	assert.Equal(t, application.ActionReboot, rootModel.application.PendingAction.Kind)
+}
+
+func TestUpgradePromptOpenedIgnoredAfterNavigatingAwayFromNodes(t *testing.T) {
+	root := writesEnabledTestModel(t, &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	})
+
+	updated, cmd := root.Update(keyPress('U'))
+	require.NotNil(t, cmd)
+	rootModel := updated.(model)
+
+	// The user navigates away from :nodes while the fetch is still in flight.
+	rootModel.views = rootModel.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+
+	msg := cmd()
+	updatedAny, _ := rootModel.Update(msg)
+	rootModel = updatedAny.(model)
+
+	assert.Nil(t, rootModel.upgradePrompt, "a late-arriving UpgradePromptOpened must not open on a screen the user navigated to")
+}
+
 func TestUpgradeKeyWithWritesDisabledIsInert(t *testing.T) {
 	appModel, _ := application.NewModel("prod")
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))

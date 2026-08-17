@@ -32,7 +32,7 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 	case application.ActionRollback:
 		verb = "Rollback"
 	case application.ActionUpgrade:
-		verb = "Upgrade to " + pending.Image
+		verb = "Upgrade to " + truncateWarningTail(pending.Image, 24)
 	}
 	if pending.Warning != "" {
 		warning := truncateWarningTail(pending.Warning, pendingActionWarningBudget)

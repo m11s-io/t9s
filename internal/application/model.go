@@ -415,8 +415,7 @@ type ProcessesFailed struct {
 func (ProcessesFailed) applicationMessage() {}
 
 type RequestUpgradePrompt struct {
-	Target     string
-	Generation uint64
+	Target string
 }
 
 func (RequestUpgradePrompt) applicationMessage() {}

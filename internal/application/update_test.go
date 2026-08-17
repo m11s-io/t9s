@@ -1520,9 +1520,10 @@ func TestRequestUpgradePromptFetchesCurrentImage(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
 
-	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1", Generation: model.Generation})
+	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1"})
 
 	require.NotNil(t, effect)
 	message := effect(t.Context(), application.Dependencies{})
@@ -1536,10 +1537,27 @@ func TestRequestUpgradePromptOpensBlankOnFetchError(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
 
-	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1", Generation: model.Generation})
+	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1"})
 
 	message := effect(t.Context(), application.Dependencies{})
 	assert.Equal(t, application.UpgradePromptOpened{Target: "cp-1", Image: "", Generation: model.Generation}, message, "a prefill fetch failure must still open the prompt, just blank")
+}
+
+func TestRequestUpgradePromptIsInertWhenWritesDisabled(t *testing.T) {
+	controller := &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	}
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = false
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+
+	got, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1"})
+
+	assert.Nil(t, effect, "RequestUpgradePrompt must be inert at the reducer level when WritesEnabled is false, regardless of what the TUI layer sent")
+	assert.Equal(t, model, got)
 }

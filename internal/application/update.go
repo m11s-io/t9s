@@ -288,7 +288,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		warning := ""
 		if message.Service == "etcd" && message.Kind != ServiceActionStart {
-			warning = computeEtcdQuorumWarning(model.Nodes.Value.Nodes, model.Etcd, []string{message.Node})
+			warning = computeEtcdQuorumWarning(model.Etcd, []string{message.Node})
 		}
 		model.PendingServiceAction = &PendingServiceAction{
 			Kind:    message.Kind,
@@ -301,7 +301,13 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case RequestUpgradePrompt:
-		return model, requestUpgradeImage(model.nodeController, message.Target, message.Generation)
+		// Defense in depth: mirrors the RequestAction/RequestServiceAction
+		// gate above — the reducer is the last line of defense against a
+		// cluster-mutating action, not the TUI's own key-handler gating.
+		if !model.WritesEnabled {
+			return model, nil
+		}
+		return model, requestUpgradeImage(model.nodeController, message.Target, model.Generation)
 
 	case UpgradePromptOpened:
 		return model, nil

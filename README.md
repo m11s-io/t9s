@@ -22,9 +22,11 @@ interfaces (press `n`), a generic read-only Talos resource browser
 Kubernetes context matches the active Talos context, and the k9s Node-view
 launcher (`--kube-context`/`--node`, see [k9s integration](#k9s-integration)
 below). Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
-additionally enables gated node reboot and shutdown from `:nodes`
-(`space` to mark, `R`/`X` to act, each behind a confirm prompt) — see
-[Security](#security) below; the UI remains read-only by default.
+additionally enables gated node reboot, shutdown, rollback, and upgrade from
+`:nodes` (`space` to mark, `R`/`X`/`B`/`U` to act, each behind a confirm
+prompt) as well as gated service start/stop/restart from `:services`
+(`S`/`T`/`R`) — see [Security](#security) below; the UI remains read-only
+by default.
 
 Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
@@ -80,9 +82,10 @@ unchanged.
 
 By default the UI is read-only and offers no mutation or arbitrary
 command path. Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
-additionally allows reboot and shutdown of selected node(s) from the
-nodes screen, each gated behind an inline confirmation that flags
-control-plane and etcd-quorum risk. The header's `[RO]`/`[RW]` badge
+additionally allows reboot, shutdown, rollback, and upgrade of selected
+node(s) from the nodes screen, and start/stop/restart of the selected
+service from the services screen, each gated behind an inline confirmation
+that flags control-plane and etcd-quorum risk. The header's `[RO]`/`[RW]` badge
 always reflects the active mode. As before, the Talos credentials
 supplied to `t9s` may themselves be privileged — protect the talosconfig
 as a sensitive secret and grant only the permissions the operator needs.

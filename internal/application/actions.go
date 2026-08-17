@@ -12,7 +12,7 @@ func computeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets [
 	if !targetsIncludeControlPlane(nodes, targets) {
 		return ""
 	}
-	return computeEtcdQuorumWarning(nodes, etcd, targets)
+	return computeEtcdQuorumWarning(etcd, targets)
 }
 
 func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) bool {
@@ -33,7 +33,7 @@ func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) b
 // computeEtcdQuorumWarning is shared by every action that reboots a
 // control-plane node (Reboot, Shutdown, Rollback, Upgrade) and by service
 // actions that stop or restart the etcd service directly.
-func computeEtcdQuorumWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string) string {
+func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 	if etcd.Status != Ready && etcd.Status != Partial {
 		return "control-plane node(s); etcd quorum impact unknown (etcd data unavailable)"
 	}

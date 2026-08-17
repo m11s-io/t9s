@@ -594,7 +594,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "U" && m.application.WritesEnabled && !m.nodes.filtering && m.upgradePrompt == nil {
 			if node, ok := m.nodes.selected(); ok {
 				var effect application.Effect
-				m.application, effect = application.Update(m.application, application.RequestUpgradePrompt{Target: node.Target(), Generation: m.application.Generation})
+				m.application, effect = application.Update(m.application, application.RequestUpgradePrompt{Target: node.Target()})
 				return m, m.command(effect)
 			}
 		}
@@ -657,7 +657,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 		}
 		var upgradeFocus tea.Cmd
-		if opened, ok := message.message.(application.UpgradePromptOpened); ok && opened.Generation == m.application.Generation {
+		if opened, ok := message.message.(application.UpgradePromptOpened); ok &&
+			opened.Generation == m.application.Generation &&
+			m.application.PendingAction == nil && m.application.PendingServiceAction == nil &&
+			m.views.top().Kind == viewNodes {
 			prompt := newUpgradePromptModel(opened.Target, opened.Image)
 			m.upgradePrompt = &prompt
 			upgradeFocus = m.upgradePrompt.input.Focus()

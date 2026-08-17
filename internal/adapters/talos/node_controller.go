@@ -7,8 +7,8 @@ import (
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/m11s-io/t9s/internal/ports"
-	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
+	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
 )
 
 type nodeControlClient interface {
