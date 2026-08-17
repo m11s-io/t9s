@@ -1,6 +1,8 @@
 package application
 
 import (
+	"context"
+
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
 )
@@ -62,6 +64,10 @@ type Model struct {
 	// len(ActionResults) alone cannot be used as a "total" denominator while
 	// results are still outstanding.
 	ActionTotal int
+	Upgrade     UpgradeState
+
+	upgradeResults <-chan upgradeStreamResult
+	upgradeCancel  context.CancelFunc
 }
 
 type NodeState struct {
@@ -262,6 +268,20 @@ type ActionResult struct {
 	Err    string
 }
 
+type UpgradeState struct {
+	Active bool
+	Target string
+	Event  ports.UpgradeEvent
+	Err    string
+}
+
+// upgradeStreamResult is private so stream mechanics stay inside application effects.
+type upgradeStreamResult struct {
+	Event *ports.UpgradeEvent
+	Err   error
+	Done  bool
+}
+
 type RequestAction struct {
 	Kind    ActionKind
 	Targets []string
@@ -300,6 +320,38 @@ type RequestServiceAction struct {
 }
 
 func (RequestServiceAction) applicationMessage() {}
+
+type UpgradeStarted struct {
+	Generation uint64
+	Target     string
+	results    <-chan upgradeStreamResult
+	cancel     context.CancelFunc
+}
+
+func (UpgradeStarted) applicationMessage() {}
+
+type UpgradeProgressed struct {
+	Generation uint64
+	Target     string
+	Event      ports.UpgradeEvent
+}
+
+func (UpgradeProgressed) applicationMessage() {}
+
+type UpgradeSucceeded struct {
+	Generation uint64
+	Target     string
+}
+
+func (UpgradeSucceeded) applicationMessage() {}
+
+type UpgradeFailed struct {
+	Generation uint64
+	Target     string
+	Err        error
+}
+
+func (UpgradeFailed) applicationMessage() {}
 
 type ActionSucceeded struct {
 	Generation uint64

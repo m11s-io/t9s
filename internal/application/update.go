@@ -36,6 +36,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		if message.Name == model.ContextName {
 			return model, nil
 		}
+		cancelActiveUpgrade(&model)
 		model.ContextName = message.Name
 		model.Generation++
 		model.Nodes = NodeState{Status: Loading}
@@ -269,7 +270,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		// Defense in depth: the TUI already refuses to send RequestAction
 		// while writes are disabled, but the reducer must not trust that —
 		// it is the last line of defense against a cluster-mutating action.
-		if !model.WritesEnabled || len(message.Targets) == 0 {
+		if !model.WritesEnabled || model.Upgrade.Active || len(message.Targets) == 0 || message.Kind == ActionUpgrade && len(message.Targets) != 1 {
 			return model, nil
 		}
 		model.PendingAction = &PendingAction{
@@ -288,7 +289,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case RequestServiceAction:
-		if !model.WritesEnabled || message.Node == "" || message.Service == "" {
+		if !model.WritesEnabled || model.Upgrade.Active || message.Node == "" || message.Service == "" {
 			return model, nil
 		}
 		warning := ""
@@ -309,7 +310,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		// Defense in depth: mirrors the RequestAction/RequestServiceAction
 		// gate above — the reducer is the last line of defense against a
 		// cluster-mutating action, not the TUI's own key-handler gating.
-		if !model.WritesEnabled {
+		if !model.WritesEnabled || model.Upgrade.Active {
 			return model, nil
 		}
 		return model, requestUpgradeImage(model.nodeController, message.Target, model.Generation)
@@ -330,6 +331,54 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		model.PendingAction = nil
 		model.PendingServiceAction = nil
+		return model, nil
+
+	case UpgradeStarted:
+		if message.Generation != model.Generation || model.Upgrade.Active {
+			if message.cancel != nil {
+				message.cancel()
+			}
+			return model, nil
+		}
+		if message.results == nil {
+			return model, nil
+		}
+		model.Upgrade = UpgradeState{Active: true, Target: message.Target}
+		model.upgradeResults = message.results
+		model.upgradeCancel = message.cancel
+		return model, readUpgradeUpdate(model.upgradeResults, message.Generation, message.Target)
+
+	case UpgradeProgressed:
+		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
+			return model, nil
+		}
+		model.Upgrade.Event = message.Event
+		return model, readUpgradeUpdate(model.upgradeResults, message.Generation, message.Target)
+
+	case UpgradeSucceeded:
+		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
+			return model, nil
+		}
+		finishUpgrade(&model)
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target})
+		if model.nodeReader == nil {
+			return model, nil
+		}
+		model.Nodes.Status = Loading
+		model.Nodes.Err = ""
+		return model, loadNodes(model.nodeReader, model.Generation)
+
+	case UpgradeFailed:
+		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
+			return model, nil
+		}
+		errText := "upgrade failed"
+		if message.Err != nil {
+			errText = message.Err.Error()
+		}
+		finishUpgrade(&model)
+		model.Upgrade.Err = errText
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText})
 		return model, nil
 
 	case ActionSucceeded:
@@ -587,4 +636,22 @@ func controlPlaneHostnames(nodes []domain.NodeSnapshot) []string {
 // package application_test, which cannot see unexported identifiers.
 func ControlPlaneHostnamesForTest(nodes []domain.NodeSnapshot) []string {
 	return controlPlaneHostnames(nodes)
+}
+
+func cancelActiveUpgrade(model *Model) {
+	if model.upgradeCancel != nil {
+		model.upgradeCancel()
+	}
+	model.upgradeCancel = nil
+	model.upgradeResults = nil
+	model.Upgrade = UpgradeState{}
+}
+
+func finishUpgrade(model *Model) {
+	if model.upgradeCancel != nil {
+		model.upgradeCancel()
+	}
+	model.upgradeCancel = nil
+	model.upgradeResults = nil
+	model.Upgrade.Active = false
 }

@@ -75,6 +75,9 @@ func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 }
 
 func actionEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {
+	if pending.Kind == ActionUpgrade {
+		return startUpgradeEffect(controller, pending, target, generation)
+	}
 	return func(ctx context.Context, _ Dependencies) Message {
 		if controller == nil {
 			return ActionFailed{Generation: generation, Target: target, Err: fmt.Errorf("node controller is not configured")}
@@ -88,19 +91,7 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 		case ActionRollback:
 			err = controller.Rollback(ctx, target)
 		case ActionUpgrade:
-			stream := controller.UpgradeStream(ctx, target, pending.Image)
-			if stream == nil {
-				err = fmt.Errorf("upgrade stream is not configured")
-			} else {
-				for result := range stream.Results() {
-					if result.Err != nil {
-						err = result.Err
-					}
-					if result.Done {
-						break
-					}
-				}
-			}
+			err = fmt.Errorf("upgrade action did not use its stream bridge")
 		default:
 			err = fmt.Errorf("unsupported action %q", pending.Kind)
 		}
@@ -118,6 +109,12 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 // PendingAction — capture *model.PendingAction first, then call
 // Update(model, ConfirmPendingAction{}) separately.
 func BuildActionEffects(model Model, pending PendingAction) []Effect {
+	if pending.Kind == ActionUpgrade {
+		if len(pending.Targets) == 0 {
+			return nil
+		}
+		return []Effect{actionEffect(model.nodeController, pending, pending.Targets[0], model.Generation)}
+	}
 	effects := make([]Effect, 0, len(pending.Targets))
 	for _, target := range pending.Targets {
 		effects = append(effects, actionEffect(model.nodeController, pending, target, model.Generation))
@@ -160,4 +157,86 @@ func UpgradeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets [
 		}
 	}
 	return warning
+}
+
+func startUpgradeEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		streamCtx, cancel := context.WithCancel(ctx)
+		updates := make(chan upgradeStreamResult, 1)
+		started := UpgradeStarted{Generation: generation, Target: target, results: updates, cancel: cancel}
+		if controller == nil {
+			updates <- upgradeStreamResult{Err: fmt.Errorf("node controller is not configured"), Done: true}
+			close(updates)
+			return started
+		}
+		stream := controller.UpgradeStream(streamCtx, target, pending.Image)
+		if stream == nil {
+			updates <- upgradeStreamResult{Err: fmt.Errorf("upgrade stream is not configured"), Done: true}
+			close(updates)
+			return started
+		}
+		go forwardUpgradeStream(streamCtx, stream, updates, cancel)
+		return started
+	}
+}
+
+func forwardUpgradeStream(ctx context.Context, stream ports.UpgradeStream, updates chan<- upgradeStreamResult, cancel context.CancelFunc) {
+	defer close(updates)
+	defer cancel()
+	defer stream.Cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			sendUpgradeTerminal(updates, upgradeStreamResult{Err: ctx.Err(), Done: true})
+			return
+		case result, ok := <-stream.Results():
+			if !ok {
+				return
+			}
+			update := upgradeStreamResult{Event: result.Event, Err: result.Err, Done: result.Done}
+			if update.Event == nil && update.Err == nil && !update.Done {
+				update.Err = fmt.Errorf("upgrade stream returned an empty result")
+				update.Done = true
+			}
+			select {
+			case updates <- update:
+			case <-ctx.Done():
+				sendUpgradeTerminal(updates, upgradeStreamResult{Err: ctx.Err(), Done: true})
+				return
+			}
+			if update.Done || update.Err != nil {
+				return
+			}
+		}
+	}
+}
+
+func readUpgradeUpdate(updates <-chan upgradeStreamResult, generation uint64, target string) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		select {
+		case <-ctx.Done():
+			return UpgradeFailed{Generation: generation, Target: target, Err: ctx.Err()}
+		case update, ok := <-updates:
+			if !ok {
+				return UpgradeFailed{Generation: generation, Target: target, Err: fmt.Errorf("upgrade stream closed without a terminal result")}
+			}
+			if update.Err != nil {
+				return UpgradeFailed{Generation: generation, Target: target, Err: update.Err}
+			}
+			if update.Done {
+				return UpgradeSucceeded{Generation: generation, Target: target}
+			}
+			if update.Event == nil {
+				return UpgradeFailed{Generation: generation, Target: target, Err: fmt.Errorf("upgrade stream returned an empty result")}
+			}
+			return UpgradeProgressed{Generation: generation, Target: target, Event: *update.Event}
+		}
+	}
+}
+
+func sendUpgradeTerminal(updates chan<- upgradeStreamResult, result upgradeStreamResult) {
+	select {
+	case updates <- result:
+	default:
+	}
 }
