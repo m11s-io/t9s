@@ -39,7 +39,9 @@ type upgradeMaintenanceClient interface {
 }
 
 type upgradeMaintenance interface {
-	Cordon(context.Context) error
+	// Cordon reports whether this upgrade changed the node's scheduling state.
+	// Only a cordon created by t9s may be undone during cleanup.
+	Cordon(context.Context) (bool, error)
 	Drain(context.Context, time.Duration, func(string)) error
 	Reboot(context.Context) error
 	WaitTalosReady(context.Context, time.Duration) error
@@ -93,45 +95,83 @@ func deriveUpgradeImage(declaredImage, runningTag string) string {
 	return declaredImage + ":" + runningTag
 }
 
+// The v1.13.3 machinery module does not expose ImageFactorySchematic. Until
+// t9s upgrades that SDK, ExtensionStatus's schematic metadata is the supported
+// compatibility source for a live schematic-preserving installer suggestion.
+type installImageLookup interface {
+	declaredInstallImage(context.Context) (string, error)
+	schematicInstaller(context.Context) (factory, flavor, id string, err error)
+	runningTalosVersion(context.Context) (string, error)
+}
+
+type machineryInstallImageLookup struct{ client *talosclient.Client }
+
 func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (string, error) {
+	return currentInstallImage(ctx, machineryInstallImageLookup{client: c.client})
+}
+
+func currentInstallImage(ctx context.Context, lookup installImageLookup) (string, error) {
+	// Lookups are independent. Read schematic metadata first so a transient
+	// MachineConfig failure does not discard a valid live Image Factory source.
+	factory, flavor, schematicID, _ := lookup.schematicInstaller(ctx)
+	declaredImage, declaredErr := lookup.declaredInstallImage(ctx)
+	runningTag, versionErr := lookup.runningTalosVersion(ctx)
+	if versionErr == nil {
+		if image := deriveSchematicInstallerImage(factory, flavor, schematicID, runningTag); image != "" {
+			return image, nil
+		}
+		if declaredImage != "" {
+			return deriveUpgradeImage(declaredImage, runningTag), nil
+		}
+	}
+	if declaredImage != "" {
+		return declaredImage, nil
+	}
+	if declaredErr != nil {
+		return "", declaredErr
+	}
+
+	return "", nil
+}
+
+func (l machineryInstallImageLookup) declaredInstallImage(ctx context.Context) (string, error) {
 	cfg, err := safe.StateGet[*talosconfig.MachineConfig](
-		ctx, c.client.COSI,
+		ctx, l.client.COSI,
 		resource.NewMetadata(talosconfig.NamespaceName, talosconfig.MachineConfigType, talosconfig.ActiveID, resource.VersionUndefined),
 	)
 	if err != nil {
 		return "", err
 	}
-	declaredImage := cfg.Provider().Machine().Install().Image()
-	var schematicFactory, schematicFlavor, schematicID, schematicAuthor string
-	if extensions, listErr := safe.StateListAll[*runtimeresource.ExtensionStatus](ctx, c.client.COSI); listErr == nil {
+
+	return cfg.Provider().Machine().Install().Image(), nil
+}
+
+func (l machineryInstallImageLookup) schematicInstaller(ctx context.Context) (factory, flavor, id string, err error) {
+	if extensions, listErr := safe.StateListAll[*runtimeresource.ExtensionStatus](ctx, l.client.COSI); listErr == nil {
 		for extension := range extensions.All() {
 			if extension.TypedSpec().Metadata.Name == "schematic" {
-				schematicID = extension.TypedSpec().Metadata.Version
-				schematicAuthor = extension.TypedSpec().Metadata.Author
-				break
+				id = extension.TypedSpec().Metadata.Version
+				flavor, factory = parseSchematicAuthor(extension.TypedSpec().Metadata.Author)
+				return factory, flavor, id, nil
 			}
-		}
-		if schematicID != "" {
-			schematicFlavor, schematicFactory = parseSchematicAuthor(schematicAuthor)
 		}
 	}
 
-	versionResponse, err := c.client.Version(ctx)
+	return "", "", "", nil
+}
+
+func (l machineryInstallImageLookup) runningTalosVersion(ctx context.Context) (string, error) {
+	versionResponse, err := l.client.Version(ctx)
 	if err != nil {
-		// The declared image is still a valid, if possibly stale, prefill —
-		// don't fail the whole prompt just because the live version query
-		// failed.
-		return declaredImage, nil
+		return "", err
 	}
 	for _, message := range versionResponse.GetMessages() {
 		if version := message.GetVersion(); version != nil {
-			if image := deriveSchematicInstallerImage(schematicFactory, schematicFlavor, schematicID, version.GetTag()); image != "" {
-				return image, nil
-			}
-			return deriveUpgradeImage(declaredImage, version.GetTag()), nil
+			return version.GetTag(), nil
 		}
 	}
-	return declaredImage, nil
+
+	return "", fmt.Errorf("Talos version response contained no version")
 }
 
 type nodeController struct{ client nodeControlClient }
@@ -196,58 +236,76 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 	go func() {
 		defer close(stream.results)
 		defer cancel()
-		stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeChecking, Message: "checking Talos upgrade API"}}
+		emit := func(result ports.UpgradeResult) bool { return sendUpgradeResult(streamCtx, stream.results, result) }
+		if !emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeChecking, Message: "checking Talos upgrade API"}}) {
+			return
+		}
 		versioned, ok := c.client.(versionedUpgradeClient)
 		if !ok {
-			stream.results <- ports.UpgradeResult{Err: errors.New("Talos client cannot determine upgrade API version"), Done: true}
+			emit(ports.UpgradeResult{Err: errors.New("Talos client cannot determine upgrade API version"), Done: true})
 			return
 		}
 		version, versionErr := versioned.upgradeVersion(streamCtx)
 		if versionErr != nil {
-			stream.results <- ports.UpgradeResult{Err: fmt.Errorf("check Talos upgrade API version: %w", versionErr), Done: true}
+			emit(ports.UpgradeResult{Err: fmt.Errorf("check Talos upgrade API version: %w", versionErr), Done: true})
 			return
 		}
 		lifecycleSupported, versionErr := lifecycleUpgradeAPISupported(version)
 		if versionErr != nil {
-			stream.results <- ports.UpgradeResult{Err: versionErr, Done: true}
+			emit(ports.UpgradeResult{Err: versionErr, Done: true})
 			return
 		}
 		if !lifecycleSupported {
 			err := c.Upgrade(streamCtx, target, image)
+			if err == nil && streamCtx.Err() != nil {
+				err = streamCtx.Err()
+			}
 			if err == nil {
-				stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Done: true}
+				emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Done: true})
 			} else {
-				stream.results <- ports.UpgradeResult{Err: err, Done: true}
+				emit(ports.UpgradeResult{Err: err, Done: true})
 			}
 			return
 		}
 		lifecycle, ok := c.client.(lifecycleUpgradeClient)
 		if !ok {
-			stream.results <- ports.UpgradeResult{Err: errors.New("Talos client does not support lifecycle upgrades"), Done: true}
+			emit(ports.UpgradeResult{Err: errors.New("Talos client does not support lifecycle upgrades"), Done: true})
 			return
 		}
-		err := lifecycle.lifecycleUpgrade(talosclient.WithNode(streamCtx, target), image, func(event ports.UpgradeEvent) { stream.results <- ports.UpgradeResult{Event: &event} })
+		err := lifecycle.lifecycleUpgrade(talosclient.WithNode(streamCtx, target), image, func(event ports.UpgradeEvent) { emit(ports.UpgradeResult{Event: &event}) })
+		if err == nil && streamCtx.Err() != nil {
+			err = streamCtx.Err()
+		}
 		if err == nil {
 			maintenanceClient, ok := c.client.(upgradeMaintenanceClient)
 			if !ok {
 				err = errors.New("Talos client does not support safe upgrade maintenance")
 			} else {
-				stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "resolving Kubernetes node"}}
+				emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "resolving Kubernetes node"}})
 				maintenance, prepareErr := maintenanceClient.prepareUpgradeMaintenance(streamCtx, target)
 				if prepareErr != nil {
 					err = fmt.Errorf("prepare Kubernetes node maintenance: %w", prepareErr)
 				} else {
-					err = runSafeUpgradeMaintenance(streamCtx, maintenance, func(event ports.UpgradeEvent) { stream.results <- ports.UpgradeResult{Event: &event} })
+					err = runSafeUpgradeMaintenance(streamCtx, maintenance, func(event ports.UpgradeEvent) { emit(ports.UpgradeResult{Event: &event}) })
 				}
 			}
 		}
 		if err == nil {
-			stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "upgrade complete"}, Done: true}
+			emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "upgrade complete"}, Done: true})
 		} else {
-			stream.results <- ports.UpgradeResult{Err: err, Done: true}
+			emit(ports.UpgradeResult{Err: err, Done: true})
 		}
 	}()
 	return stream
+}
+
+func sendUpgradeResult(ctx context.Context, results chan<- ports.UpgradeResult, result ports.UpgradeResult) bool {
+	select {
+	case results <- result:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (c *nodeController) CurrentInstallImage(ctx context.Context, target string) (string, error) {
@@ -292,29 +350,43 @@ func lifecycleUpgradeAPISupported(raw string) (bool, error) {
 }
 
 func runSafeUpgradeMaintenance(ctx context.Context, maintenance upgradeMaintenance, progress func(ports.UpgradeEvent)) (retErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "cordoning Kubernetes node"})
-	if err := maintenance.Cordon(ctx); err != nil {
+	cordonedByT9S, err := maintenance.Cordon(ctx)
+	if err != nil {
 		return fmt.Errorf("cordon Kubernetes node: %w", err)
 	}
+	if cordonedByT9S {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), upgradeCleanupTimeout)
+			defer cancel()
+			progress(ports.UpgradeEvent{Phase: ports.UpgradeUncordon, Message: "uncordoning Kubernetes node"})
+			if err := maintenance.Uncordon(cleanupCtx); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("uncordon Kubernetes node: %w", err))
+			}
+		}()
+	}
 
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), upgradeCleanupTimeout)
-		defer cancel()
-		progress(ports.UpgradeEvent{Phase: ports.UpgradeUncordon, Message: "uncordoning Kubernetes node"})
-		if err := maintenance.Uncordon(cleanupCtx); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("uncordon Kubernetes node: %w", err))
-		}
-	}()
-
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "draining Kubernetes node"})
 	if err := maintenance.Drain(ctx, upgradeDrainTimeout, func(message string) {
 		progress(ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: message})
 	}); err != nil {
 		return fmt.Errorf("drain Kubernetes node: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeRebooting, Message: "rebooting Talos node"})
 	if err := maintenance.Reboot(ctx); err != nil {
 		return fmt.Errorf("reboot Talos node: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeWaiting, Message: "waiting for Talos API"})
 	if err := maintenance.WaitTalosReady(ctx, upgradeReadyTimeout); err != nil {
@@ -374,16 +446,19 @@ func kubernetesClientFromTalos(ctx context.Context, client *talosclient.Client) 
 	return clientset, nil
 }
 
-func (m machineryUpgradeMaintenance) Cordon(ctx context.Context) error {
+func (m machineryUpgradeMaintenance) Cordon(ctx context.Context) (bool, error) {
 	node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+		return false, fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+	}
+	if node.Spec.Unschedulable {
+		return false, nil
 	}
 	if err := kubectldrain.RunCordonOrUncordon(&kubectldrain.Helper{Ctx: ctx, Client: m.clientset}, node, true); err != nil {
-		return fmt.Errorf("cordon Kubernetes node %q: %w", m.nodeName, err)
+		return false, fmt.Errorf("cordon Kubernetes node %q: %w", m.nodeName, err)
 	}
 
-	return nil
+	return true, nil
 }
 
 func (m machineryUpgradeMaintenance) Drain(ctx context.Context, timeout time.Duration, progress func(string)) error {

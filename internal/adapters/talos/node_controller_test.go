@@ -12,6 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
 func TestDeriveUpgradeImageReplacesTagKeepingRepo(t *testing.T) {
@@ -33,6 +36,42 @@ func TestDeriveUpgradeImageLeavesDigestReferencesUntouched(t *testing.T) {
 func TestDeriveUpgradeImageHandlesEmptyInputs(t *testing.T) {
 	assert.Equal(t, "", deriveUpgradeImage("", "v1.13.2"))
 	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.0", deriveUpgradeImage("ghcr.io/siderolabs/installer:v1.13.0", ""))
+}
+
+type fakeInstallImageLookup struct {
+	declared     string
+	declaredErr  error
+	factory      string
+	flavor       string
+	schematic    string
+	schematicErr error
+	version      string
+	versionErr   error
+}
+
+func (f fakeInstallImageLookup) declaredInstallImage(context.Context) (string, error) {
+	return f.declared, f.declaredErr
+}
+
+func (f fakeInstallImageLookup) schematicInstaller(context.Context) (string, string, string, error) {
+	return f.factory, f.flavor, f.schematic, f.schematicErr
+}
+
+func (f fakeInstallImageLookup) runningTalosVersion(context.Context) (string, error) {
+	return f.version, f.versionErr
+}
+
+func TestCurrentInstallImageUsesSchematicWhenMachineConfigIsUnavailable(t *testing.T) {
+	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
+		declaredErr: errors.New("machine config unavailable"),
+		factory:     "factory.talos.dev",
+		flavor:      "metal",
+		schematic:   "abc123",
+		version:     "v1.13.4",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "factory.talos.dev/metal-installer/abc123:v1.13.4", image)
 }
 
 type fakeNodeControlClient struct {
@@ -217,6 +256,7 @@ func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
 type fakeLifecycleMaintenanceClient struct {
 	*fakeNodeControlClient
 	version         string
+	versionErr      error
 	lifecycleTarget string
 	steps           []string
 	lifecycleErr    error
@@ -225,7 +265,7 @@ type fakeLifecycleMaintenanceClient struct {
 }
 
 func (c *fakeLifecycleMaintenanceClient) upgradeVersion(context.Context) (string, error) {
-	return c.version, nil
+	return c.version, c.versionErr
 }
 
 func (c *fakeLifecycleMaintenanceClient) lifecycleUpgrade(ctx context.Context, _ string, progress func(ports.UpgradeEvent)) error {
@@ -238,6 +278,7 @@ func (c *fakeLifecycleMaintenanceClient) lifecycleUpgrade(ctx context.Context, _
 	if c.lifecycleTarget == "" {
 		return errors.New("lifecycle upgrade was not targeted to the selected node")
 	}
+	c.steps = append(c.steps, "lifecycle")
 	progress(ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulled"})
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: "installed"})
 
@@ -253,18 +294,19 @@ func (c *fakeLifecycleMaintenanceClient) prepareUpgradeMaintenance(context.Conte
 }
 
 type fakeUpgradeMaintenance struct {
-	steps        *[]string
-	drainErr     error
-	rebootErr    error
-	waitTalosErr error
-	waitKubeErr  error
-	uncordonErr  error
+	steps           *[]string
+	alreadyCordoned bool
+	drainErr        error
+	rebootErr       error
+	waitTalosErr    error
+	waitKubeErr     error
+	uncordonErr     error
 }
 
-func (m *fakeUpgradeMaintenance) Cordon(context.Context) error {
+func (m *fakeUpgradeMaintenance) Cordon(context.Context) (bool, error) {
 	*m.steps = append(*m.steps, "cordon")
 
-	return nil
+	return !m.alreadyCordoned, nil
 }
 
 func (m *fakeUpgradeMaintenance) Drain(context.Context, time.Duration, func(string)) error {
@@ -321,8 +363,135 @@ func TestNodeControllerUpgradeStreamTargetsLifecycleThenSafelyMaintainsNode(t *t
 	require.NoError(t, results[len(results)-1].Err)
 	assert.True(t, results[len(results)-1].Done)
 	assert.Equal(t, "10.0.0.12", client.lifecycleTarget)
-	assert.Equal(t, []string{"cordon", "drain", "reboot", "wait-talos", "wait-kubernetes", "uncordon"}, client.steps)
+	assert.Equal(t, []string{"lifecycle", "cordon", "drain", "reboot", "wait-talos", "wait-kubernetes", "uncordon"}, client.steps)
 	assert.Equal(t, ports.UpgradeComplete, results[len(results)-1].Event.Phase)
+}
+
+func TestSafeUpgradeMaintenanceLeavesPreexistingCordonInPlace(t *testing.T) {
+	steps := []string{}
+	maintenance := &fakeUpgradeMaintenance{steps: &steps, alreadyCordoned: true}
+
+	err := runSafeUpgradeMaintenance(t.Context(), maintenance, func(ports.UpgradeEvent) {})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"cordon", "drain", "reboot", "wait-talos", "wait-kubernetes"}, steps)
+}
+
+func TestMachineryCordonPreservesPreexistingUnschedulableNode(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Spec:       corev1.NodeSpec{Unschedulable: true},
+	})
+	maintenance := machineryUpgradeMaintenance{clientset: clientset, nodeName: "worker-1"}
+
+	changed, err := maintenance.Cordon(t.Context())
+
+	require.NoError(t, err)
+	assert.False(t, changed)
+	node, err := clientset.CoreV1().Nodes().Get(t.Context(), "worker-1", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.True(t, node.Spec.Unschedulable)
+}
+
+func TestNodeControllerUpgradeStreamCancellationDoesNotDrainOrBlockOnEvents(t *testing.T) {
+	steps := []string{}
+	entered := make(chan struct{})
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		steps:                 steps,
+	}
+	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps}
+	client.lifecycleErr = nil
+
+	stream := newNodeController(client).UpgradeStream(t.Context(), "10.0.0.12", "image:v1.13.4")
+	go func() {
+		<-stream.Results() // checking fills the buffer, leaving lifecycle progress blocked until cancellation-aware.
+		close(entered)
+	}()
+	require.Eventually(t, func() bool {
+		select {
+		case <-entered:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+	stream.Cancel()
+
+	require.Eventually(t, func() bool {
+		_, ok := <-stream.Results()
+		return !ok
+	}, time.Second, time.Millisecond)
+	assert.NotContains(t, client.steps, "cordon")
+	assert.NotContains(t, client.steps, "drain")
+}
+
+func TestLifecycleUpgradeAPIRangeBoundaries(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{version: "1.13.0-alpha.2", want: false},
+		{version: "1.13.0-alpha.3", want: true},
+		{version: "1.13.3", want: true},
+		{version: "2.0.0", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.version, func(t *testing.T) {
+			got, err := lifecycleUpgradeAPISupported(test.version)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+		})
+	}
+	_, err := lifecycleUpgradeAPISupported("not-a-version")
+	assert.Error(t, err)
+}
+
+func TestNodeControllerUpgradeStreamUsesLegacyAtLifecycleLowerBoundary(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}, version: "1.13.0-alpha.2"}
+
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.0"))
+
+	require.NoError(t, results[len(results)-1].Err)
+	assert.Equal(t, "image:v1.13.0", client.upgradeReq.Request.Image)
+	assert.Empty(t, client.steps)
+}
+
+func TestNodeControllerUpgradeStreamRejectsInvalidVersionWithoutLegacyUpgrade(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}, version: "not-a-version"}
+
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.0"))
+
+	require.Error(t, results[len(results)-1].Err)
+	assert.Empty(t, client.upgradeReq.Request.Image)
+}
+
+func TestNodeControllerUpgradeStreamDoesNotMaintainAfterLifecycleFailure(t *testing.T) {
+	steps := []string{}
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		steps:                 steps,
+		lifecycleErr:          errors.New("install failed"),
+	}
+	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps}
+
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4"))
+
+	require.Error(t, results[len(results)-1].Err)
+	assert.Equal(t, []string{"lifecycle"}, client.steps)
+}
+
+func TestSafeUpgradeMaintenanceUncordonsAfterTalosReadinessFailure(t *testing.T) {
+	readyErr := errors.New("Talos API unavailable")
+	steps := []string{}
+	maintenance := &fakeUpgradeMaintenance{steps: &steps, waitTalosErr: readyErr}
+
+	err := runSafeUpgradeMaintenance(t.Context(), maintenance, func(ports.UpgradeEvent) {})
+
+	require.ErrorIs(t, err, readyErr)
+	assert.Equal(t, []string{"cordon", "drain", "reboot", "wait-talos", "uncordon"}, steps)
 }
 
 func TestSafeUpgradeMaintenanceUncordonsAndJoinsCleanupFailureAfterRebootFailure(t *testing.T) {
