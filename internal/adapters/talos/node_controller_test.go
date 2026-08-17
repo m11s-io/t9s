@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/ports"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestDeriveUpgradeImageReplacesTagKeepingRepo(t *testing.T) {
@@ -210,4 +212,147 @@ func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
 	assert.True(t, supportsLifecycleUpgradeAPI("v1.13.3"))
 	assert.False(t, supportsLifecycleUpgradeAPI("v2.0.0"))
 	assert.False(t, supportsLifecycleUpgradeAPI("not-a-version"))
+}
+
+type fakeLifecycleMaintenanceClient struct {
+	*fakeNodeControlClient
+	version         string
+	lifecycleTarget string
+	steps           []string
+	lifecycleErr    error
+	prepareErr      error
+	maintenance     *fakeUpgradeMaintenance
+}
+
+func (c *fakeLifecycleMaintenanceClient) upgradeVersion(context.Context) (string, error) {
+	return c.version, nil
+}
+
+func (c *fakeLifecycleMaintenanceClient) lifecycleUpgrade(ctx context.Context, _ string, progress func(ports.UpgradeEvent)) error {
+	if outgoing, ok := metadata.FromOutgoingContext(ctx); ok {
+		nodes := outgoing.Get("node")
+		if len(nodes) > 0 {
+			c.lifecycleTarget = nodes[0]
+		}
+	}
+	if c.lifecycleTarget == "" {
+		return errors.New("lifecycle upgrade was not targeted to the selected node")
+	}
+	progress(ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulled"})
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: "installed"})
+
+	return c.lifecycleErr
+}
+
+func (c *fakeLifecycleMaintenanceClient) prepareUpgradeMaintenance(context.Context, string) (upgradeMaintenance, error) {
+	if c.prepareErr != nil {
+		return nil, c.prepareErr
+	}
+
+	return c.maintenance, nil
+}
+
+type fakeUpgradeMaintenance struct {
+	steps        *[]string
+	drainErr     error
+	rebootErr    error
+	waitTalosErr error
+	waitKubeErr  error
+	uncordonErr  error
+}
+
+func (m *fakeUpgradeMaintenance) Cordon(context.Context) error {
+	*m.steps = append(*m.steps, "cordon")
+
+	return nil
+}
+
+func (m *fakeUpgradeMaintenance) Drain(context.Context, time.Duration, func(string)) error {
+	*m.steps = append(*m.steps, "drain")
+
+	return m.drainErr
+}
+
+func (m *fakeUpgradeMaintenance) Reboot(context.Context) error {
+	*m.steps = append(*m.steps, "reboot")
+
+	return m.rebootErr
+}
+
+func (m *fakeUpgradeMaintenance) WaitTalosReady(context.Context, time.Duration) error {
+	*m.steps = append(*m.steps, "wait-talos")
+
+	return m.waitTalosErr
+}
+
+func (m *fakeUpgradeMaintenance) WaitKubernetesReady(context.Context, time.Duration) error {
+	*m.steps = append(*m.steps, "wait-kubernetes")
+
+	return m.waitKubeErr
+}
+
+func (m *fakeUpgradeMaintenance) Uncordon(context.Context) error {
+	*m.steps = append(*m.steps, "uncordon")
+
+	return m.uncordonErr
+}
+
+func upgradeResults(stream ports.UpgradeStream) []ports.UpgradeResult {
+	var results []ports.UpgradeResult
+	for result := range stream.Results() {
+		results = append(results, result)
+	}
+
+	return results
+}
+
+func TestNodeControllerUpgradeStreamTargetsLifecycleThenSafelyMaintainsNode(t *testing.T) {
+	steps := []string{}
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		steps:                 steps,
+	}
+	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps}
+
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "10.0.0.12", "factory.talos.dev/metal-installer/abc:v1.13.4"))
+
+	require.NotEmpty(t, results)
+	require.NoError(t, results[len(results)-1].Err)
+	assert.True(t, results[len(results)-1].Done)
+	assert.Equal(t, "10.0.0.12", client.lifecycleTarget)
+	assert.Equal(t, []string{"cordon", "drain", "reboot", "wait-talos", "wait-kubernetes", "uncordon"}, client.steps)
+	assert.Equal(t, ports.UpgradeComplete, results[len(results)-1].Event.Phase)
+}
+
+func TestSafeUpgradeMaintenanceUncordonsAndJoinsCleanupFailureAfterRebootFailure(t *testing.T) {
+	primary := errors.New("reboot unavailable")
+	cleanup := errors.New("uncordon unavailable")
+	steps := []string{}
+	maintenance := &fakeUpgradeMaintenance{
+		steps:       &steps,
+		rebootErr:   primary,
+		uncordonErr: cleanup,
+	}
+
+	err := runSafeUpgradeMaintenance(t.Context(), maintenance, func(ports.UpgradeEvent) {})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, primary)
+	assert.ErrorIs(t, err, cleanup)
+	assert.Equal(t, []string{"cordon", "drain", "reboot", "uncordon"}, steps)
+}
+
+func TestSafeUpgradeMaintenanceUncordonsAfterDrainFailure(t *testing.T) {
+	drainErr := errors.New("pod disruption budget blocks eviction")
+	steps := []string{}
+	maintenance := &fakeUpgradeMaintenance{
+		steps:    &steps,
+		drainErr: drainErr,
+	}
+
+	err := runSafeUpgradeMaintenance(t.Context(), maintenance, func(ports.UpgradeEvent) {})
+
+	require.ErrorIs(t, err, drainErr)
+	assert.Equal(t, []string{"cordon", "drain", "uncordon"}, steps)
 }

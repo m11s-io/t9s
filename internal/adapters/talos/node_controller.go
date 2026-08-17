@@ -2,18 +2,28 @@ package talos
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/blang/semver/v4"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/blang/semver/v4"
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/m11s-io/t9s/internal/ports"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
+	k8sresource "github.com/siderolabs/talos/pkg/machinery/resources/k8s"
 	runtimeresource "github.com/siderolabs/talos/pkg/machinery/resources/runtime"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8swait "k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	kubectldrain "k8s.io/kubectl/pkg/drain"
 )
 
 type lifecycleUpgradeClient interface {
@@ -22,6 +32,19 @@ type lifecycleUpgradeClient interface {
 
 type versionedUpgradeClient interface {
 	upgradeVersion(context.Context) (string, error)
+}
+
+type upgradeMaintenanceClient interface {
+	prepareUpgradeMaintenance(context.Context, string) (upgradeMaintenance, error)
+}
+
+type upgradeMaintenance interface {
+	Cordon(context.Context) error
+	Drain(context.Context, time.Duration, func(string)) error
+	Reboot(context.Context) error
+	WaitTalosReady(context.Context, time.Duration) error
+	WaitKubernetesReady(context.Context, time.Duration) error
+	Uncordon(context.Context) error
 }
 
 type nodeControlClient interface {
@@ -112,6 +135,13 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 }
 
 type nodeController struct{ client nodeControlClient }
+
+const (
+	upgradeDrainTimeout   = 5 * time.Minute
+	upgradeReadyTimeout   = 5 * time.Minute
+	upgradeCleanupTimeout = time.Minute
+)
+
 type upgradeStream struct {
 	results chan ports.UpgradeResult
 	cancel  context.CancelFunc
@@ -167,25 +197,49 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 		defer close(stream.results)
 		defer cancel()
 		stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeChecking, Message: "checking Talos upgrade API"}}
-		err := error(nil)
-		if versioned, ok := c.client.(versionedUpgradeClient); ok {
-			if version, versionErr := versioned.upgradeVersion(streamCtx); versionErr != nil {
-				stream.results <- ports.UpgradeResult{Err: versionErr, Done: true}
-				return
-			} else if !supportsLifecycleUpgradeAPI(version) {
-				err := c.Upgrade(streamCtx, target, image)
-				if err == nil {
-					stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Done: true}
-				} else {
-					stream.results <- ports.UpgradeResult{Err: err, Done: true}
-				}
-				return
-			}
+		versioned, ok := c.client.(versionedUpgradeClient)
+		if !ok {
+			stream.results <- ports.UpgradeResult{Err: errors.New("Talos client cannot determine upgrade API version"), Done: true}
+			return
 		}
-		if lifecycle, ok := c.client.(lifecycleUpgradeClient); ok {
-			err = lifecycle.lifecycleUpgrade(streamCtx, image, func(event ports.UpgradeEvent) { stream.results <- ports.UpgradeResult{Event: &event} })
-		} else {
-			err = c.Upgrade(streamCtx, target, image)
+		version, versionErr := versioned.upgradeVersion(streamCtx)
+		if versionErr != nil {
+			stream.results <- ports.UpgradeResult{Err: fmt.Errorf("check Talos upgrade API version: %w", versionErr), Done: true}
+			return
+		}
+		lifecycleSupported, versionErr := lifecycleUpgradeAPISupported(version)
+		if versionErr != nil {
+			stream.results <- ports.UpgradeResult{Err: versionErr, Done: true}
+			return
+		}
+		if !lifecycleSupported {
+			err := c.Upgrade(streamCtx, target, image)
+			if err == nil {
+				stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Done: true}
+			} else {
+				stream.results <- ports.UpgradeResult{Err: err, Done: true}
+			}
+			return
+		}
+		lifecycle, ok := c.client.(lifecycleUpgradeClient)
+		if !ok {
+			stream.results <- ports.UpgradeResult{Err: errors.New("Talos client does not support lifecycle upgrades"), Done: true}
+			return
+		}
+		err := lifecycle.lifecycleUpgrade(talosclient.WithNode(streamCtx, target), image, func(event ports.UpgradeEvent) { stream.results <- ports.UpgradeResult{Event: &event} })
+		if err == nil {
+			maintenanceClient, ok := c.client.(upgradeMaintenanceClient)
+			if !ok {
+				err = errors.New("Talos client does not support safe upgrade maintenance")
+			} else {
+				stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "resolving Kubernetes node"}}
+				maintenance, prepareErr := maintenanceClient.prepareUpgradeMaintenance(streamCtx, target)
+				if prepareErr != nil {
+					err = fmt.Errorf("prepare Kubernetes node maintenance: %w", prepareErr)
+				} else {
+					err = runSafeUpgradeMaintenance(streamCtx, maintenance, func(event ports.UpgradeEvent) { stream.results <- ports.UpgradeResult{Event: &event} })
+				}
+			}
 		}
 		if err == nil {
 			stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "upgrade complete"}, Done: true}
@@ -224,6 +278,194 @@ func supportsLifecycleUpgradeAPI(raw string) bool {
 	min, _ := semver.Parse("1.13.0-alpha.2")
 	max, _ := semver.Parse("2.0.0")
 	return version.GT(min) && version.LT(max)
+}
+
+func lifecycleUpgradeAPISupported(raw string) (bool, error) {
+	version, err := semver.Parse(strings.TrimPrefix(raw, "v"))
+	if err != nil {
+		return false, fmt.Errorf("parse Talos version %q: %w", raw, err)
+	}
+	min, _ := semver.Parse("1.13.0-alpha.2")
+	max, _ := semver.Parse("2.0.0")
+
+	return version.GT(min) && version.LT(max), nil
+}
+
+func runSafeUpgradeMaintenance(ctx context.Context, maintenance upgradeMaintenance, progress func(ports.UpgradeEvent)) (retErr error) {
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "cordoning Kubernetes node"})
+	if err := maintenance.Cordon(ctx); err != nil {
+		return fmt.Errorf("cordon Kubernetes node: %w", err)
+	}
+
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), upgradeCleanupTimeout)
+		defer cancel()
+		progress(ports.UpgradeEvent{Phase: ports.UpgradeUncordon, Message: "uncordoning Kubernetes node"})
+		if err := maintenance.Uncordon(cleanupCtx); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("uncordon Kubernetes node: %w", err))
+		}
+	}()
+
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: "draining Kubernetes node"})
+	if err := maintenance.Drain(ctx, upgradeDrainTimeout, func(message string) {
+		progress(ports.UpgradeEvent{Phase: ports.UpgradeDraining, Message: message})
+	}); err != nil {
+		return fmt.Errorf("drain Kubernetes node: %w", err)
+	}
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeRebooting, Message: "rebooting Talos node"})
+	if err := maintenance.Reboot(ctx); err != nil {
+		return fmt.Errorf("reboot Talos node: %w", err)
+	}
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeWaiting, Message: "waiting for Talos API"})
+	if err := maintenance.WaitTalosReady(ctx, upgradeReadyTimeout); err != nil {
+		return fmt.Errorf("wait for Talos API: %w", err)
+	}
+	progress(ports.UpgradeEvent{Phase: ports.UpgradeWaiting, Message: "waiting for Kubernetes node readiness"})
+	if err := maintenance.WaitKubernetesReady(ctx, upgradeReadyTimeout); err != nil {
+		return fmt.Errorf("wait for Kubernetes node readiness: %w", err)
+	}
+
+	return nil
+}
+
+type machineryUpgradeMaintenance struct {
+	client    *talosclient.Client
+	target    string
+	nodeName  string
+	clientset kubernetes.Interface
+}
+
+func (c machineryNodeControlClient) prepareUpgradeMaintenance(ctx context.Context, target string) (upgradeMaintenance, error) {
+	clientset, err := kubernetesClientFromTalos(ctx, c.client)
+	if err != nil {
+		return nil, fmt.Errorf("fetch Kubernetes client from Talos: %w", err)
+	}
+	nodename, err := safe.StateGetByID[*k8sresource.Nodename](talosclient.WithNode(ctx, target), c.client.COSI, k8sresource.NodenameID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Kubernetes node name: %w", err)
+	}
+
+	return machineryUpgradeMaintenance{
+		client:    c.client,
+		target:    target,
+		nodeName:  nodename.TypedSpec().Nodename,
+		clientset: clientset,
+	}, nil
+}
+
+func kubernetesClientFromTalos(ctx context.Context, client *talosclient.Client) (kubernetes.Interface, error) {
+	kubeconfig, err := client.Kubeconfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetch kubeconfig from Talos API: %w", err)
+	}
+	config, err := clientcmd.NewClientConfigFromBytes(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("parse Talos kubeconfig: %w", err)
+	}
+	restConfig, err := config.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build Kubernetes REST config: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Kubernetes clientset: %w", err)
+	}
+
+	return clientset, nil
+}
+
+func (m machineryUpgradeMaintenance) Cordon(ctx context.Context) error {
+	node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+	}
+	if err := kubectldrain.RunCordonOrUncordon(&kubectldrain.Helper{Ctx: ctx, Client: m.clientset}, node, true); err != nil {
+		return fmt.Errorf("cordon Kubernetes node %q: %w", m.nodeName, err)
+	}
+
+	return nil
+}
+
+func (m machineryUpgradeMaintenance) Drain(ctx context.Context, timeout time.Duration, progress func(string)) error {
+	drainCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	helper := &kubectldrain.Helper{
+		Ctx:                 drainCtx,
+		Client:              m.clientset,
+		Force:               true,
+		GracePeriodSeconds:  -1,
+		IgnoreAllDaemonSets: true,
+		DeleteEmptyDirData:  true,
+		Timeout:             timeout,
+	}
+	if progress != nil {
+		helper.OnPodDeletionOrEvictionStarted = func(pod *corev1.Pod, usingEviction bool) {
+			verb := "deleting"
+			if usingEviction {
+				verb = "evicting"
+			}
+			progress(fmt.Sprintf("%s pod %s/%s", verb, pod.Namespace, pod.Name))
+		}
+	}
+	if err := kubectldrain.RunNodeDrain(helper, m.nodeName); err != nil {
+		return fmt.Errorf("drain Kubernetes node %q: %w", m.nodeName, err)
+	}
+
+	return nil
+}
+
+func (m machineryUpgradeMaintenance) Reboot(ctx context.Context) error {
+	return m.client.Reboot(talosclient.WithNode(ctx, m.target))
+}
+
+func (m machineryUpgradeMaintenance) WaitTalosReady(ctx context.Context, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var lastErr error
+	for {
+		if _, err := m.client.Version(talosclient.WithNode(waitCtx, m.target)); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("Talos API did not become ready: %w", errors.Join(waitCtx.Err(), lastErr))
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (m machineryUpgradeMaintenance) WaitKubernetesReady(ctx context.Context, timeout time.Duration) error {
+	return k8swait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+		}
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady {
+				return condition.Status == corev1.ConditionTrue, nil
+			}
+		}
+
+		return false, nil
+	})
+}
+
+func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
+	node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+	}
+	if err := kubectldrain.RunCordonOrUncordon(&kubectldrain.Helper{Ctx: ctx, Client: m.clientset}, node, false); err != nil {
+		return fmt.Errorf("uncordon Kubernetes node %q: %w", m.nodeName, err)
+	}
+
+	return nil
 }
 func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
 	pull, err := c.client.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{ImageRef: image})
