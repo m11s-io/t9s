@@ -60,3 +60,14 @@ func TestRenderPendingServiceActionPromptIncludesWarning(t *testing.T) {
 	assert.Contains(t, prompt, "!!")
 	assert.Contains(t, prompt, "Stop etcd@cp-1? (y/n)")
 }
+
+func TestRenderPendingActionPromptUpgradeWarningKeepsSingleTargetAndImage(t *testing.T) {
+	prompt := renderPendingActionPrompt(application.PendingAction{
+		Kind:    application.ActionUpgrade,
+		Targets: []string{"cp-1"},
+		Image:   "ghcr.io/siderolabs/installer:v1.15.0",
+		Warning: "skips intermediate Talos minor releases",
+	})
+
+	assert.Equal(t, "!! skips intermediate Talos minor releases — Upgrade to …olabs/installer:v1.15.0 cp-1? (y/n)", prompt)
+}

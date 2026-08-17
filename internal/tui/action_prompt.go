@@ -36,7 +36,11 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 	}
 	if pending.Warning != "" {
 		warning := truncateWarningTail(pending.Warning, pendingActionWarningBudget)
-		return fmt.Sprintf("!! %s — %s %d node(s)? (y/n)", warning, verb, len(pending.Targets))
+		target := fmt.Sprintf("%d node(s)", len(pending.Targets))
+		if pending.Kind == application.ActionUpgrade && len(pending.Targets) == 1 {
+			target = pending.Targets[0]
+		}
+		return fmt.Sprintf("!! %s — %s %s? (y/n)", warning, verb, target)
 	}
 	return verb + " " + strings.Join(pending.Targets, ", ") + "? (y/n)"
 }
