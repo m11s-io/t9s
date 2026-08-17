@@ -226,6 +226,23 @@ func supportsLifecycleUpgradeAPI(raw string) bool {
 	return version.GT(min) && version.LT(max)
 }
 func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
+	pull, err := c.client.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{ImageRef: image})
+	if err != nil {
+		return fmt.Errorf("pull upgrade image: %w", err)
+	}
+	for {
+		response, recvErr := pull.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return fmt.Errorf("pull upgrade image: %w", recvErr)
+		}
+		if progressResponse := response.GetPullProgress(); progressResponse != nil && progressResponse.GetProgress() != nil {
+			layer := progressResponse.GetProgress()
+			progress(ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling upgrade image", Current: layer.GetOffset(), Total: layer.GetTotal()})
+		}
+	}
 	stream, err := c.client.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{Source: &machineapi.InstallArtifactsSource{ImageName: image}})
 	if err != nil {
 		return err
