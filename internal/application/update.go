@@ -300,6 +300,12 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.ActionTotal = 0
 		return model, nil
 
+	case RequestUpgradePrompt:
+		return model, requestUpgradeImage(model.nodeController, message.Target, message.Generation)
+
+	case UpgradePromptOpened:
+		return model, nil
+
 	case CancelPendingAction:
 		model.PendingAction = nil
 		model.PendingServiceAction = nil

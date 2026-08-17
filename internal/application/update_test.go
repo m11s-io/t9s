@@ -1511,3 +1511,35 @@ func TestCancelPendingActionClearsPendingServiceAction(t *testing.T) {
 	assert.Nil(t, got.PendingServiceAction)
 	assert.Nil(t, effect)
 }
+
+func TestRequestUpgradePromptFetchesCurrentImage(t *testing.T) {
+	controller := &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(_ context.Context, target string) (string, error) {
+			assert.Equal(t, "cp-1", target)
+			return "ghcr.io/siderolabs/installer:v1.13.2", nil
+		},
+	}
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+
+	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1", Generation: model.Generation})
+
+	require.NotNil(t, effect)
+	message := effect(t.Context(), application.Dependencies{})
+	assert.Equal(t, application.UpgradePromptOpened{Target: "cp-1", Image: "ghcr.io/siderolabs/installer:v1.13.2", Generation: model.Generation}, message)
+}
+
+func TestRequestUpgradePromptOpensBlankOnFetchError(t *testing.T) {
+	controller := &testkit.FakeNodeController{
+		CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+			return "", errors.New("resource not found")
+		},
+	}
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+
+	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1", Generation: model.Generation})
+
+	message := effect(t.Context(), application.Dependencies{})
+	assert.Equal(t, application.UpgradePromptOpened{Target: "cp-1", Image: "", Generation: model.Generation}, message, "a prefill fetch failure must still open the prompt, just blank")
+}

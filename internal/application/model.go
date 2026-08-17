@@ -414,6 +414,21 @@ type ProcessesFailed struct {
 
 func (ProcessesFailed) applicationMessage() {}
 
+type RequestUpgradePrompt struct {
+	Target     string
+	Generation uint64
+}
+
+func (RequestUpgradePrompt) applicationMessage() {}
+
+type UpgradePromptOpened struct {
+	Target     string
+	Image      string
+	Generation uint64
+}
+
+func (UpgradePromptOpened) applicationMessage() {}
+
 type OpenDisks struct {
 	Node string
 }

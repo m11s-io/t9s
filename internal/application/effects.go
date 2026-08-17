@@ -371,6 +371,19 @@ func loadProcesses(reader ports.ProcessReader, node string, generation uint64) E
 	}
 }
 
+func requestUpgradeImage(controller ports.NodeController, target string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if controller == nil {
+			return UpgradePromptOpened{Target: target, Generation: generation}
+		}
+		image, err := controller.CurrentInstallImage(ctx, target)
+		if err != nil {
+			return UpgradePromptOpened{Target: target, Generation: generation}
+		}
+		return UpgradePromptOpened{Target: target, Image: image, Generation: generation}
+	}
+}
+
 func loadDisks(reader ports.DiskReader, node string, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {
