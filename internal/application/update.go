@@ -52,6 +52,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.logGeneration++
 		model.Notice = ""
 		model.PendingAction = nil
+		model.PendingServiceAction = nil
 		model.ActionResults = nil
 		model.ActionTotal = 0
 		return model, openSession(message.Name, model.Generation)
@@ -62,6 +63,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		model.nodeReader = message.Nodes
 		model.nodeController = message.NodeController
+		model.serviceController = message.ServiceController
 		model.serviceReader = message.Services
 		model.logReader = message.Logs
 		model.eventReader = message.Events
@@ -280,15 +282,37 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.ActionTotal = 0
 		return model, nil
 
+	case RequestServiceAction:
+		if !model.WritesEnabled || message.Node == "" || message.Service == "" {
+			return model, nil
+		}
+		warning := ""
+		if message.Service == "etcd" && message.Kind != ServiceActionStart {
+			warning = computeEtcdQuorumWarning(model.Nodes.Value.Nodes, model.Etcd, []string{message.Node})
+		}
+		model.PendingServiceAction = &PendingServiceAction{
+			Kind:    message.Kind,
+			Node:    message.Node,
+			Service: message.Service,
+			Warning: warning,
+		}
+		model.ActionResults = nil
+		model.ActionTotal = 0
+		return model, nil
+
 	case CancelPendingAction:
 		model.PendingAction = nil
+		model.PendingServiceAction = nil
 		return model, nil
 
 	case ConfirmPendingAction:
 		if model.PendingAction != nil {
 			model.ActionTotal = len(model.PendingAction.Targets)
+		} else if model.PendingServiceAction != nil {
+			model.ActionTotal = 1
 		}
 		model.PendingAction = nil
+		model.PendingServiceAction = nil
 		return model, nil
 
 	case ActionSucceeded:

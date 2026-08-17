@@ -1435,3 +1435,79 @@ func TestRequestActionComputesQuorumWarningForRollbackKind(t *testing.T) {
 	require.NotNil(t, got.PendingAction)
 	assert.Contains(t, got.PendingAction.Warning, "below quorum", "Rollback must reuse the same quorum warning Reboot/Shutdown use, since it also reboots the node")
 }
+
+func TestRequestServiceActionSetsPendingServiceAction(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+
+	got, effect := application.Update(model, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "kubelet"})
+
+	require.NotNil(t, got.PendingServiceAction)
+	assert.Equal(t, application.ServiceActionRestart, got.PendingServiceAction.Kind)
+	assert.Equal(t, "cp-1", got.PendingServiceAction.Node)
+	assert.Equal(t, "kubelet", got.PendingServiceAction.Service)
+	assert.Empty(t, got.PendingServiceAction.Warning, "non-etcd services never carry the quorum warning")
+	assert.Nil(t, effect)
+}
+
+func TestRequestServiceActionIsInertWhenWritesDisabled(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = false
+
+	got, effect := application.Update(model, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "etcd"})
+
+	assert.Nil(t, got.PendingServiceAction)
+	assert.Nil(t, effect)
+}
+
+func TestRequestServiceActionWarnsForEtcdRestart(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1"}, {Hostname: "cp-2"}, {Hostname: "cp-3"},
+	}}}
+
+	got, _ := application.Update(model, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "etcd"})
+
+	require.NotNil(t, got.PendingServiceAction)
+	assert.Contains(t, got.PendingServiceAction.Warning, "below quorum")
+}
+
+func TestRequestServiceActionNoWarningForEtcdStart(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+	}}}
+
+	got, _ := application.Update(model, application.RequestServiceAction{Kind: application.ServiceActionStart, Node: "cp-1", Service: "etcd"})
+
+	require.NotNil(t, got.PendingServiceAction)
+	assert.Empty(t, got.PendingServiceAction.Warning, "starting a stopped service never removes quorum capacity")
+}
+
+func TestConfirmPendingServiceActionSetsActionTotalToOne(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.PendingServiceAction = &application.PendingServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "kubelet"}
+
+	got, effect := application.Update(model, application.ConfirmPendingAction{})
+
+	assert.Nil(t, got.PendingServiceAction)
+	assert.Equal(t, 1, got.ActionTotal)
+	assert.Nil(t, effect)
+}
+
+func TestCancelPendingActionClearsPendingServiceAction(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.PendingServiceAction = &application.PendingServiceAction{Kind: application.ServiceActionStop, Node: "cp-1", Service: "kubelet"}
+
+	got, effect := application.Update(model, application.CancelPendingAction{})
+
+	assert.Nil(t, got.PendingServiceAction)
+	assert.Nil(t, effect)
+}

@@ -39,6 +39,7 @@ type Model struct {
 	nodeReader             ports.NodeReader
 	nodeController         ports.NodeController
 	serviceReader          ports.ServiceReader
+	serviceController      ports.ServiceController
 	logReader              ports.ServiceLogReader
 	eventReader            ports.EventReader
 	etcdReader             ports.EtcdReader
@@ -53,6 +54,7 @@ type Model struct {
 	Notice                 string
 	Logs                   LogState
 	PendingAction          *PendingAction
+	PendingServiceAction   *PendingServiceAction
 	ActionResults          []ActionResult
 	// ActionTotal is the number of targets the currently-in-flight bulk
 	// action was confirmed against. ActionResults grows one entry at a time
@@ -276,6 +278,29 @@ type CancelPendingAction struct{}
 
 func (CancelPendingAction) applicationMessage() {}
 
+type ServiceActionKind string
+
+const (
+	ServiceActionStart   ServiceActionKind = "start"
+	ServiceActionStop    ServiceActionKind = "stop"
+	ServiceActionRestart ServiceActionKind = "restart"
+)
+
+type PendingServiceAction struct {
+	Kind    ServiceActionKind
+	Node    string
+	Service string
+	Warning string
+}
+
+type RequestServiceAction struct {
+	Kind    ServiceActionKind
+	Node    string
+	Service string
+}
+
+func (RequestServiceAction) applicationMessage() {}
+
 type ActionSucceeded struct {
 	Generation uint64
 	Target     string
@@ -292,19 +317,20 @@ type ActionFailed struct {
 func (ActionFailed) applicationMessage() {}
 
 type SessionOpened struct {
-	Generation      uint64
-	Nodes           ports.NodeReader
-	NodeController  ports.NodeController
-	Services        ports.ServiceReader
-	Logs            ports.ServiceLogReader
-	Events          ports.EventReader
-	Etcd            ports.EtcdReader
-	Processes       ports.ProcessReader
-	Disks           ports.DiskReader
-	Network         ports.NetworkReader
-	ResourceKinds   ports.ResourceKindReader
-	Resources       ports.ResourceInstanceReader
-	KubernetesNodes ports.KubernetesNodeReader
+	Generation        uint64
+	Nodes             ports.NodeReader
+	NodeController    ports.NodeController
+	ServiceController ports.ServiceController
+	Services          ports.ServiceReader
+	Logs              ports.ServiceLogReader
+	Events            ports.EventReader
+	Etcd              ports.EtcdReader
+	Processes         ports.ProcessReader
+	Disks             ports.DiskReader
+	Network           ports.NetworkReader
+	ResourceKinds     ports.ResourceKindReader
+	Resources         ports.ResourceInstanceReader
+	KubernetesNodes   ports.KubernetesNodeReader
 }
 
 func (SessionOpened) applicationMessage() {}
