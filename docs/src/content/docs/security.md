@@ -14,7 +14,7 @@ start/stop/restart from the `:services` screen (`S` to start, `T` to stop,
 control-plane and etcd-quorum risk before it runs. The header's `[RO]`/`[RW]`
 badge always reflects whether writes are active for the current session.
 
-Talos upgrade is behind the same `--enable-writes` gate and explicit confirmation. The selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure. Progress and errors are normalized; credentials, talosconfig contents, kubeconfig contents, and registry tokens are not stored in model state or logs. Kubernetes control-plane upgrades are not part of this action.
+Talos upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages. Progress and errors are normalized; credentials, talosconfig contents, kubeconfig contents, and registry tokens are not stored in model state or logs. Kubernetes control-plane upgrades are not part of this action.
 
 The supplied Talos credentials can still be privileged. Protect every talosconfig as a sensitive secret and grant only the permissions an operator needs.
 
