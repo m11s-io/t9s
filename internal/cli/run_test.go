@@ -13,7 +13,27 @@ import (
 	"github.com/m11s-io/t9s/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/klog/v2"
 )
+
+func TestRunConfiguresKlogBeforeStartingTUI(t *testing.T) {
+	var logs bytes.Buffer
+	klog.LogToStderr(false)
+	klog.SetOutput(&logs)
+	t.Cleanup(func() {
+		klog.LogToStderr(false)
+		klog.SetOutput(io.Discard)
+	})
+
+	stdout := newSignalWriter("load talosconfig")
+	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
+	var stderr bytes.Buffer
+	exitCode := cli.Run(t.Context(), []string{"--talosconfig", "/path/that/does/not/exist/talosconfig"}, stdin, stdout, &stderr)
+
+	require.Equal(t, 0, exitCode)
+	klog.InfoS("client-go log must not reach the TUI terminal")
+	assert.NotContains(t, logs.String(), "client-go log must not reach the TUI terminal")
+}
 
 func TestRunReturnsTwoForUnknownFlag(t *testing.T) {
 	var stdout bytes.Buffer

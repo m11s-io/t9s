@@ -17,7 +17,16 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 	"github.com/m11s-io/t9s/internal/tui"
 	"github.com/m11s-io/t9s/internal/version"
+	"k8s.io/klog/v2"
 )
+
+// configureTUILogging prevents libraries that use klog (notably client-go)
+// from writing directly to the terminal while Bubble Tea owns it. T9s own
+// CLI errors still use the caller-provided error writer.
+func configureTUILogging() {
+	klog.LogToStderr(false)
+	klog.SetOutput(io.Discard)
+}
 
 func resolveKubeContext(ctx context.Context, catalog ports.ContextCatalog, associations config.Associations, kubeContext string) (talosContext string, openPicker bool, err error) {
 	if mapped, ok := associations.TalosContextFor(kubeContext); ok {
@@ -38,6 +47,8 @@ func resolveKubeContext(ctx context.Context, catalog ports.ContextCatalog, assoc
 }
 
 func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, errorOutput io.Writer) int {
+	configureTUILogging()
+
 	var talosconfigs []string
 	var contextOverride string
 	var node string

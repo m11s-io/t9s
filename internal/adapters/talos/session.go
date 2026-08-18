@@ -3,12 +3,10 @@ package talos
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/m11s-io/t9s/internal/ports"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
-	"k8s.io/klog/v2"
 )
 
 type sessionFactory struct {
@@ -19,7 +17,6 @@ var _ ports.SessionFactory = (*sessionFactory)(nil)
 
 // NewSessionFactory creates Talos sessions using one or more talosconfig files.
 func NewSessionFactory(configPaths ...string) ports.SessionFactory {
-	klog.SetOutputBySeverity("INFO", io.Discard)
 	return &sessionFactory{configPaths: append([]string(nil), configPaths...)}
 }
 
