@@ -222,12 +222,18 @@ func (l machineryInstallImageLookup) runningTalosVersion(ctx context.Context) (s
 	return "", fmt.Errorf("Talos version response contained no version")
 }
 
+type upgradeRecoveryError struct{ err error }
+
+func (e *upgradeRecoveryError) Error() string { return e.err.Error() }
+func (e *upgradeRecoveryError) Unwrap() error { return e.err }
+
 type nodeController struct{ client nodeControlClient }
 
 const (
-	upgradeDrainTimeout   = 5 * time.Minute
-	upgradeReadyTimeout   = 5 * time.Minute
-	upgradeCleanupTimeout = time.Minute
+	upgradeDrainTimeout    = 5 * time.Minute
+	upgradeRecoveryTimeout = 15 * time.Minute
+	upgradeReadyTimeout    = upgradeRecoveryTimeout
+	upgradeCleanupTimeout  = upgradeRecoveryTimeout
 )
 
 type upgradeStream struct {
@@ -341,9 +347,14 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 			}
 		}
 		if err == nil {
-			emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "upgrade complete"}, Done: true})
+			emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "upgrade complete"}, Outcome: ports.UpgradeOutcomeApplied, Done: true})
 		} else {
-			emit(ports.UpgradeResult{Err: err, Done: true})
+			var recoveryErr *upgradeRecoveryError
+			if errors.As(err, &recoveryErr) {
+				emit(ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned.", Done: true})
+			} else {
+				emit(ports.UpgradeResult{Err: err, Done: true})
+			}
 		}
 	}()
 	return stream
@@ -480,21 +491,22 @@ func runSafeUpgradeMaintenance(ctx context.Context, maintenance upgradeMaintenan
 	}
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeWaiting, Message: "waiting for Talos API"})
 	if err := maintenance.WaitTalosReady(ctx, upgradeReadyTimeout); err != nil {
-		return fmt.Errorf("wait for Talos API: %w", err)
+		return &upgradeRecoveryError{err: fmt.Errorf("wait for Talos API: %w", err)}
 	}
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeWaiting, Message: "waiting for Kubernetes node readiness"})
 	if err := maintenance.WaitKubernetesReady(ctx, upgradeReadyTimeout); err != nil {
-		return fmt.Errorf("wait for Kubernetes node readiness: %w", err)
+		return &upgradeRecoveryError{err: fmt.Errorf("wait for Kubernetes node readiness: %w", err)}
 	}
 
 	return nil
 }
 
 type machineryUpgradeMaintenance struct {
-	client    *talosclient.Client
-	target    string
-	nodeName  string
-	clientset kubernetes.Interface
+	client           *talosclient.Client
+	target           string
+	nodeName         string
+	clientset        kubernetes.Interface
+	preUpgradeBootID string
 }
 
 func (c machineryNodeControlClient) prepareUpgradeMaintenance(ctx context.Context, target string) (upgradeMaintenance, error) {
@@ -506,12 +518,18 @@ func (c machineryNodeControlClient) prepareUpgradeMaintenance(ctx context.Contex
 	if err != nil {
 		return nil, fmt.Errorf("resolve Kubernetes node name: %w", err)
 	}
+	nodeName := nodename.TypedSpec().Nodename
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get Kubernetes node %q: %w", nodeName, err)
+	}
 
 	return machineryUpgradeMaintenance{
-		client:    c.client,
-		target:    target,
-		nodeName:  nodename.TypedSpec().Nodename,
-		clientset: clientset,
+		client:           c.client,
+		target:           target,
+		nodeName:         nodeName,
+		clientset:        clientset,
+		preUpgradeBootID: node.Status.NodeInfo.BootID,
 	}, nil
 }
 
@@ -605,8 +623,10 @@ func (m machineryUpgradeMaintenance) WaitKubernetesReady(ctx context.Context, ti
 			return false, fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
 		}
 		for _, condition := range node.Status.Conditions {
-			if condition.Type == corev1.NodeReady {
-				return condition.Status == corev1.ConditionTrue, nil
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				if m.preUpgradeBootID == "" || node.Status.NodeInfo.BootID == "" || node.Status.NodeInfo.BootID != m.preUpgradeBootID {
+					return true, nil
+				}
 			}
 		}
 

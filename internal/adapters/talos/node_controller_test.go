@@ -697,6 +697,53 @@ func TestSafeUpgradeMaintenanceReportsCleanupWarningWithoutFailingCompletedUpgra
 	assert.Contains(t, events[len(events)-1].Message, "upgrade completed")
 }
 
+func TestNodeControllerUpgradeStreamReportsRecoveryWarningAfterInstall(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}, waitTalosErr: errors.New("node still booting")},
+	}
+
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4"))
+
+	require.NotEmpty(t, results)
+	last := results[len(results)-1]
+	assert.NoError(t, last.Err)
+	assert.Equal(t, ports.UpgradeOutcomeAppliedWithRecoveryWarning, last.Outcome)
+	assert.Contains(t, last.Warning, "recovery is still pending")
+	assert.True(t, last.Done)
+}
+
+func TestMachineryWaitKubernetesReadyRejectsStaleBootIdentity(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Status: corev1.NodeStatus{
+			NodeInfo:   corev1.NodeSystemInfo{BootID: "old"},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	})
+	maintenance := machineryUpgradeMaintenance{clientset: clientset, nodeName: "worker-1", preUpgradeBootID: "old"}
+
+	err := maintenance.WaitKubernetesReady(t.Context(), 10*time.Millisecond)
+
+	assert.Error(t, err)
+}
+
+func TestMachineryWaitKubernetesReadyAcceptsFreshBootIdentity(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+		Status: corev1.NodeStatus{
+			NodeInfo:   corev1.NodeSystemInfo{BootID: "new"},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	})
+	maintenance := machineryUpgradeMaintenance{clientset: clientset, nodeName: "worker-1", preUpgradeBootID: "old"}
+
+	err := maintenance.WaitKubernetesReady(t.Context(), 10*time.Millisecond)
+
+	assert.NoError(t, err)
+}
+
 func TestSafeUpgradeMaintenanceUncordonsAfterDrainFailure(t *testing.T) {
 	drainErr := errors.New("pod disruption budget blocks eviction")
 	steps := []string{}
