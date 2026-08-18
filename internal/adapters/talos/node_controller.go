@@ -451,7 +451,10 @@ func runSafeUpgradeMaintenance(ctx context.Context, maintenance upgradeMaintenan
 			defer cancel()
 			progress(ports.UpgradeEvent{Phase: ports.UpgradeUncordon, Message: "uncordoning Kubernetes node"})
 			if err := maintenance.Uncordon(cleanupCtx); err != nil {
-				retErr = errors.Join(retErr, fmt.Errorf("uncordon Kubernetes node: %w", err))
+				progress(ports.UpgradeEvent{Phase: ports.UpgradeUncordon, Message: "uncordon failed; upgrade completed; node may remain cordoned"})
+				if retErr != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("uncordon Kubernetes node: %w", err))
+				}
 			}
 		}()
 	}
@@ -612,18 +615,32 @@ func (m machineryUpgradeMaintenance) WaitKubernetesReady(ctx context.Context, ti
 }
 
 func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
-	node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			lastErr = fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+		} else if !node.Spec.Unschedulable {
+			return nil
+		} else if err := kubectldrain.RunCordonOrUncordon(&kubectldrain.Helper{Ctx: ctx, Client: m.clientset}, node, false); err == nil {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("uncordon Kubernetes node %q: %w", m.nodeName, err)
+		}
+		if attempt < 2 {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
-	}
-	if err := kubectldrain.RunCordonOrUncordon(&kubectldrain.Helper{Ctx: ctx, Client: m.clientset}, node, false); err != nil {
-		return fmt.Errorf("uncordon Kubernetes node %q: %w", m.nodeName, err)
-	}
-
-	return nil
+	return lastErr
 }
 func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
 	lifecycle := c.lifecycle

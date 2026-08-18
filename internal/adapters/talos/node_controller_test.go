@@ -679,6 +679,24 @@ func TestSafeUpgradeMaintenanceUncordonsAndJoinsCleanupFailureAfterRebootFailure
 	assert.Equal(t, []string{"cordon", "drain", "reboot", "uncordon"}, steps)
 }
 
+func TestSafeUpgradeMaintenanceReportsCleanupWarningWithoutFailingCompletedUpgrade(t *testing.T) {
+	steps := []string{}
+	maintenance := &fakeUpgradeMaintenance{
+		steps:       &steps,
+		uncordonErr: errors.New("uncordon unavailable"),
+	}
+	var events []ports.UpgradeEvent
+
+	err := runSafeUpgradeMaintenance(t.Context(), maintenance, func(event ports.UpgradeEvent) {
+		events = append(events, event)
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, events)
+	assert.Equal(t, ports.UpgradeUncordon, events[len(events)-1].Phase)
+	assert.Contains(t, events[len(events)-1].Message, "upgrade completed")
+}
+
 func TestSafeUpgradeMaintenanceUncordonsAfterDrainFailure(t *testing.T) {
 	drainErr := errors.New("pod disruption budget blocks eviction")
 	steps := []string{}
