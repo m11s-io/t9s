@@ -173,7 +173,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Kubernetes.Status = Ready
 		model.Kubernetes.Nodes = message.Nodes
 		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, message.Nodes)
-		return model, nil
+		return model, recoveryEffectIfReady(model)
 
 	case KubernetesNodesFailed:
 		if message.Generation != model.Generation {
@@ -377,6 +377,20 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Nodes.Err = ""
 		return model, loadNodes(model.nodeReader, model.Generation)
 
+	case RecoveryUncordonSucceeded:
+		if message.Generation != model.Generation || model.Upgrade.Target != message.Target || model.Upgrade.Warning == "" {
+			return model, nil
+		}
+		model.Upgrade.Warning = ""
+		return model, nil
+
+	case RecoveryUncordonFailed:
+		if message.Generation != model.Generation || model.Upgrade.Target != message.Target || model.Upgrade.Warning == "" {
+			return model, nil
+		}
+		model.Upgrade.Warning = recoveryUncordonFailedWarning
+		return model, nil
+
 	case UpgradeFailed:
 		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
 			return model, nil
@@ -577,6 +591,28 @@ func loadKubernetesNodesIfAvailable(model Model) Effect {
 		return nil
 	}
 	return loadKubernetesNodes(model.kubernetesReader, model.Generation)
+}
+
+// recoveryEffectIfReady closes the loop left by an applied-with-warning
+// upgrade: once a later Kubernetes node refresh shows the pending target is
+// Ready again, it fires an opportunistic uncordon instead of leaving the
+// operator to run kubectl by hand. Uncordon is idempotent, so retrying it on
+// every refresh until the warning clears is safe.
+func recoveryEffectIfReady(model Model) Effect {
+	if model.Upgrade.Warning == "" || model.Upgrade.Active {
+		return nil
+	}
+	target := model.Upgrade.Target
+	for _, node := range model.Nodes.Value.Nodes {
+		if node.Target() != target {
+			continue
+		}
+		if node.Kubernetes != domain.KubernetesReady {
+			return nil
+		}
+		return recoveryUncordonEffect(model.nodeController, target, model.Generation)
+	}
+	return nil
 }
 
 func mergeKubernetesCorrelation(nodes []domain.NodeSnapshot, kubernetesNodes map[string]domain.KubernetesNodeSnapshot) []domain.NodeSnapshot {

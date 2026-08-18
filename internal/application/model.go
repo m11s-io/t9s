@@ -357,6 +357,24 @@ type UpgradeAppliedWithRecoveryWarning struct {
 
 func (UpgradeAppliedWithRecoveryWarning) applicationMessage() {}
 
+// RecoveryUncordonSucceeded and RecoveryUncordonFailed report the outcome of
+// an opportunistic uncordon attempt made after a Kubernetes node refresh
+// observes a pending-recovery target has become Ready. See
+// recoveryEffectIfReady.
+type RecoveryUncordonSucceeded struct {
+	Generation uint64
+	Target     string
+}
+
+func (RecoveryUncordonSucceeded) applicationMessage() {}
+
+type RecoveryUncordonFailed struct {
+	Generation uint64
+	Target     string
+}
+
+func (RecoveryUncordonFailed) applicationMessage() {}
+
 type UpgradeFailed struct {
 	Generation uint64
 	Target     string

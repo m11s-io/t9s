@@ -74,6 +74,26 @@ func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 	return "control-plane node(s)"
 }
 
+// recoveryUncordonFailedWarning replaces the original recovery warning once
+// an automatic uncordon attempt has actually failed, so the operator knows
+// the node is Ready and only the uncordon step needs manual attention.
+const recoveryUncordonFailedWarning = "Talos upgrade applied; node is Ready but automatic uncordon failed; run kubectl uncordon manually."
+
+// recoveryUncordonEffect makes one opportunistic, idempotent uncordon
+// attempt. Failure is not fatal: the warning it leaves behind will trigger
+// another attempt on the next Kubernetes node refresh.
+func recoveryUncordonEffect(controller ports.NodeController, target string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if controller == nil {
+			return RecoveryUncordonFailed{Generation: generation, Target: target}
+		}
+		if err := controller.Uncordon(ctx, target); err != nil {
+			return RecoveryUncordonFailed{Generation: generation, Target: target}
+		}
+		return RecoveryUncordonSucceeded{Generation: generation, Target: target}
+	}
+}
+
 func actionEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {
 	if pending.Kind == ActionUpgrade {
 		return startUpgradeEffect(controller, pending, target, generation)

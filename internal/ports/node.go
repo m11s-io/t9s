@@ -24,6 +24,9 @@ type NodeController interface {
 	Upgrade(ctx context.Context, target, image string) error
 	UpgradeStream(ctx context.Context, target, image string) UpgradeStream
 	CurrentInstallImage(ctx context.Context, target string) (string, error)
+	// Uncordon is idempotent: it is a no-op when the node is already
+	// schedulable, so callers may retry it freely.
+	Uncordon(ctx context.Context, target string) error
 }
 
 // UpgradePhase identifies the lifecycle stage represented by an upgrade event.

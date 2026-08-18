@@ -230,8 +230,11 @@ func (e *upgradeRecoveryError) Unwrap() error { return e.err }
 type nodeController struct{ client nodeControlClient }
 
 const (
-	upgradeDrainTimeout    = 5 * time.Minute
-	upgradeRecoveryTimeout = 15 * time.Minute
+	upgradeDrainTimeout = 5 * time.Minute
+	// Control-plane recovery (etcd rejoin, cert rotation) routinely runs
+	// longer than a worker's kubelet restart, so this deadline is sized for
+	// the slower case rather than the median.
+	upgradeRecoveryTimeout = 25 * time.Minute
 	upgradeReadyTimeout    = upgradeRecoveryTimeout
 	upgradeCleanupTimeout  = upgradeRecoveryTimeout
 )
@@ -375,6 +378,24 @@ func (c *nodeController) CurrentInstallImage(ctx context.Context, target string)
 		return "", fmt.Errorf("current install image %s: %w", target, err)
 	}
 	return image, nil
+}
+
+// Uncordon resolves the node fresh and clears scheduling disablement if any
+// remains. It is safe to call outside an upgrade: machineryUpgradeMaintenance
+// already treats uncordon as a no-op once the node is schedulable.
+func (c *nodeController) Uncordon(ctx context.Context, target string) error {
+	maintenanceClient, ok := c.client.(upgradeMaintenanceClient)
+	if !ok {
+		return errors.New("Talos client does not support safe upgrade maintenance")
+	}
+	maintenance, err := maintenanceClient.prepareUpgradeMaintenance(ctx, target)
+	if err != nil {
+		return fmt.Errorf("prepare Kubernetes node maintenance: %w", err)
+	}
+	if err := maintenance.Uncordon(ctx); err != nil {
+		return fmt.Errorf("uncordon %s: %w", target, err)
+	}
+	return nil
 }
 func parseSchematicFactoryURL(author string) string {
 	idx := strings.LastIndex(author, " (")

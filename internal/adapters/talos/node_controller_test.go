@@ -256,6 +256,44 @@ func TestNodeControllerCurrentInstallImageWrapsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cp-1")
 }
+func TestNodeControllerUncordonRejectsClientWithoutMaintenanceSupport(t *testing.T) {
+	controller := newNodeController(&fakeNodeControlClient{})
+
+	err := controller.Uncordon(t.Context(), "cp-1")
+
+	require.ErrorContains(t, err, "does not support safe upgrade maintenance")
+}
+
+func TestNodeControllerUncordonWrapsPrepareError(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}, prepareErr: errors.New("get node: not found")}
+
+	err := newNodeController(client).Uncordon(t.Context(), "cp-1")
+
+	require.ErrorContains(t, err, "prepare Kubernetes node maintenance")
+	require.ErrorContains(t, err, "not found")
+}
+
+func TestNodeControllerUncordonDelegatesToMaintenanceAndIsIdempotent(t *testing.T) {
+	steps := []string{}
+	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}, steps: steps}
+	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps}
+
+	err := newNodeController(client).Uncordon(t.Context(), "cp-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"uncordon"}, client.steps)
+}
+
+func TestNodeControllerUncordonWrapsMaintenanceError(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}}
+	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps, uncordonErr: errors.New("api unavailable")}
+
+	err := newNodeController(client).Uncordon(t.Context(), "cp-1")
+
+	require.ErrorContains(t, err, "cp-1")
+	require.ErrorContains(t, err, "api unavailable")
+}
+
 func TestDeriveSchematicInstallerImage(t *testing.T) {
 	tests := map[string]struct {
 		factoryURL string

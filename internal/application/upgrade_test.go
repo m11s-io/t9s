@@ -84,6 +84,84 @@ func TestUpgradeAppliedWithRecoveryWarningCompletesWithoutUpgradeError(t *testin
 	assert.Nil(t, effect)
 }
 
+func TestKubernetesNodesLoadedRetriesUncordonWhenPendingWarningTargetBecomesReady(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."}
+	var uncordonTarget string
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UncordonFunc: func(_ context.Context, target string) error {
+		uncordonTarget = target
+		return nil
+	}}})
+
+	got, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
+		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}},
+	}})
+
+	require.NotNil(t, effect)
+	message := effect(t.Context(), application.Dependencies{})
+	assert.Equal(t, "cp-1", uncordonTarget)
+	assert.Equal(t, application.RecoveryUncordonSucceeded{Generation: model.Generation, Target: "cp-1"}, message)
+
+	got, _ = application.Update(got, message)
+	assert.Empty(t, got.Upgrade.Warning)
+}
+
+func TestKubernetesNodesLoadedKeepsWarningVisibleWhenUncordonFails(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."}
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UncordonFunc: func(context.Context, string) error {
+		return errors.New("api unavailable")
+	}}})
+
+	_, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
+		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}},
+	}})
+
+	require.NotNil(t, effect)
+	message := effect(t.Context(), application.Dependencies{})
+	got, _ := application.Update(model, message)
+	assert.NotEmpty(t, got.Upgrade.Warning)
+	assert.NotContains(t, got.Upgrade.Warning, "api unavailable")
+}
+
+func TestKubernetesNodesLoadedDoesNotRetryUncordonWhileStillNotReady(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."}
+
+	_, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
+		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "False"}}},
+	}})
+
+	assert.Nil(t, effect)
+}
+
+func TestKubernetesNodesLoadedDoesNothingWithoutPendingWarning(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
+
+	_, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
+		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}},
+	}})
+
+	assert.Nil(t, effect)
+}
+
+func TestRecoveryUncordonMessagesIgnoreStaleGenerationOrTarget(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "pending recovery"}
+
+	got, effect := application.Update(model, application.RecoveryUncordonSucceeded{Generation: model.Generation - 1, Target: "cp-1"})
+	assert.Equal(t, "pending recovery", got.Upgrade.Warning)
+	assert.Nil(t, effect)
+
+	got, effect = application.Update(model, application.RecoveryUncordonSucceeded{Generation: model.Generation, Target: "cp-2"})
+	assert.Equal(t, "pending recovery", got.Upgrade.Warning)
+	assert.Nil(t, effect)
+}
+
 func TestUpgradeBridgeFailsWhenStreamClosesWithoutTerminalResult(t *testing.T) {
 	results := make(chan ports.UpgradeResult)
 	close(results)
