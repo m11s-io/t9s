@@ -519,6 +519,12 @@ func TestSafeUpgradeMaintenanceLeavesPreexistingCordonInPlace(t *testing.T) {
 	assert.Equal(t, []string{"cordon", "drain", "reboot", "wait-talos", "wait-kubernetes"}, steps)
 }
 
+func TestNewDrainHelperInitializesOutputWriters(t *testing.T) {
+	helper := newDrainHelper(t.Context(), k8sfake.NewSimpleClientset(), time.Minute)
+	assert.NotNil(t, helper.Out)
+	assert.NotNil(t, helper.ErrOut)
+}
+
 func TestMachineryCordonPreservesPreexistingUnschedulableNode(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset(&corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},

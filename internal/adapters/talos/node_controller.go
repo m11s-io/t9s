@@ -547,15 +547,7 @@ func (m machineryUpgradeMaintenance) Cordon(ctx context.Context) (bool, error) {
 func (m machineryUpgradeMaintenance) Drain(ctx context.Context, timeout time.Duration, progress func(string)) error {
 	drainCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	helper := &kubectldrain.Helper{
-		Ctx:                 drainCtx,
-		Client:              m.clientset,
-		Force:               true,
-		GracePeriodSeconds:  -1,
-		IgnoreAllDaemonSets: true,
-		DeleteEmptyDirData:  true,
-		Timeout:             timeout,
-	}
+	helper := newDrainHelper(drainCtx, m.clientset, timeout)
 	if progress != nil {
 		helper.OnPodDeletionOrEvictionStarted = func(pod *corev1.Pod, usingEviction bool) {
 			verb := "deleting"
@@ -570,6 +562,10 @@ func (m machineryUpgradeMaintenance) Drain(ctx context.Context, timeout time.Dur
 	}
 
 	return nil
+}
+
+func newDrainHelper(ctx context.Context, clientset kubernetes.Interface, timeout time.Duration) *kubectldrain.Helper {
+	return &kubectldrain.Helper{Ctx: ctx, Client: clientset, Force: true, GracePeriodSeconds: -1, IgnoreAllDaemonSets: true, DeleteEmptyDirData: true, Timeout: timeout, Out: io.Discard, ErrOut: io.Discard}
 }
 
 func (m machineryUpgradeMaintenance) Reboot(ctx context.Context) error {
