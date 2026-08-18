@@ -399,6 +399,25 @@ type fakeLifecycleMaintenanceClient struct {
 	maintenance     *fakeUpgradeMaintenance
 }
 
+type deadlineVersionClient struct {
+	*fakeNodeControlClient
+	deadlineSeen bool
+}
+
+func (c *deadlineVersionClient) upgradeVersion(ctx context.Context) (string, error) {
+	_, c.deadlineSeen = ctx.Deadline()
+	return "v1.13.4", nil
+}
+
+func TestNodeControllerBoundsUpgradeCapabilityCheck(t *testing.T) {
+	client := &deadlineVersionClient{fakeNodeControlClient: &fakeNodeControlClient{}}
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "worker-1", "image:v1.13.4"))
+
+	require.True(t, client.deadlineSeen)
+	require.NotEmpty(t, results)
+	require.Error(t, results[len(results)-1].Err)
+}
+
 func (c *fakeLifecycleMaintenanceClient) upgradeVersion(ctx context.Context) (string, error) {
 	if outgoing, ok := metadata.FromOutgoingContext(ctx); ok {
 		nodes := outgoing.Get("node")

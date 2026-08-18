@@ -36,6 +36,8 @@ type versionedUpgradeClient interface {
 	upgradeVersion(context.Context) (string, error)
 }
 
+const upgradeCapabilityTimeout = 15 * time.Second
+
 type upgradeMaintenanceClient interface {
 	prepareUpgradeMaintenance(context.Context, string) (upgradeMaintenance, error)
 }
@@ -291,7 +293,9 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 			emit(ports.UpgradeResult{Err: errors.New("Talos client cannot determine upgrade API version"), Done: true})
 			return
 		}
-		version, versionErr := versioned.upgradeVersion(talosclient.WithNode(streamCtx, target))
+		capabilityCtx, capabilityCancel := context.WithTimeout(streamCtx, upgradeCapabilityTimeout)
+		version, versionErr := versioned.upgradeVersion(talosclient.WithNode(capabilityCtx, target))
+		capabilityCancel()
 		if versionErr != nil {
 			emit(ports.UpgradeResult{Err: fmt.Errorf("check Talos upgrade API version: %w", versionErr), Done: true})
 			return
