@@ -616,7 +616,7 @@ func (m machineryUpgradeMaintenance) WaitKubernetesReady(ctx context.Context, ti
 
 func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for {
 		node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return nil
@@ -630,17 +630,14 @@ func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
 		} else {
 			lastErr = fmt.Errorf("uncordon Kubernetes node %q: %w", m.nodeName, err)
 		}
-		if attempt < 2 {
-			timer := time.NewTimer(500 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return lastErr
+		case <-timer.C:
 		}
 	}
-	return lastErr
 }
 func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
 	lifecycle := c.lifecycle
