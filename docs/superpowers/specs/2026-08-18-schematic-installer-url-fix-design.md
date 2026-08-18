@@ -11,31 +11,40 @@ OCI registry, producing malformed suggestions such as
 
 ## Design
 
-t9s will treat the declared machine-config installer image as the authority for
-the OCI registry and installer repository. When a live schematic ID and running
-Talos version are available, it will replace only the schematic path segment and
-tag in a validated declared Image Factory reference:
+t9s will mirror Talos's canonical `images.NewInstallerImage` inputs using the
+runtime metadata available in v1.13.3:
 
-`<registry>/<installer-repository>/<old-schematic>:<old-tag>` becomes
-`<registry>/<installer-repository>/<live-schematic>:<running-tag>`.
+- the validated factory host parsed from the schematic ExtensionStatus author;
+- the runtime `PlatformMetadata.platform` value;
+- the live schematic ID from the schematic ExtensionStatus version;
+- the selected target Talos version.
 
-This preserves standard `installer`, `metal-installer`, and `aws-installer`
-repositories as well as custom registries. Extension author metadata will not be
-used to construct an OCI reference.
+The resulting reference is:
+
+`<factory-host>/<platform>-installer/<live-schematic>:<target-version>`.
+
+For worker-2 this is
+`factory.talos.dev/metal-installer/75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673:v1.13.4`.
+The declared machine-config image is not used to infer a factory repository or
+platform: a standard image such as `ghcr.io/siderolabs/installer:v1.13.0`
+contains neither.
 
 ## Safety and Fallbacks
 
-- Reject schematic derivation when the declared reference has a URL scheme,
-  whitespace, a digest, missing repository, or missing schematic path segment.
-- If schematic derivation is unavailable or invalid, retain the existing safe
-  declared-image behavior: preserve digests, otherwise update only the tag.
-- Never invent a registry or installer flavor from descriptive extension
-  metadata.
+- Accept only an HTTPS factory URL with a host and no credentials, query,
+  fragment, or non-root path; use only its host in the OCI reference.
+- Accept only a non-empty platform containing lowercase ASCII letters, digits,
+  and hyphens, and a non-empty schematic ID without OCI separators or whitespace.
+- If factory, platform, or schematic metadata is unavailable or invalid, retain
+  the existing declared-image behavior: preserve digests, otherwise update only
+  the tag.
+- Never infer a factory repository or platform from the declared installer image.
 
 ## Testing
 
-- Reproduce the screenshot metadata and prove the result is
-  `factory.talos.dev/installer/<live-id>:v1.13.4`.
-- Cover metal, AWS, and custom repository preservation.
-- Cover schemes, whitespace, digests, and structurally invalid references.
+- Reproduce worker-2's exact declared image, author, platform, and schematic and
+  prove the result uses `factory.talos.dev/metal-installer`.
+- Cover metal, AWS, and a valid custom factory host.
+- Cover malformed URLs, credentials, paths, queries, fragments, invalid
+  platforms, and missing metadata falling back to the declared image.
 - Run adapter tests, the full suite, the race suite, vet, and build before push.
