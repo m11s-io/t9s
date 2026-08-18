@@ -128,7 +128,7 @@ func deriveUpgradeImage(declaredImage, runningTag string) string {
 // compatibility source for a live schematic-preserving installer suggestion.
 type installImageLookup interface {
 	declaredInstallImage(context.Context) (string, error)
-	schematicInstaller(context.Context) (factory, flavor, id string, err error)
+	schematicID(context.Context) (string, error)
 	runningTalosVersion(context.Context) (string, error)
 }
 
@@ -139,13 +139,13 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 }
 
 func currentInstallImage(ctx context.Context, lookup installImageLookup) (string, error) {
-	// Lookups are independent. Read schematic metadata first so a transient
-	// MachineConfig failure does not discard a valid live Image Factory source.
-	factory, flavor, schematicID, _ := lookup.schematicInstaller(ctx)
+	// ExtensionStatus contributes only the live schematic ID; the declared image
+	// remains authoritative for the OCI registry and installer repository.
+	schematicID, _ := lookup.schematicID(ctx)
 	declaredImage, declaredErr := lookup.declaredInstallImage(ctx)
 	runningTag, versionErr := lookup.runningTalosVersion(ctx)
 	if versionErr == nil {
-		if image := deriveSchematicInstallerImage(factory, flavor, schematicID, runningTag); image != "" {
+		if image := deriveSchematicInstallerImage(declaredImage, schematicID, runningTag); image != "" {
 			return image, nil
 		}
 		if declaredImage != "" {
@@ -174,18 +174,16 @@ func (l machineryInstallImageLookup) declaredInstallImage(ctx context.Context) (
 	return cfg.Provider().Machine().Install().Image(), nil
 }
 
-func (l machineryInstallImageLookup) schematicInstaller(ctx context.Context) (factory, flavor, id string, err error) {
+func (l machineryInstallImageLookup) schematicID(ctx context.Context) (string, error) {
 	if extensions, listErr := safe.StateListAll[*runtimeresource.ExtensionStatus](ctx, l.client.COSI); listErr == nil {
 		for extension := range extensions.All() {
 			if extension.TypedSpec().Metadata.Name == "schematic" {
-				id = extension.TypedSpec().Metadata.Version
-				flavor, factory = parseSchematicAuthor(extension.TypedSpec().Metadata.Author)
-				return factory, flavor, id, nil
+				return extension.TypedSpec().Metadata.Version, nil
 			}
 		}
 	}
 
-	return "", "", "", nil
+	return "", nil
 }
 
 func (l machineryInstallImageLookup) runningTalosVersion(ctx context.Context) (string, error) {
@@ -343,19 +341,24 @@ func (c *nodeController) CurrentInstallImage(ctx context.Context, target string)
 	}
 	return image, nil
 }
-func deriveSchematicInstallerImage(factory, flavor, schematic, tag string) string {
-	if factory == "" || flavor == "" || schematic == "" || tag == "" {
+func deriveSchematicInstallerImage(declaredImage, schematic, tag string) string {
+	if declaredImage == "" || schematic == "" || tag == "" ||
+		strings.Contains(declaredImage, "://") || strings.Contains(declaredImage, "@") ||
+		strings.ContainsAny(declaredImage, " \t\r\n") ||
+		strings.ContainsAny(schematic, "/:@ \t\r\n") ||
+		strings.ContainsAny(tag, "/@ \t\r\n") ||
+		strings.Count(declaredImage, "/") < 2 {
 		return ""
 	}
-	return factory + "/" + flavor + "-installer/" + schematic + ":" + tag
-}
-func parseSchematicAuthor(author string) (flavor, factory string) {
-	idx := strings.LastIndex(author, " (")
-	if idx < 0 {
-		return author, "factory.talos.dev"
+
+	lastSlash := strings.LastIndex(declaredImage, "/")
+	if declaredImage[lastSlash+1:] == "" {
+		return ""
 	}
-	return author[:idx], strings.TrimSuffix(author[idx+2:], ")")
+
+	return declaredImage[:lastSlash+1] + schematic + ":" + tag
 }
+
 func supportsLifecycleUpgradeAPI(raw string) bool {
 	version, err := semver.Parse(strings.TrimPrefix(raw, "v"))
 	if err != nil {

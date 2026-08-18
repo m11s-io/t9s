@@ -42,8 +42,6 @@ func TestDeriveUpgradeImageHandlesEmptyInputs(t *testing.T) {
 type fakeInstallImageLookup struct {
 	declared     string
 	declaredErr  error
-	factory      string
-	flavor       string
 	schematic    string
 	schematicErr error
 	version      string
@@ -54,25 +52,23 @@ func (f fakeInstallImageLookup) declaredInstallImage(context.Context) (string, e
 	return f.declared, f.declaredErr
 }
 
-func (f fakeInstallImageLookup) schematicInstaller(context.Context) (string, string, string, error) {
-	return f.factory, f.flavor, f.schematic, f.schematicErr
+func (f fakeInstallImageLookup) schematicID(context.Context) (string, error) {
+	return f.schematic, f.schematicErr
 }
 
 func (f fakeInstallImageLookup) runningTalosVersion(context.Context) (string, error) {
 	return f.version, f.versionErr
 }
 
-func TestCurrentInstallImageUsesSchematicWhenMachineConfigIsUnavailable(t *testing.T) {
+func TestCurrentInstallImageUsesDeclaredRepositoryWithLiveSchematic(t *testing.T) {
 	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
-		declaredErr: errors.New("machine config unavailable"),
-		factory:     "factory.talos.dev",
-		flavor:      "metal",
-		schematic:   "abc123",
-		version:     "v1.13.4",
+		declared:  "factory.talos.dev/installer/old-id:v1.13.3",
+		schematic: "75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673",
+		version:   "v1.13.4",
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "factory.talos.dev/metal-installer/abc123:v1.13.4", image)
+	assert.Equal(t, "factory.talos.dev/installer/75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673:v1.13.4", image)
 }
 
 type fakeNodeControlClient struct {
@@ -238,14 +234,33 @@ func TestNodeControllerCurrentInstallImageWrapsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "cp-1")
 }
 func TestDeriveSchematicInstallerImage(t *testing.T) {
-	assert.Equal(t, "factory.talos.dev/metal-installer/abc123:v1.13.4", deriveSchematicInstallerImage("factory.talos.dev", "metal", "abc123", "v1.13.4"))
-	assert.Equal(t, "factory.talos.dev/aws-installer/abc123:v1.13.4", deriveSchematicInstallerImage("factory.talos.dev", "aws", "abc123", "v1.13.4"))
-	assert.Equal(t, "", deriveSchematicInstallerImage("factory.talos.dev", "", "abc123", "v1.13.4"))
+	tests := map[string]struct {
+		declared string
+		want     string
+	}{
+		"standard": {"factory.talos.dev/installer/old:v1.13.3", "factory.talos.dev/installer/live:v1.13.4"},
+		"metal":    {"factory.talos.dev/metal-installer/old:v1.13.3", "factory.talos.dev/metal-installer/live:v1.13.4"},
+		"aws":      {"factory.talos.dev/aws-installer/old:v1.13.3", "factory.talos.dev/aws-installer/live:v1.13.4"},
+		"custom":   {"registry.example:5000/talos/custom-installer/old:v1.13.3", "registry.example:5000/talos/custom-installer/live:v1.13.4"},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, test.want, deriveSchematicInstallerImage(test.declared, "live", "v1.13.4"))
+		})
+	}
 }
-func TestParseSchematicAuthor(t *testing.T) {
-	flavor, factory := parseSchematicAuthor("metal (https://factory.example)")
-	assert.Equal(t, "metal", flavor)
-	assert.Equal(t, "https://factory.example", factory)
+
+func TestDeriveSchematicInstallerImageRejectsUnsafeReferences(t *testing.T) {
+	for _, declared := range []string{
+		"https://factory.talos.dev/installer/old:v1.13.3",
+		"factory.talos.dev/Image Factory-installer/old:v1.13.3",
+		"factory.talos.dev/installer/old@sha256:abcd",
+		"factory.talos.dev/installer",
+		"",
+	} {
+		assert.Empty(t, deriveSchematicInstallerImage(declared, "live", "v1.13.4"), declared)
+	}
 }
 func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
 	assert.False(t, supportsLifecycleUpgradeAPI("v1.12.9"))
