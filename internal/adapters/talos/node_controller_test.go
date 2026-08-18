@@ -42,8 +42,11 @@ func TestDeriveUpgradeImageHandlesEmptyInputs(t *testing.T) {
 type fakeInstallImageLookup struct {
 	declared     string
 	declaredErr  error
+	author       string
 	schematic    string
 	schematicErr error
+	platformName string
+	platformErr  error
 	version      string
 	versionErr   error
 }
@@ -52,23 +55,43 @@ func (f fakeInstallImageLookup) declaredInstallImage(context.Context) (string, e
 	return f.declared, f.declaredErr
 }
 
-func (f fakeInstallImageLookup) schematicID(context.Context) (string, error) {
-	return f.schematic, f.schematicErr
+func (f fakeInstallImageLookup) schematicMetadata(context.Context) (string, string, error) {
+	return f.author, f.schematic, f.schematicErr
+}
+
+func (f fakeInstallImageLookup) platform(context.Context) (string, error) {
+	return f.platformName, f.platformErr
 }
 
 func (f fakeInstallImageLookup) runningTalosVersion(context.Context) (string, error) {
 	return f.version, f.versionErr
 }
 
-func TestCurrentInstallImageUsesDeclaredRepositoryWithLiveSchematic(t *testing.T) {
+func TestCurrentInstallImageUsesCanonicalFactoryMetadata(t *testing.T) {
+	const schematic = "75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673"
 	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
-		declared:  "factory.talos.dev/installer/old-id:v1.13.3",
-		schematic: "75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673",
-		version:   "v1.13.4",
+		declared:     "ghcr.io/siderolabs/installer:v1.13.0",
+		author:       "Image Factory (https://factory.talos.dev/)",
+		schematic:    schematic,
+		platformName: "metal",
+		version:      "v1.13.4",
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "factory.talos.dev/installer/75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673:v1.13.4", image)
+	assert.Equal(t, "factory.talos.dev/metal-installer/"+schematic+":v1.13.4", image)
+}
+
+func TestCurrentInstallImageFallsBackToDeclaredImageForInvalidFactoryMetadata(t *testing.T) {
+	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
+		declared:     "ghcr.io/siderolabs/installer:v1.13.0",
+		author:       "Image Factory (http://factory.talos.dev/)",
+		schematic:    "live",
+		platformName: "metal",
+		version:      "v1.13.4",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.4", image)
 }
 
 type fakeNodeControlClient struct {
@@ -235,33 +258,41 @@ func TestNodeControllerCurrentInstallImageWrapsError(t *testing.T) {
 }
 func TestDeriveSchematicInstallerImage(t *testing.T) {
 	tests := map[string]struct {
-		declared string
-		want     string
+		factoryURL string
+		platform   string
+		want       string
 	}{
-		"standard": {"factory.talos.dev/installer/old:v1.13.3", "factory.talos.dev/installer/live:v1.13.4"},
-		"metal":    {"factory.talos.dev/metal-installer/old:v1.13.3", "factory.talos.dev/metal-installer/live:v1.13.4"},
-		"aws":      {"factory.talos.dev/aws-installer/old:v1.13.3", "factory.talos.dev/aws-installer/live:v1.13.4"},
-		"custom":   {"registry.example:5000/talos/custom-installer/old:v1.13.3", "registry.example:5000/talos/custom-installer/live:v1.13.4"},
+		"metal":  {"https://factory.talos.dev/", "metal", "factory.talos.dev/metal-installer/live:v1.13.4"},
+		"aws":    {"https://factory.talos.dev/", "aws", "factory.talos.dev/aws-installer/live:v1.13.4"},
+		"custom": {"https://factory.example:5000/", "metal", "factory.example:5000/metal-installer/live:v1.13.4"},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, test.want, deriveSchematicInstallerImage(test.declared, "live", "v1.13.4"))
+			assert.Equal(t, test.want, deriveSchematicInstallerImage(test.factoryURL, test.platform, "live", "v1.13.4"))
 		})
 	}
 }
 
-func TestDeriveSchematicInstallerImageRejectsUnsafeReferences(t *testing.T) {
-	for _, declared := range []string{
-		"https://factory.talos.dev/installer/old:v1.13.3",
-		"factory.talos.dev/Image Factory-installer/old:v1.13.3",
-		"factory.talos.dev/installer/old@sha256:abcd",
-		"factory.talos.dev/installer",
-		"",
+func TestDeriveSchematicInstallerImageRejectsUnsafeMetadata(t *testing.T) {
+	for name, input := range map[string][2]string{
+		"http":        {"http://factory.talos.dev/", "metal"},
+		"credentials": {"https://user:pass@factory.talos.dev/", "metal"},
+		"path":        {"https://factory.talos.dev/api", "metal"},
+		"query":       {"https://factory.talos.dev/?x=1", "metal"},
+		"fragment":    {"https://factory.talos.dev/#x", "metal"},
+		"uppercase":   {"https://factory.talos.dev/", "Metal"},
+		"dot":         {"https://factory.talos.dev/", "metal.bad"},
+		"unsafe":      {"https://factory.talos.dev/", "metal/evil"},
 	} {
-		assert.Empty(t, deriveSchematicInstallerImage(declared, "live", "v1.13.4"), declared)
+		t.Run(name, func(t *testing.T) {
+			assert.Empty(t, deriveSchematicInstallerImage(input[0], input[1], "live", "v1.13.4"))
+		})
 	}
+	assert.Empty(t, deriveSchematicInstallerImage("https://factory.talos.dev/", "metal", "", "v1.13.4"))
+	assert.Empty(t, deriveSchematicInstallerImage("https://factory.talos.dev/", "metal", "live", ""))
 }
+
 func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
 	assert.False(t, supportsLifecycleUpgradeAPI("v1.12.9"))
 	assert.True(t, supportsLifecycleUpgradeAPI("v1.13.3"))

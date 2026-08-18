@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -128,7 +129,8 @@ func deriveUpgradeImage(declaredImage, runningTag string) string {
 // compatibility source for a live schematic-preserving installer suggestion.
 type installImageLookup interface {
 	declaredInstallImage(context.Context) (string, error)
-	schematicID(context.Context) (string, error)
+	schematicMetadata(context.Context) (string, string, error)
+	platform(context.Context) (string, error)
 	runningTalosVersion(context.Context) (string, error)
 }
 
@@ -139,13 +141,14 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 }
 
 func currentInstallImage(ctx context.Context, lookup installImageLookup) (string, error) {
-	// ExtensionStatus contributes only the live schematic ID; the declared image
-	// remains authoritative for the OCI registry and installer repository.
-	schematicID, _ := lookup.schematicID(ctx)
+	// ExtensionStatus supplies the factory URL and live schematic ID, while
+	// PlatformMetadata supplies the canonical Image Factory installer flavor.
+	author, schematicID, _ := lookup.schematicMetadata(ctx)
+	platform, _ := lookup.platform(ctx)
 	declaredImage, declaredErr := lookup.declaredInstallImage(ctx)
 	runningTag, versionErr := lookup.runningTalosVersion(ctx)
 	if versionErr == nil {
-		if image := deriveSchematicInstallerImage(declaredImage, schematicID, runningTag); image != "" {
+		if image := deriveSchematicInstallerImage(parseSchematicFactoryURL(author), platform, schematicID, runningTag); image != "" {
 			return image, nil
 		}
 		if declaredImage != "" {
@@ -174,16 +177,28 @@ func (l machineryInstallImageLookup) declaredInstallImage(ctx context.Context) (
 	return cfg.Provider().Machine().Install().Image(), nil
 }
 
-func (l machineryInstallImageLookup) schematicID(ctx context.Context) (string, error) {
+func (l machineryInstallImageLookup) schematicMetadata(ctx context.Context) (string, string, error) {
 	if extensions, listErr := safe.StateListAll[*runtimeresource.ExtensionStatus](ctx, l.client.COSI); listErr == nil {
 		for extension := range extensions.All() {
 			if extension.TypedSpec().Metadata.Name == "schematic" {
-				return extension.TypedSpec().Metadata.Version, nil
+				return extension.TypedSpec().Metadata.Author, extension.TypedSpec().Metadata.Version, nil
 			}
 		}
 	}
 
-	return "", nil
+	return "", "", nil
+}
+
+func (l machineryInstallImageLookup) platform(ctx context.Context) (string, error) {
+	metadata, err := safe.StateGet[*runtimeresource.PlatformMetadata](
+		ctx, l.client.COSI,
+		resource.NewMetadata(runtimeresource.NamespaceName, runtimeresource.PlatformMetadataType, runtimeresource.PlatformMetadataID, resource.VersionUndefined),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return metadata.TypedSpec().Platform, nil
 }
 
 func (l machineryInstallImageLookup) runningTalosVersion(ctx context.Context) (string, error) {
@@ -341,22 +356,54 @@ func (c *nodeController) CurrentInstallImage(ctx context.Context, target string)
 	}
 	return image, nil
 }
-func deriveSchematicInstallerImage(declaredImage, schematic, tag string) string {
-	if declaredImage == "" || schematic == "" || tag == "" ||
-		strings.Contains(declaredImage, "://") || strings.Contains(declaredImage, "@") ||
-		strings.ContainsAny(declaredImage, " \t\r\n") ||
-		strings.ContainsAny(schematic, "/:@ \t\r\n") ||
-		strings.ContainsAny(tag, "/@ \t\r\n") ||
-		strings.Count(declaredImage, "/") < 2 {
+func parseSchematicFactoryURL(author string) string {
+	idx := strings.LastIndex(author, " (")
+	if idx < 0 || !strings.HasSuffix(author, ")") {
 		return ""
 	}
 
-	lastSlash := strings.LastIndex(declaredImage, "/")
-	if declaredImage[lastSlash+1:] == "" {
+	return author[idx+2 : len(author)-1]
+}
+
+func deriveSchematicInstallerImage(factoryURL, platform, schematic, tag string) string {
+	factory, err := url.Parse(factoryURL)
+	if err != nil || factory.Scheme != "https" || factory.Host == "" || factory.User != nil ||
+		factory.RawQuery != "" || factory.Fragment != "" || factory.Opaque != "" ||
+		(factory.Path != "" && factory.Path != "/") || factory.RawPath != "" ||
+		!validInstallerPlatform(platform) || !validInstallerPathComponent(schematic) ||
+		!validInstallerPathComponent(tag) {
 		return ""
 	}
 
-	return declaredImage[:lastSlash+1] + schematic + ":" + tag
+	return factory.Host + "/" + platform + "-installer/" + schematic + ":" + tag
+}
+
+func validInstallerPlatform(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func validInstallerPathComponent(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') && character != '-' && character != '.' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func supportsLifecycleUpgradeAPI(raw string) bool {
