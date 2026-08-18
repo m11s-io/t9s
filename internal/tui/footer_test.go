@@ -47,6 +47,15 @@ func TestRenderUpgradeNoticeOmitsPercentageWithoutATotal(t *testing.T) {
 	assert.Equal(t, "Upgrading worker-2: installing — installing", notice)
 }
 
+func TestRenderUpgradeNoticeRendersRecoveryWarning(t *testing.T) {
+	notice := renderUpgradeNotice(application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."})
+
+	assert.Contains(t, notice, "Applied")
+	assert.Contains(t, notice, "cp-1")
+	assert.Contains(t, notice, "recovery is still pending")
+	assert.NotContains(t, notice, "failed")
+}
+
 func TestRenderUpgradeNoticeKeepsFailedPhaseAndCancellation(t *testing.T) {
 	notice := renderUpgradeNotice(application.UpgradeState{
 		Target: "worker-2",

@@ -27,6 +27,9 @@ func renderUpgradeNotice(upgrade application.UpgradeState) string {
 		}
 		return notice
 	}
+	if upgrade.Warning != "" {
+		return fmt.Sprintf("Upgrade %s Applied — recovery warning: %s", fallback(sanitizeUntrustedText(upgrade.Target)), sanitizeUntrustedText(upgrade.Warning))
+	}
 	if upgrade.Err == "" {
 		return ""
 	}

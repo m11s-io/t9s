@@ -360,6 +360,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		finishUpgrade(&model)
+		model.Upgrade.Warning = message.Warning
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Warning: message.Warning})
 		return model, nil
 

@@ -270,10 +270,11 @@ type ActionResult struct {
 }
 
 type UpgradeState struct {
-	Active bool
-	Target string
-	Event  ports.UpgradeEvent
-	Err    string
+	Active  bool
+	Target  string
+	Event   ports.UpgradeEvent
+	Err     string
+	Warning string
 }
 
 // upgradeStreamResult is private so stream mechanics stay inside application effects.
