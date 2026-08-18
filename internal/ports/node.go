@@ -47,10 +47,19 @@ type UpgradeEvent struct {
 	Total   int64
 }
 
+type UpgradeOutcome string
+
+const (
+	UpgradeOutcomeApplied                    UpgradeOutcome = "applied"
+	UpgradeOutcomeAppliedWithRecoveryWarning UpgradeOutcome = "applied-with-recovery-warning"
+)
+
 type UpgradeResult struct {
-	Event *UpgradeEvent
-	Err   error
-	Done  bool
+	Event   *UpgradeEvent
+	Err     error
+	Outcome UpgradeOutcome
+	Warning string
+	Done    bool
 }
 
 type UpgradeStream interface {

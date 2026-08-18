@@ -21,6 +21,24 @@ func TestUpgradeResultCarriesProgressEvent(t *testing.T) {
 	assert.False(t, result.Done)
 }
 
+func TestUpgradeResultCarriesAppliedOutcome(t *testing.T) {
+	result := UpgradeResult{Done: true, Outcome: UpgradeOutcomeApplied}
+
+	assert.Equal(t, UpgradeOutcomeApplied, result.Outcome)
+	assert.Empty(t, result.Warning)
+}
+
+func TestUpgradeResultCarriesRecoveryWarningOutcome(t *testing.T) {
+	result := UpgradeResult{
+		Done:    true,
+		Outcome: UpgradeOutcomeAppliedWithRecoveryWarning,
+		Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned.",
+	}
+
+	assert.Equal(t, UpgradeOutcomeAppliedWithRecoveryWarning, result.Outcome)
+	assert.Contains(t, result.Warning, "recovery is still pending")
+}
+
 func TestUpgradeResultCarriesTerminalCompletion(t *testing.T) {
 	result := UpgradeResult{Done: true}
 
