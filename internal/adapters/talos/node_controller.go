@@ -13,6 +13,7 @@ import (
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/m11s-io/t9s/internal/ports"
+	commonapi "github.com/siderolabs/talos/pkg/machinery/api/common"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
@@ -76,11 +77,15 @@ type lifecycleOperations interface {
 type machineryLifecycleOperations struct{ client *talosclient.Client }
 
 func (o machineryLifecycleOperations) Pull(ctx context.Context, image string) (imagePullStream, error) {
-	return o.client.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{ImageRef: image})
+	return o.client.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{Containerd: systemContainerdInstance(), ImageRef: image})
 }
 
 func (o machineryLifecycleOperations) Upgrade(ctx context.Context, image string) (lifecycleInstallStream, error) {
-	return o.client.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{Source: &machineapi.InstallArtifactsSource{ImageName: image}})
+	return o.client.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{Containerd: systemContainerdInstance(), Source: &machineapi.InstallArtifactsSource{ImageName: image}})
+}
+
+func systemContainerdInstance() *commonapi.ContainerdInstance {
+	return &commonapi.ContainerdInstance{Driver: commonapi.ContainerDriver_CRI, Namespace: commonapi.ContainerdNamespace_NS_SYSTEM}
 }
 
 type machineryNodeControlClient struct {
