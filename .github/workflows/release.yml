@@ -13,12 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Go 1.26.3
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: 1.26.3
           cache: true
@@ -41,14 +41,14 @@ jobs:
         id: homebrew-tap-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.M11S_TOFU_APP_ID }}
+          client-id: ${{ secrets.M11S_TOFU_APP_ID }}
           private-key: ${{ secrets.M11S_TOFU_APP_PRIVATE_KEY }}
           owner: m11s-io
           repositories: homebrew-tap
           permission-contents: write
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: v2.17.1
