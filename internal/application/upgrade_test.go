@@ -71,6 +71,19 @@ func TestUpgradeBridgeStreamsProgressAndRefreshesNodesOnSuccess(t *testing.T) {
 	assert.Equal(t, 1, nodeLoads)
 }
 
+func TestUpgradeAppliedWithRecoveryWarningCompletesWithoutUpgradeError(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
+
+	got, effect := application.Update(model, application.UpgradeAppliedWithRecoveryWarning{Generation: model.Generation, Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."})
+
+	assert.False(t, got.Upgrade.Active)
+	assert.Empty(t, got.Upgrade.Err)
+	require.Len(t, got.ActionResults, 1)
+	assert.Contains(t, got.ActionResults[0].Warning, "recovery is still pending")
+	assert.Nil(t, effect)
+}
+
 func TestUpgradeBridgeFailsWhenStreamClosesWithoutTerminalResult(t *testing.T) {
 	results := make(chan ports.UpgradeResult)
 	close(results)

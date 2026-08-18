@@ -209,7 +209,7 @@ func forwardUpgradeStream(ctx context.Context, stream ports.UpgradeStream, updat
 			if !ok {
 				return
 			}
-			update := upgradeStreamResult{Event: result.Event, Err: result.Err, Done: result.Done}
+			update := upgradeStreamResult{Event: result.Event, Err: result.Err, Outcome: result.Outcome, Warning: result.Warning, Done: result.Done}
 			if update.Event == nil && update.Err == nil && !update.Done {
 				update.Err = fmt.Errorf("upgrade stream returned an empty result")
 				update.Done = true
@@ -240,6 +240,9 @@ func readUpgradeUpdate(updates <-chan upgradeStreamResult, generation uint64, ta
 				return UpgradeFailed{Generation: generation, Target: target, Err: update.Err}
 			}
 			if update.Done {
+				if update.Outcome == ports.UpgradeOutcomeAppliedWithRecoveryWarning {
+					return UpgradeAppliedWithRecoveryWarning{Generation: generation, Target: target, Warning: update.Warning}
+				}
 				return UpgradeSucceeded{Generation: generation, Target: target}
 			}
 			if update.Event == nil {

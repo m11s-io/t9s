@@ -264,8 +264,9 @@ type PendingAction struct {
 }
 
 type ActionResult struct {
-	Target string
-	Err    string
+	Target  string
+	Err     string
+	Warning string
 }
 
 type UpgradeState struct {
@@ -277,9 +278,11 @@ type UpgradeState struct {
 
 // upgradeStreamResult is private so stream mechanics stay inside application effects.
 type upgradeStreamResult struct {
-	Event *ports.UpgradeEvent
-	Err   error
-	Done  bool
+	Event   *ports.UpgradeEvent
+	Err     error
+	Outcome ports.UpgradeOutcome
+	Warning string
+	Done    bool
 }
 
 type RequestAction struct {
@@ -344,6 +347,14 @@ type UpgradeSucceeded struct {
 }
 
 func (UpgradeSucceeded) applicationMessage() {}
+
+type UpgradeAppliedWithRecoveryWarning struct {
+	Generation uint64
+	Target     string
+	Warning    string
+}
+
+func (UpgradeAppliedWithRecoveryWarning) applicationMessage() {}
 
 type UpgradeFailed struct {
 	Generation uint64

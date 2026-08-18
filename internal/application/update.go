@@ -355,6 +355,14 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Upgrade.Event = message.Event
 		return model, readUpgradeUpdate(model.upgradeResults, message.Generation, message.Target)
 
+	case UpgradeAppliedWithRecoveryWarning:
+		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
+			return model, nil
+		}
+		finishUpgrade(&model)
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Warning: message.Warning})
+		return model, nil
+
 	case UpgradeSucceeded:
 		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
 			return model, nil
