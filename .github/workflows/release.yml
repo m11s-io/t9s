@@ -37,6 +37,16 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Create Homebrew tap token
+        id: homebrew-tap-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.M11S_TOFU_APP_ID }}
+          private-key: ${{ secrets.M11S_TOFU_APP_PRIVATE_KEY }}
+          owner: m11s-io
+          repositories: homebrew-tap
+          permission-contents: write
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -45,4 +55,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.homebrew-tap-token.outputs.token }}
