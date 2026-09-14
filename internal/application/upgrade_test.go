@@ -75,19 +75,19 @@ func TestUpgradeAppliedWithRecoveryWarningCompletesWithoutUpgradeError(t *testin
 	model, _ := application.NewModel("prod")
 	model.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
 
-	got, effect := application.Update(model, application.UpgradeAppliedWithRecoveryWarning{Generation: model.Generation, Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."})
+	got, effect := application.Update(model, application.UpgradeAppliedWithRecoveryWarning{Generation: model.Generation, Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."})
 
 	assert.False(t, got.Upgrade.Active)
 	assert.Empty(t, got.Upgrade.Err)
 	require.Len(t, got.ActionResults, 1)
-	assert.Contains(t, got.ActionResults[0].Warning, "recovery is still pending")
+	assert.Contains(t, got.ActionResults[0].Warning, "recovery is pending")
 	assert.Nil(t, effect)
 }
 
 func TestKubernetesNodesLoadedRetriesUncordonWhenPendingWarningTargetBecomesReady(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."}
 	var uncordonTarget string
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UncordonFunc: func(_ context.Context, target string) error {
 		uncordonTarget = target
@@ -107,10 +107,11 @@ func TestKubernetesNodesLoadedRetriesUncordonWhenPendingWarningTargetBecomesRead
 	assert.Empty(t, got.Upgrade.Warning)
 }
 
-func TestKubernetesNodesLoadedKeepsWarningVisibleWhenUncordonFails(t *testing.T) {
+func TestKubernetesNodesLoadedLeavesWarningUnchangedWhenUncordonFails(t *testing.T) {
+	originalWarning := "Talos upgrade applied; node recovery is pending — t9s will retry automatically."
 	model, _ := application.NewModel("prod")
 	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: originalWarning}
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UncordonFunc: func(context.Context, string) error {
 		return errors.New("api unavailable")
 	}}})
@@ -121,15 +122,15 @@ func TestKubernetesNodesLoadedKeepsWarningVisibleWhenUncordonFails(t *testing.T)
 
 	require.NotNil(t, effect)
 	message := effect(t.Context(), application.Dependencies{})
+	assert.Equal(t, application.RecoveryUncordonFailed{Generation: model.Generation, Target: "cp-1"}, message)
 	got, _ := application.Update(model, message)
-	assert.NotEmpty(t, got.Upgrade.Warning)
-	assert.NotContains(t, got.Upgrade.Warning, "api unavailable")
+	assert.Equal(t, originalWarning, got.Upgrade.Warning, "a transient failure must not overwrite the retry-in-progress warning; the next heartbeat tick tries again")
 }
 
 func TestKubernetesNodesLoadedDoesNotRetryUncordonWhileStillNotReady(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."}
 
 	_, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
 		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "False"}}},

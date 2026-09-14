@@ -748,7 +748,7 @@ func TestNodeControllerUpgradeStreamReportsRecoveryWarningAfterInstall(t *testin
 	last := results[len(results)-1]
 	assert.NoError(t, last.Err)
 	assert.Equal(t, ports.UpgradeOutcomeAppliedWithRecoveryWarning, last.Outcome)
-	assert.Contains(t, last.Warning, "recovery is still pending")
+	assert.Contains(t, last.Warning, "recovery is pending")
 	assert.True(t, last.Done)
 }
 

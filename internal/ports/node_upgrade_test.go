@@ -32,11 +32,11 @@ func TestUpgradeResultCarriesRecoveryWarningOutcome(t *testing.T) {
 	result := UpgradeResult{
 		Done:    true,
 		Outcome: UpgradeOutcomeAppliedWithRecoveryWarning,
-		Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned.",
+		Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically.",
 	}
 
 	assert.Equal(t, UpgradeOutcomeAppliedWithRecoveryWarning, result.Outcome)
-	assert.Contains(t, result.Warning, "recovery is still pending")
+	assert.Contains(t, result.Warning, "recovery is pending")
 }
 
 func TestUpgradeResultCarriesTerminalCompletion(t *testing.T) {

@@ -267,7 +267,7 @@ func TestParentContextCancellationStopsBlockedCatalogEffect(t *testing.T) {
 	commands := model.Init()()
 	batch, ok := commands.(tea.BatchMsg)
 	require.True(t, ok)
-	require.Len(t, batch, 3)
+	require.Len(t, batch, 4)
 	effectResult := make(chan tea.Msg, 1)
 	shutdownResult := make(chan tea.Msg, 1)
 

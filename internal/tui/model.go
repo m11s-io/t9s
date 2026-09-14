@@ -124,10 +124,10 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 
 func (m model) Init() tea.Cmd {
 	if m.watchCtx {
-		return tea.Batch(m.command(m.initial), splashTimer(), m.watchContext())
+		return tea.Batch(m.command(m.initial), splashTimer(), m.watchContext(), nodeAutoRefreshTick())
 	}
 
-	return tea.Batch(m.command(m.initial), splashTimer())
+	return tea.Batch(m.command(m.initial), splashTimer(), nodeAutoRefreshTick())
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -611,6 +611,15 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case splashDoneMsg:
 		m.splash = false
 		return m, nil
+	case nodeAutoRefreshTickMsg:
+		if m.filtering() || m.views.top().Kind != viewNodes {
+			return m, nodeAutoRefreshTick()
+		}
+		var nodesEffect, kubernetesEffect application.Effect
+		m.application, nodesEffect = application.Update(m.application, application.RefreshNodes{})
+		m.application, kubernetesEffect = application.Update(m.application, application.RefreshKubernetesNodes{})
+		m.nodes = m.nodes.setState(m.application.Nodes)
+		return m, tea.Batch(m.command(nodesEffect), m.command(kubernetesEffect), nodeAutoRefreshTick())
 	case applicationMessage:
 		if message.message == nil {
 			return m, nil

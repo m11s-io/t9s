@@ -85,7 +85,7 @@ func TestSplashStartsAlongsideApplicationLoading(t *testing.T) {
 	require.NotNil(t, command)
 	batch, ok := command().(tea.BatchMsg)
 	require.True(t, ok, "startup must batch the splash timer with application loading")
-	require.Len(t, batch, 2)
+	require.Len(t, batch, 3)
 
 	updated, _ := root.Update(applicationMessage{message: application.ContextsLoaded{
 		Generation:  1,
@@ -98,6 +98,38 @@ func TestSplashStartsAlongsideApplicationLoading(t *testing.T) {
 
 	updated, _ = root.Update(splashDoneMsg{})
 	assert.Contains(t, updated.(model).View().Content, "NAME")
+}
+
+func TestNodeAutoRefreshTickRefreshesNodesWhileNodeViewIsActive(t *testing.T) {
+	root := readyRootModel()
+	require.Equal(t, viewNodes, root.views.top().Kind)
+	require.Equal(t, application.Ready, root.application.Nodes.Status)
+
+	updated, cmd := root.Update(nodeAutoRefreshTickMsg{})
+
+	require.NotNil(t, cmd, "the heartbeat must reschedule itself")
+	assert.Equal(t, application.Loading, updated.(model).application.Nodes.Status, "a tick on the node view must trigger the same refresh as pressing r")
+}
+
+func TestNodeAutoRefreshTickSkipsRefreshOffTheNodeView(t *testing.T) {
+	root := readyRootModel()
+	root.views = root.views.push(viewFrame{Kind: viewProcesses, Label: "cp-1 > processes"})
+
+	updated, cmd := root.Update(nodeAutoRefreshTickMsg{})
+
+	require.NotNil(t, cmd, "the heartbeat must keep rescheduling even when it skips a refresh")
+	assert.Equal(t, application.Ready, updated.(model).application.Nodes.Status, "leaving the node view untouched must not disturb its loaded state")
+}
+
+func TestNodeAutoRefreshTickSkipsRefreshWhileFiltering(t *testing.T) {
+	root := readyRootModel()
+	root.nodes = root.nodes.update(keyPress('/'))
+	require.True(t, root.filtering())
+
+	updated, cmd := root.Update(nodeAutoRefreshTickMsg{})
+
+	require.NotNil(t, cmd)
+	assert.Equal(t, application.Ready, updated.(model).application.Nodes.Status, "a tick during filtering must not disturb the list being filtered")
 }
 
 func readyRootModel() model {

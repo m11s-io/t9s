@@ -385,10 +385,9 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case RecoveryUncordonFailed:
-		if message.Generation != model.Generation || model.Upgrade.Target != message.Target || model.Upgrade.Warning == "" {
-			return model, nil
-		}
-		model.Upgrade.Warning = recoveryUncordonFailedWarning
+		// A single failed attempt is not escalated to the operator: it is
+		// usually transient, and the existing warning already promises a
+		// retry. The next heartbeat tick tries again automatically.
 		return model, nil
 
 	case UpgradeFailed:

@@ -48,11 +48,11 @@ func TestRenderUpgradeNoticeOmitsPercentageWithoutATotal(t *testing.T) {
 }
 
 func TestRenderUpgradeNoticeRendersRecoveryWarning(t *testing.T) {
-	notice := renderUpgradeNotice(application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is still pending; node may remain cordoned."})
+	notice := renderUpgradeNotice(application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."})
 
 	assert.Contains(t, notice, "Applied")
 	assert.Contains(t, notice, "cp-1")
-	assert.Contains(t, notice, "recovery is still pending")
+	assert.Contains(t, notice, "recovery is pending")
 	assert.NotContains(t, notice, "failed")
 }
 
