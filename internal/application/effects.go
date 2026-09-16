@@ -94,7 +94,7 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
 	}
 }
 
@@ -209,7 +209,7 @@ func (r *Runner) replaceSession(effectCtx context.Context, contextName string, g
 		return nil, fmt.Errorf("load nodes: node reader is not configured")
 	}
 
-	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), ctx: sessionCtx}
+	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), dmesg: session.Dmesg(), ctx: sessionCtx}
 	r.mu.Lock()
 	if generation != r.generation || !r.active {
 		r.mu.Unlock()
@@ -241,7 +241,15 @@ type managedSession struct {
 	events         ports.EventReader
 	etcd           ports.EtcdReader
 	etcdOperations ports.EtcdOperations
+	dmesg          ports.DmesgReader
 	ctx            context.Context
+}
+
+func (s managedSession) Dmesg() ports.DmesgReader {
+	if s.dmesg == nil {
+		return nil
+	}
+	return boundDmesgReader{DmesgReader: s.dmesg, ctx: s.ctx}
 }
 
 func (s managedSession) ServiceLogs() ports.ServiceLogReader {
@@ -589,6 +597,52 @@ func loadResourceInstance(reader ports.ResourceInstanceReader, node, kind, id st
 	}
 }
 
+func loadNetstat(reader ports.NetstatReader, node string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if reader == nil {
+			return NetstatLoaded{Generation: generation}
+		}
+		set, err := reader.List(ctx, node)
+		if err != nil {
+			return NetstatFailed{Generation: generation, Node: node, Err: err}
+		}
+		return NetstatLoaded{Generation: generation, Node: node, Sockets: set}
+	}
+}
+
+func openDmesg(reader ports.DmesgReader, request domain.DmesgRequest, generation, streamGeneration uint64, old ports.DmesgStream) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if old != nil {
+			_ = old.Close()
+		}
+		if reader == nil {
+			return dmesgOpened{Generation: generation, StreamGeneration: streamGeneration, Err: fmt.Errorf("dmesg reader is not configured")}
+		}
+		stream, err := reader.Open(ctx, request)
+		return dmesgOpened{Generation: generation, StreamGeneration: streamGeneration, Stream: stream, Err: err}
+	}
+}
+
+func readDmesgBatch(stream ports.DmesgStream, generation, streamGeneration uint64) Effect {
+	if stream == nil {
+		return nil
+	}
+	return func(ctx context.Context, _ Dependencies) Message {
+		batch, err := stream.Next(ctx)
+		return DmesgBatchLoaded{Generation: generation, StreamGeneration: streamGeneration, Batch: batch, Err: err}
+	}
+}
+
+func closeDmesg(stream ports.DmesgStream) Effect {
+	if stream == nil {
+		return nil
+	}
+	return func(context.Context, Dependencies) Message {
+		_ = stream.Close()
+		return nil
+	}
+}
+
 func openServiceLogs(reader ports.ServiceLogReader, request domain.LogRequest, generation, streamGeneration uint64, old ports.ServiceLogStream) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if old != nil {
@@ -620,6 +674,39 @@ func closeServiceLogs(stream ports.ServiceLogStream) Effect {
 		_ = stream.Close()
 		return nil
 	}
+}
+
+type boundDmesgReader struct {
+	ports.DmesgReader
+	ctx context.Context
+}
+
+func (r boundDmesgReader) Open(callCtx context.Context, request domain.DmesgRequest) (ports.DmesgStream, error) {
+	ctx, cancel := context.WithCancel(r.ctx)
+	stop := context.AfterFunc(callCtx, cancel)
+	stream, err := r.DmesgReader.Open(ctx, request)
+	if err != nil {
+		stop()
+		cancel()
+		return nil, err
+	}
+	return &boundDmesgStream{DmesgStream: stream, cancel: cancel, stop: stop}, nil
+}
+
+type boundDmesgStream struct {
+	ports.DmesgStream
+	cancel context.CancelFunc
+	stop   func() bool
+}
+
+func (s *boundDmesgStream) Close() error {
+	if s.stop != nil {
+		s.stop()
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return s.DmesgStream.Close()
 }
 
 type boundLogReader struct {

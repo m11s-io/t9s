@@ -26,6 +26,8 @@ type Session interface {
 	Processes() ProcessReader
 	Disks() DiskReader
 	Network() NetworkReader
+	Dmesg() DmesgReader
+	Netstat() NetstatReader
 	ResourceKinds() ResourceKindReader
 	Resources() ResourceInstanceReader
 	Close() error

@@ -20,6 +20,7 @@ func sanitizeLogLines(lines []string) []string {
 }
 
 type logsModel struct {
+	title          string
 	state          application.LogState
 	filter         string
 	filtering      bool
@@ -30,8 +31,27 @@ type logsModel struct {
 }
 
 func newLogsModel(state application.LogState) logsModel {
-	m := logsModel{following: true, viewport: viewport.New()}
+	m := logsModel{title: "SERVICE LOGS", following: true, viewport: viewport.New()}
 	return m.setState(state)
+}
+
+// newDmesgModel reuses the service-log stream renderer: dmesg frames are the
+// same byte stream, so only the title and the source state differ.
+func newDmesgModel(state application.DmesgState) logsModel {
+	m := logsModel{title: "DMESG", following: true, viewport: viewport.New()}
+	return m.setDmesgState(state)
+}
+
+// setDmesgState refreshes the dmesg content without disturbing the user's
+// title, filter, or follow/pause choice, mirroring logsModel.setState.
+func (m logsModel) setDmesgState(state application.DmesgState) logsModel {
+	return m.setState(application.LogState{
+		Status:    state.Status,
+		Lines:     state.Lines,
+		Err:       state.Err,
+		EOF:       state.EOF,
+		Following: state.Following,
+	})
 }
 
 // setState is the single point where log content enters logsModel. It
@@ -109,7 +129,7 @@ func (m logsModel) viewSized(size contentSize) string {
 	if size.Height <= 0 {
 		return ""
 	}
-	header := "SERVICE LOGS"
+	header := m.title
 	if !m.following {
 		header += "  PAUSED"
 	}

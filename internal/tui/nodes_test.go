@@ -485,6 +485,36 @@ func TestNKeyOpensNetworkForSelectedNode(t *testing.T) {
 	assert.Equal(t, "worker-1", root.application.Network.Node)
 }
 
+func TestEKeyOpensDmesgForSelectedNode(t *testing.T) {
+	root := newModel(t.Context(), false, application.Model{Nodes: nodesTestState()}, application.NewRunner(application.Dependencies{}))
+	root.splash = false
+
+	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyDown})
+	root, command := updateRoot(root, keyPress('e'))
+
+	require.NotNil(t, command)
+	assert.Equal(t, viewDmesg, root.views.top().Kind)
+
+	message := command()
+	root, _ = updateRoot(root, message)
+	assert.Equal(t, "worker-1", root.application.Dmesg.Request.Node)
+}
+
+func TestSKeyOpensNetstatForSelectedNode(t *testing.T) {
+	root := newModel(t.Context(), false, application.Model{Nodes: nodesTestState()}, application.NewRunner(application.Dependencies{}))
+	root.splash = false
+
+	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyDown})
+	root, command := updateRoot(root, keyPress('s'))
+
+	require.NotNil(t, command)
+	assert.Equal(t, viewNetstat, root.views.top().Kind)
+
+	message := command()
+	root, _ = updateRoot(root, message)
+	assert.Equal(t, "worker-1", root.application.Netstat.Node)
+}
+
 func TestLinkDetailOpensFromSelectedRow(t *testing.T) {
 	root := newModel(t.Context(), false, application.Model{Network: application.NetworkState{
 		Status: application.Ready,

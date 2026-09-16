@@ -26,3 +26,13 @@ func TestActionHintsOmitsWriteActionsByDefault(t *testing.T) {
 		assert.NotEqual(t, "X", hint.Key)
 	}
 }
+
+func TestActionHintsIncludesReadDiagnosticKeys(t *testing.T) {
+	hints := actionHints(viewNodes, false)
+
+	keys := make([]string, len(hints))
+	for i, hint := range hints {
+		keys[i] = hint.Key
+	}
+	assert.Equal(t, []string{"?", ":", "/", "d", "r", "p", "k", "n", "e", "s"}, keys)
+}

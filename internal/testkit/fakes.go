@@ -186,6 +186,46 @@ func (f *FakeNetworkReader) List(ctx context.Context, node string) (domain.Netwo
 	return f.ListFunc(ctx, node)
 }
 
+type FakeNetstatReader struct {
+	ListFunc func(context.Context, string) (domain.SocketSet, error)
+}
+
+func (f *FakeNetstatReader) List(ctx context.Context, node string) (domain.SocketSet, error) {
+	return f.ListFunc(ctx, node)
+}
+
+type FakeDmesgReader struct {
+	OpenFunc func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error)
+}
+
+func (f *FakeDmesgReader) Open(ctx context.Context, request domain.DmesgRequest) (ports.DmesgStream, error) {
+	return f.OpenFunc(ctx, request)
+}
+
+type FakeDmesgStream struct {
+	Batches []domain.DmesgBatch
+	Err     error
+
+	index  int
+	closed bool
+}
+
+func (s *FakeDmesgStream) Next(context.Context) (domain.DmesgBatch, error) {
+	if s.index < len(s.Batches) {
+		batch := s.Batches[s.index]
+		s.index++
+		return batch, s.Err
+	}
+	return domain.DmesgBatch{EOF: true}, s.Err
+}
+
+func (s *FakeDmesgStream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *FakeDmesgStream) Closed() bool { return s.closed }
+
 type FakeResourceKindReader struct {
 	ListFunc func(context.Context) (domain.ResourceKindSet, error)
 }
@@ -235,6 +275,8 @@ type FakeSession struct {
 	ProcessReader          ports.ProcessReader
 	DiskReader             ports.DiskReader
 	NetworkReader          ports.NetworkReader
+	DmesgReader            ports.DmesgReader
+	NetstatReader          ports.NetstatReader
 	ResourceKindReader     ports.ResourceKindReader
 	ResourceInstanceReader ports.ResourceInstanceReader
 	CloseFunc              func() error
@@ -264,6 +306,10 @@ func (f *FakeSession) Processes() ports.ProcessReader { return f.ProcessReader }
 func (f *FakeSession) Disks() ports.DiskReader { return f.DiskReader }
 
 func (f *FakeSession) Network() ports.NetworkReader { return f.NetworkReader }
+
+func (f *FakeSession) Dmesg() ports.DmesgReader { return f.DmesgReader }
+
+func (f *FakeSession) Netstat() ports.NetstatReader { return f.NetstatReader }
 
 func (f *FakeSession) ResourceKinds() ports.ResourceKindReader { return f.ResourceKindReader }
 

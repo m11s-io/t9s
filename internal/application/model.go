@@ -37,6 +37,8 @@ type Model struct {
 	Processes              ProcessesState
 	Disks                  DisksState
 	Network                NetworkState
+	Dmesg                  DmesgState
+	Netstat                SocketState
 	ResourceBrowser        ResourceBrowserState
 	Kubernetes             KubernetesState
 	nodeReader             ports.NodeReader
@@ -50,11 +52,15 @@ type Model struct {
 	processReader          ports.ProcessReader
 	diskReader             ports.DiskReader
 	networkReader          ports.NetworkReader
+	dmesgReader            ports.DmesgReader
+	netstatReader          ports.NetstatReader
 	resourceKindReader     ports.ResourceKindReader
 	resourceInstanceReader ports.ResourceInstanceReader
 	kubernetesReader       ports.KubernetesNodeReader
 	logStream              ports.ServiceLogStream
 	logGeneration          uint64
+	dmesgStream            ports.DmesgStream
+	dmesgGeneration        uint64
 	Notice                 string
 	Logs                   LogState
 	PendingAction          *PendingAction
@@ -165,6 +171,24 @@ type NetworkState struct {
 	Value  domain.NetworkSet
 	Err    string
 	Node   string
+}
+
+type SocketState struct {
+	Status LoadStatus
+	Value  domain.SocketSet
+	Err    string
+	Node   string
+}
+
+// DmesgState is the streaming kernel-log view's result. It is separate from
+// LogState because the request and error wording differ from service logs.
+type DmesgState struct {
+	Status    LoadStatus
+	Request   domain.DmesgRequest
+	Lines     []string
+	Err       string
+	EOF       bool
+	Following bool
 }
 
 type ResourceBrowserState struct {
@@ -468,6 +492,8 @@ type SessionOpened struct {
 	Processes         ports.ProcessReader
 	Disks             ports.DiskReader
 	Network           ports.NetworkReader
+	Dmesg             ports.DmesgReader
+	Netstat           ports.NetstatReader
 	ResourceKinds     ports.ResourceKindReader
 	Resources         ports.ResourceInstanceReader
 	KubernetesNodes   ports.KubernetesNodeReader
@@ -688,6 +714,68 @@ type NetworkFailed struct {
 }
 
 func (NetworkFailed) applicationMessage() {}
+
+type OpenNetstat struct {
+	Node string
+}
+
+func (OpenNetstat) applicationMessage() {}
+
+type RefreshNetstat struct{}
+
+func (RefreshNetstat) applicationMessage() {}
+
+type NetstatLoaded struct {
+	Generation uint64
+	Node       string
+	Sockets    domain.SocketSet
+}
+
+func (NetstatLoaded) applicationMessage() {}
+
+type NetstatFailed struct {
+	Generation uint64
+	Node       string
+	Err        error
+}
+
+func (NetstatFailed) applicationMessage() {}
+
+type OpenDmesg struct {
+	Request domain.DmesgRequest
+}
+
+func (OpenDmesg) applicationMessage() {}
+
+type ReconnectDmesg struct{}
+
+func (ReconnectDmesg) applicationMessage() {}
+
+type CloseDmesg struct{}
+
+func (CloseDmesg) applicationMessage() {}
+
+type ClearDmesg struct{}
+
+func (ClearDmesg) applicationMessage() {}
+
+type dmesgOpened struct {
+	Generation       uint64
+	StreamGeneration uint64
+	Stream           ports.DmesgStream
+	Err              error
+}
+
+func (dmesgOpened) applicationMessage() {}
+
+type DmesgBatchLoaded struct {
+	Generation       uint64
+	StreamGeneration uint64
+	Batch            domain.DmesgBatch
+	Err              error
+}
+
+func (DmesgBatchLoaded) applicationMessage() {}
 
 type OpenServiceLogs struct {
 	Request domain.LogRequest

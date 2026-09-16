@@ -7,6 +7,7 @@ const requiredPages = [
   "getting-started/first-run.md",
   "guides/contexts.md",
   "guides/nodes.md",
+  "guides/diagnostics.md",
   "guides/services-and-logs.md",
   "reference/commands.md",
   "reference/environment-variables.md",

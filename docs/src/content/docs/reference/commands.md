@@ -28,13 +28,15 @@ These open from a selected row in `:nodes` rather than through the command palet
 | `p` | Open processes. See [Processes, disks, and network](/guides/processes-disks-network/). |
 | `k` | Open disks. |
 | `n` | Open network interfaces, addresses, and routes. |
+| `e` | Stream the node's kernel log (dmesg). See [Node diagnostics](/guides/diagnostics/). |
+| `s` | Open the node's network sockets (netstat). See [Node diagnostics](/guides/diagnostics/). |
 | `space` | Mark/unmark the selected node for a bulk action. Requires `--enable-writes`. |
 | `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
 | `X` | Shut down the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
 | `B` | Roll back the marked node(s) (or the selected node if none are marked) to the previous Talos OS install, behind a confirm prompt. Requires `--enable-writes`. |
 | `U` | Upgrade the selected node to a specified Talos OS image, behind a prompt prefilled from the running node's schematic/current version and a confirm step. Shows lifecycle progress when supported; requires `--enable-writes`. |
 
-Each of these views supports `r` to refresh and `Esc`/`q` to return to `:nodes`.
+Each of these views supports `r` to refresh (reconnect for dmesg) and `Esc`/`q` to return to `:nodes`.
 
 `space`, `R`, `X`, `B`, and `U` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
 

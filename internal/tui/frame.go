@@ -82,6 +82,10 @@ func resourceTitle(kind viewKind, model application.Model) string {
 		return fmt.Sprintf("network(%s)[%d]", model.Network.Node, len(model.Network.Value.Links))
 	case viewLinkDetail:
 		return "link"
+	case viewDmesg:
+		return fmt.Sprintf("dmesg(%s)", model.Dmesg.Request.Node)
+	case viewNetstat:
+		return fmt.Sprintf("netstat(%s)[%d]", model.Netstat.Node, len(model.Netstat.Value.Sockets))
 	case viewOverview:
 		return "overview"
 	case viewProblems:

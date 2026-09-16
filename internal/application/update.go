@@ -48,6 +48,10 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Kubernetes = KubernetesState{}
 		model.Disks = DisksState{}
 		model.Network = NetworkState{}
+		model.Dmesg = DmesgState{}
+		model.dmesgStream = nil
+		model.dmesgGeneration++
+		model.Netstat = SocketState{}
 		model.ResourceBrowser = ResourceBrowserState{}
 		model.Logs = LogState{}
 		model.logStream = nil
@@ -76,6 +80,8 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.processReader = message.Processes
 		model.diskReader = message.Disks
 		model.networkReader = message.Network
+		model.dmesgReader = message.Dmesg
+		model.netstatReader = message.Netstat
 		model.resourceKindReader = message.ResourceKinds
 		model.resourceInstanceReader = message.Resources
 		model.kubernetesReader = message.KubernetesNodes
@@ -442,6 +448,97 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Network.Status = Loading
 		model.Network.Err = ""
 		return model, loadNetwork(model.networkReader, model.Network.Node, model.Generation)
+
+	case OpenNetstat:
+		model.Netstat = SocketState{Status: Loading, Node: message.Node}
+		return model, loadNetstat(model.netstatReader, message.Node, model.Generation)
+
+	case NetstatLoaded:
+		// Generation alone is not enough: re-opening another node does not bump
+		// it, so a late result for the previous node must be dropped by node.
+		if message.Generation != model.Generation || message.Node != model.Netstat.Node {
+			return model, nil
+		}
+		model.Netstat.Status = Ready
+		model.Netstat.Value = message.Sockets
+		return model, nil
+
+	case NetstatFailed:
+		if message.Generation != model.Generation || message.Node != model.Netstat.Node {
+			return model, nil
+		}
+		model.Netstat.Status = Failed
+		model.Netstat.Err = "netstat unavailable"
+		return model, nil
+
+	case RefreshNetstat:
+		model.Netstat.Status = Loading
+		model.Netstat.Err = ""
+		return model, loadNetstat(model.netstatReader, model.Netstat.Node, model.Generation)
+
+	case OpenDmesg:
+		oldStream := model.dmesgStream
+		model.dmesgGeneration++
+		model.dmesgStream = nil
+		model.Dmesg = DmesgState{Status: Loading, Request: message.Request, Following: true}
+		return model, openDmesg(model.dmesgReader, message.Request, model.Generation, model.dmesgGeneration, oldStream)
+
+	case ReconnectDmesg:
+		if model.Dmesg.Request.Node == "" {
+			return model, nil
+		}
+		oldStream := model.dmesgStream
+		model.dmesgGeneration++
+		model.dmesgStream = nil
+		model.Dmesg.Status = Loading
+		model.Dmesg.Err = ""
+		model.Dmesg.EOF = false
+		return model, openDmesg(model.dmesgReader, model.Dmesg.Request, model.Generation, model.dmesgGeneration, oldStream)
+
+	case CloseDmesg:
+		stream := model.dmesgStream
+		model.dmesgGeneration++
+		model.dmesgStream = nil
+		model.Dmesg = DmesgState{}
+		return model, closeDmesg(stream)
+
+	case ClearDmesg:
+		model.Dmesg.Lines = nil
+		return model, nil
+
+	case dmesgOpened:
+		if message.Generation != model.Generation || message.StreamGeneration != model.dmesgGeneration {
+			return model, closeDmesg(message.Stream)
+		}
+		if message.Err != nil || message.Stream == nil {
+			model.Dmesg.Status = Failed
+			model.Dmesg.Err = "dmesg stream unavailable"
+			return model, nil
+		}
+		model.dmesgStream = message.Stream
+		model.Dmesg.Status = Ready
+		return model, readDmesgBatch(message.Stream, message.Generation, message.StreamGeneration)
+
+	case DmesgBatchLoaded:
+		if message.Generation != model.Generation || model.dmesgGeneration != 0 && message.StreamGeneration != model.dmesgGeneration {
+			return model, nil
+		}
+		if len(message.Batch.Lines) > 0 {
+			model.Dmesg.Lines = append(model.Dmesg.Lines, message.Batch.Lines...)
+			if excess := len(model.Dmesg.Lines) - 2000; excess > 0 {
+				model.Dmesg.Lines = append([]string(nil), model.Dmesg.Lines[excess:]...)
+			}
+		}
+		if message.Err != nil || message.Batch.Err != "" {
+			model.Dmesg.Status = Failed
+			model.Dmesg.Err = "dmesg stream unavailable"
+			return model, nil
+		}
+		if message.Batch.EOF {
+			model.Dmesg.EOF = true
+			return model, nil
+		}
+		return model, readDmesgBatch(model.dmesgStream, message.Generation, message.StreamGeneration)
 
 	case RequestAction:
 		// Defense in depth: the TUI already refuses to send RequestAction

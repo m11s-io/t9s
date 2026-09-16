@@ -20,6 +20,8 @@ const (
 	viewDiskDetail
 	viewNetwork
 	viewLinkDetail
+	viewDmesg
+	viewNetstat
 	viewOverview
 	viewProblems
 	viewResourceKinds

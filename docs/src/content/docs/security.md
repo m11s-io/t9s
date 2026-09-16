@@ -17,6 +17,11 @@ Control-plane actions that would drop etcd below quorum are refused outright —
 the confirmation prompt reports the refusal instead of accepting a `y` — not
 merely warned about.
 
+The node-scoped diagnostics views — the kernel log (`e`/dmesg) and network
+sockets (`s`/netstat) — are read-only and inert with respect to writes: they
+never require `--enable-writes`, and enabling writes adds no mutation to them.
+See [Node diagnostics](/guides/diagnostics/).
+
 The same gate covers etcd maintenance: `--enable-writes` additionally allows
 etcd snapshot (`s`), member removal (`R`), graceful leave (`L`), defragment
 (`d`), and alarm disarm (`A`) from the `:etcd` screen, each behind its own

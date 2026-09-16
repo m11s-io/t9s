@@ -66,7 +66,14 @@ type serviceLogStream struct {
 func (s *serviceLogStream) Next(ctx context.Context) (domain.LogBatch, error) {
 	stop := context.AfterFunc(ctx, s.cancel)
 	defer stop()
-	data, err := s.stream.Recv()
+	return readDataStreamBatch(s.stream)
+}
+
+// readDataStreamBatch reads one frame from a Talos server stream of common.Data
+// and bounds it for display. Service logs and dmesg share the byte-identical
+// framing, so both map their stream through this helper.
+func readDataStreamBatch(stream talosDataStream) (domain.LogBatch, error) {
+	data, err := stream.Recv()
 	if err == io.EOF {
 		return domain.LogBatch{EOF: true}, nil
 	}
