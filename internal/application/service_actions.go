@@ -12,6 +12,9 @@ import (
 // "service@node" target, matching the label format services.go/logs.go
 // already use for the same node+service pairing.
 func BuildServiceActionEffect(model Model, pending PendingServiceAction) Effect {
+	if pending.Blocked != "" {
+		return nil
+	}
 	target := pending.Service + "@" + pending.Node
 	generation := model.Generation
 	controller := model.serviceController

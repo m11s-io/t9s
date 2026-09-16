@@ -37,6 +37,35 @@ func TestBuildActionEffectsCallsControllerPerTargetIndependently(t *testing.T) {
 	assert.ElementsMatch(t, []string{"cp-1", "cp-2"}, calls)
 }
 
+func TestBuildActionEffectsReturnsNilForBlockedAction(t *testing.T) {
+	controller := &testkit.FakeNodeController{}
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+
+	effects := application.BuildActionEffects(model, application.PendingAction{
+		Kind:    application.ActionReboot,
+		Targets: []string{"cp-1"},
+		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
+	})
+
+	assert.Empty(t, effects, "defense in depth: a blocked action must never build effects")
+}
+
+func TestBuildServiceActionEffectReturnsNilForBlockedAction(t *testing.T) {
+	controller := &testkit.FakeServiceController{}
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ServiceController: controller})
+
+	effect := application.BuildServiceActionEffect(model, application.PendingServiceAction{
+		Kind:    application.ServiceActionStop,
+		Node:    "cp-1",
+		Service: "etcd",
+		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
+	})
+
+	assert.Nil(t, effect, "defense in depth: a blocked service action must never build an effect")
+}
+
 func TestBuildActionEffectsUsesShutdownForShutdownKind(t *testing.T) {
 	var shutdownCalled bool
 	controller := &testkit.FakeNodeController{

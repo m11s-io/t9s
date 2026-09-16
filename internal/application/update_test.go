@@ -1382,30 +1382,145 @@ func TestRequestActionDoesNotBlockQuorumSafeControlPlaneAction(t *testing.T) {
 	assert.Empty(t, got.PendingAction.Blocked)
 }
 
+func TestRequestActionDoesNotBlockWhenNoVotingMembers(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+	}}}
+	// Learner-only membership has no voters, so quorum cannot be assessed and
+	// the action must not be hard-blocked.
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", IsLearner: true, StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Empty(t, got.PendingAction.Blocked)
+	assert.Contains(t, got.PendingAction.Warning, "unknown")
+}
+
+func TestRequestActionDoesNotBlockOnUnknownMemberStatus(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	// cp-2's status read failed (unknown), which is not positive evidence of
+	// a lost voter: rebooting cp-1 may still leave quorum, so it must warn but
+	// not hard-block with no override.
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: false},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Empty(t, got.PendingAction.Blocked, "a read blip must not hard-block a possibly quorum-safe action")
+	assert.Contains(t, got.PendingAction.Warning, "below quorum", "uncertainty must still surface as an advisory warning")
+}
+
 func TestConfirmPendingActionRefusesBlockedAction(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
-	model.PendingAction = &application.PendingAction{
-		Kind:    application.ActionReboot,
-		Targets: []string{"cp-1", "cp-2"},
-		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
-	}
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+	opened, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}})
+	require.NotNil(t, opened.PendingAction)
+	require.NotEmpty(t, opened.PendingAction.Blocked)
 
-	got, effect := application.Update(model, application.ConfirmPendingAction{})
+	got, effect := application.Update(opened, application.ConfirmPendingAction{})
 
 	require.NotNil(t, got.PendingAction, "a blocked action must not be consumed by confirm")
 	assert.Equal(t, 0, got.ActionTotal)
 	assert.Nil(t, effect)
 }
 
+func TestConfirmPendingActionRecomputesQuorumGateAfterDegrade(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+	opened, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+	require.NotNil(t, opened.PendingAction)
+	require.Empty(t, opened.PendingAction.Blocked)
+
+	// etcd degrades while the prompt is open: cp-2 now reports errors, so
+	// confirming cp-1's reboot would drop the cluster below quorum.
+	opened.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true, Errors: []string{"unreachable"}},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+
+	confirmed, _ := application.Update(opened, application.ConfirmPendingAction{})
+
+	require.NotNil(t, confirmed.PendingAction, "a stale-but-now-unsafe prompt must be refused at confirm")
+	assert.Equal(t, 0, confirmed.ActionTotal)
+}
+
+func TestConfirmPendingActionUnblocksAfterQuorumRecovers(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+	opened, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}})
+	require.NotEmpty(t, opened.PendingAction.Blocked)
+
+	// The cluster scales out to five voters while the prompt is open, so the
+	// same action is now quorum-safe and should be allowed.
+	opened.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+		{Hostname: "cp-4", StatusKnown: true},
+		{Hostname: "cp-5", StatusKnown: true},
+	}}}
+
+	confirmed, _ := application.Update(opened, application.ConfirmPendingAction{})
+
+	assert.Nil(t, confirmed.PendingAction, "a prompt that became quorum-safe must be allowed")
+	assert.Equal(t, 2, confirmed.ActionTotal)
+}
+
 func TestRequestServiceActionBlocksEtcdStopThatWouldLoseQuorum(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
-	// cp-2 is already unhealthy, so stopping etcd on the still-healthy cp-1
-	// would drop the 3-voter cluster to 1/3, below quorum (need 2).
+	// cp-2 is confirmed unhealthy (reporting errors), so stopping etcd on the
+	// still-healthy cp-1 would drop the 3-voter cluster to 1/3, below quorum
+	// (need 2).
 	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 		{Hostname: "cp-1", StatusKnown: true},
-		{Hostname: "cp-2", StatusKnown: false},
+		{Hostname: "cp-2", StatusKnown: true, Errors: []string{"unreachable"}},
 		{Hostname: "cp-3", StatusKnown: true},
 	}}}
 

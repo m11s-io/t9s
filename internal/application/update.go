@@ -332,13 +332,20 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case ConfirmPendingAction:
-		// Hard gate: a blocked action is refused outright and the pending
+		// Hard gate, re-evaluated against the current snapshot: an action that
+		// is (or became) quorum-unsafe is refused outright and the pending
 		// prompt is left in place so the operator must cancel it explicitly.
-		if model.PendingAction != nil && model.PendingAction.Blocked != "" {
-			return model, nil
+		if model.PendingAction != nil {
+			if reason := pendingActionBlockReason(model, *model.PendingAction); reason != "" {
+				model.PendingAction.Blocked = reason
+				return model, nil
+			}
 		}
-		if model.PendingServiceAction != nil && model.PendingServiceAction.Blocked != "" {
-			return model, nil
+		if model.PendingServiceAction != nil {
+			if reason := pendingServiceActionBlockReason(model, *model.PendingServiceAction); reason != "" {
+				model.PendingServiceAction.Blocked = reason
+				return model, nil
+			}
 		}
 		if model.PendingAction != nil {
 			model.ActionTotal = len(model.PendingAction.Targets)

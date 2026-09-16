@@ -41,15 +41,29 @@ func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) b
 // targets affect etcd's voting membership. When known is false, reason
 // explains why quorum could not be assessed from the current snapshot.
 type etcdQuorumAssessment struct {
-	known     bool
-	voters    int
+	known bool
+	// voters is the number of non-learner etcd members.
+	voters int
+	// remaining counts every voter not positively known healthy as lost, and
+	// drives the advisory warning.
 	remaining int
-	floor     int
-	reason    string
+	// confirmedRemaining counts only voters positively known healthy as
+	// present; it drives the hard gate so a transient status read failure
+	// cannot dead-end a possibly quorum-safe action.
+	confirmedRemaining int
+	floor              int
+	reason             string
 }
 
 func (a etcdQuorumAssessment) belowQuorum() bool {
 	return a.known && a.remaining < a.floor
+}
+
+// certainlyBelowQuorum is true only when the action would drop below quorum
+// even in the best case where every unknown member is actually healthy. It is
+// the hard-gate predicate; belowQuorum() remains the advisory.
+func (a etcdQuorumAssessment) certainlyBelowQuorum() bool {
+	return a.known && a.confirmedRemaining < a.floor
 }
 
 func assessEtcdQuorum(etcd EtcdState, targets []string) etcdQuorumAssessment {
@@ -68,7 +82,8 @@ func assessEtcdQuorum(etcd EtcdState, targets []string) etcdQuorumAssessment {
 		return etcdQuorumAssessment{reason: "etcd membership unknown"}
 	}
 	atRisk := 0
-	alreadyUnhealthy := 0
+	confirmedUnhealthy := 0
+	unknown := 0
 	for _, member := range etcd.Value.Members {
 		if member.IsLearner {
 			continue
@@ -77,21 +92,25 @@ func assessEtcdQuorum(etcd EtcdState, targets []string) etcdQuorumAssessment {
 			atRisk++
 			continue // don't also count this member as already-unhealthy below
 		}
-		// Same predicate as evaluateEtcdMemberUnhealthy (health.go): a
-		// member already missing from quorum must reduce the "remaining"
-		// count the same way an about-to-be-rebooted member does, or a
-		// cluster with a pre-existing unhealthy member under-warns on the
-		// action that would actually drop it below quorum.
-		if !member.StatusKnown || len(member.Errors) > 0 {
-			alreadyUnhealthy++
+		// A member positively reporting errors is confirmed unhealthy; a
+		// member whose status read failed is merely unknown. Both reduce the
+		// advisory "remaining" (same conservative predicate as
+		// evaluateEtcdMemberUnhealthy in health.go), but only confirmed
+		// unhealthy voters are allowed to hard-block an action.
+		switch {
+		case !member.StatusKnown:
+			unknown++
+		case len(member.Errors) > 0:
+			confirmedUnhealthy++
 		}
 	}
 
 	return etcdQuorumAssessment{
-		known:     true,
-		voters:    voters,
-		remaining: voters - atRisk - alreadyUnhealthy,
-		floor:     voters/2 + 1,
+		known:              true,
+		voters:             voters,
+		remaining:          voters - atRisk - confirmedUnhealthy - unknown,
+		confirmedRemaining: voters - atRisk - confirmedUnhealthy,
+		floor:              voters/2 + 1,
 	}
 }
 
@@ -106,15 +125,34 @@ func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 	return "control-plane node(s)"
 }
 
+// pendingActionBlockReason re-evaluates the hard gate for an already-open
+// node action against the current snapshot, so a prompt opened while the
+// cluster was healthy is still refused if etcd degraded in the meantime.
+func pendingActionBlockReason(model Model, pending PendingAction) string {
+	if !targetsIncludeControlPlane(model.Nodes.Value.Nodes, pending.Targets) {
+		return ""
+	}
+
+	return etcdQuorumBlockReason(model.Etcd, pending.Targets)
+}
+
+func pendingServiceActionBlockReason(model Model, pending PendingServiceAction) string {
+	if pending.Service != "etcd" || pending.Kind == ServiceActionStart {
+		return ""
+	}
+
+	return etcdQuorumBlockReason(model.Etcd, []string{pending.Node})
+}
+
 // etcdQuorumBlockReason is the hard gate. When non-empty the action must be
 // refused outright, not merely confirmed behind an advisory warning.
 func etcdQuorumBlockReason(etcd EtcdState, targets []string) string {
 	assessment := assessEtcdQuorum(etcd, targets)
-	if !assessment.belowQuorum() {
+	if !assessment.certainlyBelowQuorum() {
 		return ""
 	}
 
-	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.remaining, assessment.voters, assessment.floor)
+	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
 }
 
 // memberMatchesAnyTarget reports whether an etcd member corresponds to any
@@ -208,6 +246,9 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 // PendingAction — capture *model.PendingAction first, then call
 // Update(model, ConfirmPendingAction{}) separately.
 func BuildActionEffects(model Model, pending PendingAction) []Effect {
+	if pending.Blocked != "" {
+		return nil
+	}
 	if pending.Kind == ActionUpgrade {
 		if len(pending.Targets) == 0 {
 			return nil

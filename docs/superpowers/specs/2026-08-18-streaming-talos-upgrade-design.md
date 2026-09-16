@@ -58,9 +58,11 @@ its existing port shape. For the selected node it reads:
    Factory URL;
 3. the declared machine-config install image as a final fallback.
 
-The pinned Talos machinery v1.13.3 SDK does not expose the newer first-class
-`ImageFactorySchematic` runtime resource, so t9s must not claim or attempt to
-read it.
+> **Superseded (2026-09-16):** t9s is now pinned to Talos machinery v1.14.1,
+> which exposes the first-class `ImageFactorySchematic` runtime resource.
+> `currentInstallImage` reads it first and keeps `ExtensionStatus` schematic
+> metadata as the pre-v1.14 fallback. See
+> `docs/superpowers/plans/2026-09-16-talos-114-coverage.md` Phase 0 item 1.
 
 When a non-empty schematic ID and flavor are available, the suggestion follows
 Talos's own `images.NewInstallerImage` shape:

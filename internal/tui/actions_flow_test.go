@@ -59,6 +59,62 @@ func TestRebootKeyWithWritesEnabledOpensConfirmPrompt(t *testing.T) {
 	assert.Contains(t, rootModel.activePrompt(), "(y/n)")
 }
 
+func TestBlockedConfirmDoesNotFireAction(t *testing.T) {
+	fired := false
+	controller := &testkit.FakeNodeController{
+		RebootFunc: func(context.Context, string, ports.RebootMode) error {
+			fired = true
+			return nil
+		},
+	}
+	root := writesEnabledTestModel(t, controller)
+	// A single-voter etcd cluster: rebooting its only member would drop below
+	// quorum, so the confirm recomputes this as hard-blocked.
+	root.application.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+	}}}
+	root.application.PendingAction = &application.PendingAction{
+		Kind:    application.ActionReboot,
+		Targets: []string{"cp-1"},
+	}
+
+	updated, cmd := root.Update(keyPress('y'))
+	rootModel := updated.(model)
+
+	assert.Nil(t, cmd, "a blocked confirm must produce no effect command")
+	assert.False(t, fired, "a blocked confirm must not invoke the node controller")
+	require.NotNil(t, rootModel.application.PendingAction, "the blocked prompt must remain until cancelled")
+}
+
+func TestBlockedServiceConfirmDoesNotFireAction(t *testing.T) {
+	fired := false
+	controller := &testkit.FakeServiceController{
+		StopFunc: func(context.Context, string, string) error {
+			fired = true
+			return nil
+		},
+	}
+	appModel, _ := application.NewModel("prod")
+	appModel.WritesEnabled = true
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, ServiceController: controller})
+	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
+	root.application.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+	}}}
+	root.application.PendingServiceAction = &application.PendingServiceAction{
+		Kind:    application.ServiceActionStop,
+		Node:    "cp-1",
+		Service: "etcd",
+	}
+
+	updated, cmd := root.Update(keyPress('y'))
+	rootModel := updated.(model)
+
+	assert.Nil(t, cmd, "a blocked service confirm must produce no effect command")
+	assert.False(t, fired, "a blocked service confirm must not invoke the service controller")
+	require.NotNil(t, rootModel.application.PendingServiceAction, "the blocked prompt must remain until cancelled")
+}
+
 func TestRebootKeyHandlesKittyShiftEncoding(t *testing.T) {
 	root := writesEnabledTestModel(t, &testkit.FakeNodeController{})
 

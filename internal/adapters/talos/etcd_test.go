@@ -112,6 +112,26 @@ func TestEtcdReaderAttachesAlarmsToMembersByID(t *testing.T) {
 	assert.Equal(t, []string{"NOSPACE"}, byHostname["cp-2"].Alarms)
 }
 
+func TestEtcdReaderSkipsNoneAlarm(t *testing.T) {
+	roster := membersResponse(&machineapi.EtcdMember{Id: 1, Hostname: "cp-1"})
+	client := &fakeEtcdClient{
+		members:  map[string]*machineapi.EtcdMemberListResponse{"cp-1": roster},
+		statuses: map[string]*machineapi.EtcdStatusResponse{},
+		alarms: map[string]*machineapi.EtcdAlarmListResponse{
+			"cp-1": {Messages: []*machineapi.EtcdAlarm{{MemberAlarms: []*machineapi.EtcdMemberAlarm{
+				{MemberId: 1, Alarm: machineapi.EtcdMemberAlarm_NONE},
+			}}}},
+		},
+	}
+	reader := newEtcdReader(client)
+
+	set, err := reader.List(t.Context(), []string{"cp-1"})
+
+	require.NoError(t, err)
+	require.Len(t, set.Members, 1)
+	assert.Empty(t, set.Members[0].Alarms, "a quiescent cluster must not render a spurious NONE alarm")
+}
+
 func TestEtcdReaderTriesMemberListAgainstNextNodeOnFailure(t *testing.T) {
 	roster := membersResponse(&machineapi.EtcdMember{Id: 1, Hostname: "cp-2"})
 	client := &fakeEtcdClient{

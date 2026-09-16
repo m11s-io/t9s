@@ -146,15 +146,23 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil {
 			if key == "y" {
+				// Confirm through the reducer first. A refused confirm (for
+				// example an action that would drop etcd below quorum, or one
+				// whose state changed since the prompt opened) leaves the
+				// pending prompt in place and must not build or dispatch any
+				// mutation effects.
 				if m.application.PendingAction != nil {
 					pending := *m.application.PendingAction
-					effects := application.BuildActionEffects(m.application, pending)
 					var confirmEffect application.Effect
 					m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
+					if m.application.PendingAction != nil {
+						return m, m.command(confirmEffect)
+					}
 					// A confirmed action has fired for the currently marked rows;
 					// clear marks so a subsequent R/X doesn't silently re-target
 					// already-actioned nodes.
 					m.nodes.marked = nil
+					effects := application.BuildActionEffects(m.application, pending)
 					cmds := make([]tea.Cmd, 0, len(effects)+1)
 					if cmd := m.command(confirmEffect); cmd != nil {
 						cmds = append(cmds, cmd)
@@ -165,9 +173,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(cmds...)
 				}
 				pending := *m.application.PendingServiceAction
-				effect := application.BuildServiceActionEffect(m.application, pending)
 				var confirmEffect application.Effect
 				m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
+				if m.application.PendingServiceAction != nil {
+					return m, m.command(confirmEffect)
+				}
+				effect := application.BuildServiceActionEffect(m.application, pending)
 				cmds := make([]tea.Cmd, 0, 2)
 				if cmd := m.command(confirmEffect); cmd != nil {
 					cmds = append(cmds, cmd)
