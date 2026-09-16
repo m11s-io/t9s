@@ -70,6 +70,25 @@ func TestDiskWipeKeyRefusesWhenInventoryNotLoaded(t *testing.T) {
 	assert.Nil(t, updated.(model).diskWipePrompt)
 }
 
+func TestDiskWipeKeyRefusesStaleDiskNotInAuthoritativeInventory(t *testing.T) {
+	root := diskWipeTestModel(t, true)
+	// The rendered table can lag an application refresh. A row which is no
+	// longer present in the authoritative inventory must not open a prompt.
+	root.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: domain.DiskSet{Disks: []domain.DiskSnapshot{
+		{DeviceName: "/dev/sdb"},
+	}}})
+	root.application.Disks = application.DisksState{Status: application.Ready, Node: "cp-1", Value: domain.DiskSet{Disks: []domain.DiskSnapshot{
+		{DeviceName: "/dev/sda", SystemDisk: true},
+	}}}
+
+	updated, cmd := root.Update(keyPress('W'))
+
+	rootModel := updated.(model)
+	assert.Nil(t, rootModel.diskWipePrompt)
+	assert.Nil(t, cmd)
+	assert.Contains(t, rootModel.notice, "not in the current inventory")
+}
+
 func TestDiskWipePromptEnterOpensPendingAction(t *testing.T) {
 	root := diskWipeTestModel(t, true)
 	root.disks = root.disks.update(keyPress('j'))

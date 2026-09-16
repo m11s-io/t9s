@@ -187,11 +187,11 @@ func ValidateDeviceWipeConfirmation(device, typed string) error {
 	return nil
 }
 
-// deviceWipeBlockReason is the hard gate for a single-device BlockDeviceWipe.
+// DeviceWipeBlockReason is the hard gate for a single-device BlockDeviceWipe.
 // It refuses the system disk, read-only devices, and any device that cannot be
 // verified against the loaded inventory — a wipe is irreversible, so an
 // unknown target is never authorized.
-func deviceWipeBlockReason(disks DisksState, wipe ports.DeviceWipeOptions) string {
+func DeviceWipeBlockReason(disks DisksState, wipe ports.DeviceWipeOptions) string {
 	if wipe.Node == "" || wipe.Device == "" {
 		return "refusing: no device selected"
 	}
@@ -361,7 +361,7 @@ func pendingActionBlockReason(model Model, pending PendingAction) string {
 		if pending.DeviceWipe == nil {
 			return "refusing: no device selected"
 		}
-		return deviceWipeBlockReason(model.Disks, *pending.DeviceWipe)
+		return DeviceWipeBlockReason(model.Disks, *pending.DeviceWipe)
 	}
 	if !targetsIncludeControlPlane(model.Nodes.Value.Nodes, pending.Targets) {
 		return ""

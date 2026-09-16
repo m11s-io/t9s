@@ -691,22 +691,16 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewDisks {
 			if key == "W" && m.writeActionsEnabled() && !m.disks.filtering {
-				// The reducer re-checks these, but refusing at the key press avoids
-				// opening a prompt that can only ever be blocked. Require a loaded
-				// inventory so a stale row cannot authorize a wipe.
-				if m.application.Disks.Status != application.Ready {
-					return m, nil
-				}
+				// Gate against the authoritative application inventory, rather than
+				// only the rendered table: refreshes can leave a stale row visible
+				// briefly, and that row must not authorize a destructive prompt.
 				if disk, ok := m.disks.selected(); ok {
-					if disk.SystemDisk {
-						m.notice = "refusing: " + disk.DeviceName + " is the system disk"
+					wipe := ports.DeviceWipeOptions{Node: m.application.Disks.Node, Device: disk.DeviceName, Method: ports.DeviceWipeFast}
+					if reason := application.DeviceWipeBlockReason(m.application.Disks, wipe); reason != "" {
+						m.notice = reason
 						return m, nil
 					}
-					if disk.ReadOnly {
-						m.notice = "refusing: " + disk.DeviceName + " is read-only"
-						return m, nil
-					}
-					prompt := newDiskWipePromptModel(m.application.Disks.Node, disk.DeviceName)
+					prompt := newDiskWipePromptModel(wipe.Node, wipe.Device)
 					m.diskWipePrompt = &prompt
 					return m, prompt.input.Focus()
 				}

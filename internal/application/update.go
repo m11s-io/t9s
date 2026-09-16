@@ -721,7 +721,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			model.PendingAction = &PendingAction{
 				Kind:         ActionWipeDevice,
 				Targets:      append([]string(nil), message.Targets...),
-				Blocked:      deviceWipeBlockReason(model.Disks, wipe),
+				Blocked:      DeviceWipeBlockReason(model.Disks, wipe),
 				DeviceWipe:   &wipe,
 				Confirmation: strings.TrimSpace(message.Confirmation),
 			}

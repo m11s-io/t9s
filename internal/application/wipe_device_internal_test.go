@@ -15,13 +15,13 @@ func TestDeviceWipeBlockReason(t *testing.T) {
 		{DeviceName: "/dev/sr0", ReadOnly: true},
 	}}}
 
-	assert.Empty(t, deviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdb"}))
-	assert.Contains(t, deviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sda"}), "system disk")
-	assert.Contains(t, deviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sr0"}), "read-only")
-	assert.Contains(t, deviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdz"}), "not in the current inventory")
-	assert.Contains(t, deviceWipeBlockReason(DisksState{}, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdb"}), "inventory")
+	assert.Empty(t, DeviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdb"}))
+	assert.Contains(t, DeviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sda"}), "system disk")
+	assert.Contains(t, DeviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sr0"}), "read-only")
+	assert.Contains(t, DeviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdz"}), "not in the current inventory")
+	assert.Contains(t, DeviceWipeBlockReason(DisksState{}, ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdb"}), "inventory")
 	// A different node's loaded inventory must not authorize this node's wipe.
-	assert.Contains(t, deviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-2", Device: "/dev/sdb"}), "inventory")
+	assert.Contains(t, DeviceWipeBlockReason(disks, ports.DeviceWipeOptions{Node: "cp-2", Device: "/dev/sdb"}), "inventory")
 }
 
 func TestValidateDeviceWipeConfirmationNormalizesDevPrefix(t *testing.T) {
