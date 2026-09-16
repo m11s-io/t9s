@@ -1295,6 +1295,52 @@ func TestRequestActionCountsAlreadyUnhealthyEtcdMembersTowardQuorumLoss(t *testi
 	assert.Contains(t, got.PendingAction.Warning, "below quorum")
 }
 
+func TestRequestActionDoesNotCountUnhealthyLearnersTowardQuorumLoss(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	// A learner does not vote, so an unhealthy learner must not push the
+	// voter count toward a false below-quorum warning.
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+		{Hostname: "learner-1", IsLearner: true, StatusKnown: false},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.NotContains(t, got.PendingAction.Warning, "below quorum")
+	assert.Contains(t, got.PendingAction.Warning, "control-plane")
+}
+
+func TestRequestActionMatchesEtcdMemberByClientAddress(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Addresses: []string{"10.0.0.1"}, Role: domain.NodeRoleControl},
+		{Addresses: []string{"10.0.0.2"}, Role: domain.NodeRoleControl},
+		{Addresses: []string{"10.0.0.3"}, Role: domain.NodeRoleControl},
+	}}}
+	// Members discovered without a hostname must still be matched by the
+	// address carried in their client URLs, or targets go uncounted.
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{MemberID: 1, ClientURLs: []string{"https://10.0.0.1:2379"}, StatusKnown: true},
+		{MemberID: 2, ClientURLs: []string{"https://10.0.0.2:2379"}, StatusKnown: true},
+		{MemberID: 3, ClientURLs: []string{"https://10.0.0.3:2379"}, StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"10.0.0.2", "10.0.0.3"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Contains(t, got.PendingAction.Warning, "below quorum")
+}
+
 func TestRequestActionNoWarningForWorkerOnlyTargets(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
