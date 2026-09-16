@@ -37,9 +37,24 @@ func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) b
 // computeEtcdQuorumWarning is shared by every action that reboots a
 // control-plane node (Reboot, Shutdown, Rollback, Upgrade) and by service
 // actions that stop or restart the etcd service directly.
-func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
+// etcdQuorumAssessment is the shared result of evaluating how an action's
+// targets affect etcd's voting membership. When known is false, reason
+// explains why quorum could not be assessed from the current snapshot.
+type etcdQuorumAssessment struct {
+	known     bool
+	voters    int
+	remaining int
+	floor     int
+	reason    string
+}
+
+func (a etcdQuorumAssessment) belowQuorum() bool {
+	return a.known && a.remaining < a.floor
+}
+
+func assessEtcdQuorum(etcd EtcdState, targets []string) etcdQuorumAssessment {
 	if etcd.Status != Ready && etcd.Status != Partial {
-		return "control-plane node(s); etcd quorum impact unknown (etcd data unavailable)"
+		return etcdQuorumAssessment{reason: "etcd quorum impact unknown (etcd data unavailable)"}
 	}
 	// Only voting members count toward quorum; learners never vote and must
 	// be excluded from both the floor and the at-risk arithmetic.
@@ -50,7 +65,7 @@ func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 		}
 	}
 	if voters == 0 {
-		return "control-plane node(s); etcd membership unknown"
+		return etcdQuorumAssessment{reason: "etcd membership unknown"}
 	}
 	atRisk := 0
 	alreadyUnhealthy := 0
@@ -71,12 +86,35 @@ func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 			alreadyUnhealthy++
 		}
 	}
-	remaining := voters - atRisk - alreadyUnhealthy
-	quorumFloor := voters/2 + 1
-	if remaining < quorumFloor {
-		return fmt.Sprintf("control-plane node(s); would drop etcd to %d/%d — below quorum (need %d)", remaining, voters, quorumFloor)
+
+	return etcdQuorumAssessment{
+		known:     true,
+		voters:    voters,
+		remaining: voters - atRisk - alreadyUnhealthy,
+		floor:     voters/2 + 1,
+	}
+}
+
+func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
+	assessment := assessEtcdQuorum(etcd, targets)
+	if !assessment.known {
+		return "control-plane node(s); " + assessment.reason
+	}
+	if assessment.belowQuorum() {
+		return fmt.Sprintf("control-plane node(s); would drop etcd to %d/%d — below quorum (need %d)", assessment.remaining, assessment.voters, assessment.floor)
 	}
 	return "control-plane node(s)"
+}
+
+// etcdQuorumBlockReason is the hard gate. When non-empty the action must be
+// refused outright, not merely confirmed behind an advisory warning.
+func etcdQuorumBlockReason(etcd EtcdState, targets []string) string {
+	assessment := assessEtcdQuorum(etcd, targets)
+	if !assessment.belowQuorum() {
+		return ""
+	}
+
+	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.remaining, assessment.voters, assessment.floor)
 }
 
 // memberMatchesAnyTarget reports whether an etcd member corresponds to any

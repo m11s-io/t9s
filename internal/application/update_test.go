@@ -1341,6 +1341,80 @@ func TestRequestActionMatchesEtcdMemberByClientAddress(t *testing.T) {
 	assert.Contains(t, got.PendingAction.Warning, "below quorum")
 }
 
+func TestRequestActionBlocksControlPlaneActionThatWouldLoseQuorum(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.NotEmpty(t, got.PendingAction.Blocked)
+	assert.Contains(t, got.PendingAction.Warning, "below quorum")
+}
+
+func TestRequestActionDoesNotBlockQuorumSafeControlPlaneAction(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{Name: "cp-1", Role: domain.NodeRoleControl},
+		{Name: "cp-2", Role: domain.NodeRoleControl},
+		{Name: "cp-3", Role: domain.NodeRoleControl},
+	}}}
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: true},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}})
+
+	require.NotNil(t, got.PendingAction)
+	assert.Empty(t, got.PendingAction.Blocked)
+}
+
+func TestConfirmPendingActionRefusesBlockedAction(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	model.PendingAction = &application.PendingAction{
+		Kind:    application.ActionReboot,
+		Targets: []string{"cp-1", "cp-2"},
+		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
+	}
+
+	got, effect := application.Update(model, application.ConfirmPendingAction{})
+
+	require.NotNil(t, got.PendingAction, "a blocked action must not be consumed by confirm")
+	assert.Equal(t, 0, got.ActionTotal)
+	assert.Nil(t, effect)
+}
+
+func TestRequestServiceActionBlocksEtcdStopThatWouldLoseQuorum(t *testing.T) {
+	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
+	// cp-2 is already unhealthy, so stopping etcd on the still-healthy cp-1
+	// would drop the 3-voter cluster to 1/3, below quorum (need 2).
+	model.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", StatusKnown: true},
+		{Hostname: "cp-2", StatusKnown: false},
+		{Hostname: "cp-3", StatusKnown: true},
+	}}}
+
+	got, _ := application.Update(model, application.RequestServiceAction{Kind: application.ServiceActionStop, Node: "cp-1", Service: "etcd"})
+
+	require.NotNil(t, got.PendingServiceAction)
+	assert.NotEmpty(t, got.PendingServiceAction.Blocked)
+}
+
 func TestRequestActionNoWarningForWorkerOnlyTargets(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true

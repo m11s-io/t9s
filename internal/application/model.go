@@ -260,6 +260,10 @@ type PendingAction struct {
 	Kind    ActionKind
 	Targets []string
 	Warning string
+	// Blocked is non-empty when the action must not be confirmed at all
+	// (for example it would drop etcd below quorum). It is a hard gate,
+	// not an advisory warning.
+	Blocked string
 	Image   string
 }
 
@@ -315,6 +319,7 @@ type PendingServiceAction struct {
 	Node    string
 	Service string
 	Warning string
+	Blocked string
 }
 
 type RequestServiceAction struct {

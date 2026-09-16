@@ -13,6 +13,30 @@ func TestRenderPendingActionPromptRollbackVerb(t *testing.T) {
 	assert.Equal(t, "Rollback cp-1? (y/n)", prompt)
 }
 
+func TestRenderPendingActionPromptShowsBlockedAction(t *testing.T) {
+	prompt := renderPendingActionPrompt(application.PendingAction{
+		Kind:    application.ActionReboot,
+		Targets: []string{"cp-1", "cp-2"},
+		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
+	})
+
+	assert.Contains(t, prompt, "refused")
+	assert.Contains(t, prompt, "cancel")
+	assert.NotContains(t, prompt, "(y/n)")
+}
+
+func TestRenderPendingServiceActionPromptShowsBlockedAction(t *testing.T) {
+	prompt := renderPendingServiceActionPrompt(application.PendingServiceAction{
+		Kind:    application.ServiceActionStop,
+		Node:    "cp-1",
+		Service: "etcd",
+		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
+	})
+
+	assert.Contains(t, prompt, "refused")
+	assert.NotContains(t, prompt, "(y/n)")
+}
+
 func TestRenderPendingActionPromptUpgradeVerbIncludesImage(t *testing.T) {
 	prompt := renderPendingActionPrompt(application.PendingAction{
 		Kind:    application.ActionUpgrade,

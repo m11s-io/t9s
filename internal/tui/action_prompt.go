@@ -25,6 +25,9 @@ const pendingActionWarningBudget = 40
 // of a count when a warning is present, or placed last when there is no
 // warning and the line is short enough not to need truncation.
 func renderPendingActionPrompt(pending application.PendingAction) string {
+	if pending.Blocked != "" {
+		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
+	}
 	verb := "Reboot"
 	switch pending.Kind {
 	case application.ActionShutdown:
@@ -46,6 +49,9 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 }
 
 func renderPendingServiceActionPrompt(pending application.PendingServiceAction) string {
+	if pending.Blocked != "" {
+		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
+	}
 	verb := "Start"
 	switch pending.Kind {
 	case application.ServiceActionStop:

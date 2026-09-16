@@ -273,6 +273,10 @@ func Update(model Model, message Message) (Model, Effect) {
 		if !model.WritesEnabled || model.Upgrade.Active || len(message.Targets) == 0 || message.Kind == ActionUpgrade && len(message.Targets) != 1 {
 			return model, nil
 		}
+		blocked := ""
+		if targetsIncludeControlPlane(model.Nodes.Value.Nodes, message.Targets) {
+			blocked = etcdQuorumBlockReason(model.Etcd, message.Targets)
+		}
 		model.PendingAction = &PendingAction{
 			Kind:    message.Kind,
 			Targets: append([]string(nil), message.Targets...),
@@ -282,7 +286,8 @@ func Update(model Model, message Message) (Model, Effect) {
 				}
 				return computeActionWarning(model.Nodes.Value.Nodes, model.Etcd, message.Targets)
 			}(),
-			Image: message.Image,
+			Blocked: blocked,
+			Image:   message.Image,
 		}
 		model.ActionResults = nil
 		model.ActionTotal = 0
@@ -293,14 +298,17 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		warning := ""
+		blocked := ""
 		if message.Service == "etcd" && message.Kind != ServiceActionStart {
 			warning = computeEtcdQuorumWarning(model.Etcd, []string{message.Node})
+			blocked = etcdQuorumBlockReason(model.Etcd, []string{message.Node})
 		}
 		model.PendingServiceAction = &PendingServiceAction{
 			Kind:    message.Kind,
 			Node:    message.Node,
 			Service: message.Service,
 			Warning: warning,
+			Blocked: blocked,
 		}
 		model.ActionResults = nil
 		model.ActionTotal = 0
@@ -324,6 +332,14 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case ConfirmPendingAction:
+		// Hard gate: a blocked action is refused outright and the pending
+		// prompt is left in place so the operator must cancel it explicitly.
+		if model.PendingAction != nil && model.PendingAction.Blocked != "" {
+			return model, nil
+		}
+		if model.PendingServiceAction != nil && model.PendingServiceAction.Blocked != "" {
+			return model, nil
+		}
 		if model.PendingAction != nil {
 			model.ActionTotal = len(model.PendingAction.Targets)
 		} else if model.PendingServiceAction != nil {
