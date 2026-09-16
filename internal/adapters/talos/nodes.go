@@ -171,12 +171,17 @@ func (r *nodeReader) inspectNode(ctx context.Context, member memberRecord) rawNo
 }
 
 type machineryAPI struct {
-	client *talosclient.Client
+	client          *talosclient.Client
+	fallbackMembers []memberRecord
 }
 
 func (a *machineryAPI) Members(ctx context.Context) ([]memberRecord, error) {
 	members, err := safe.StateListAll[*cluster.Member](ctx, a.client.COSI)
 	if err != nil {
+		if len(a.fallbackMembers) > 0 {
+			return cloneMemberRecords(a.fallbackMembers), nil
+		}
+
 		return nil, err
 	}
 
@@ -200,7 +205,43 @@ func (a *machineryAPI) Members(ctx context.Context) ([]memberRecord, error) {
 		})
 	}
 
-	return result, nil
+	return preferDiscoveredMembers(result, a.fallbackMembers), nil
+}
+
+func preferDiscoveredMembers(discovered, fallback []memberRecord) []memberRecord {
+	if len(discovered) > 0 || len(fallback) == 0 {
+		return discovered
+	}
+
+	return cloneMemberRecords(fallback)
+}
+
+func fallbackMemberRecords(nodes []string) []memberRecord {
+	result := make([]memberRecord, 0, len(nodes))
+	seen := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		node = strings.TrimSpace(node)
+		if node == "" {
+			continue
+		}
+		if _, exists := seen[node]; exists {
+			continue
+		}
+		seen[node] = struct{}{}
+		result = append(result, memberRecord{ID: node, Hostname: node, Addresses: []string{node}})
+	}
+
+	return result
+}
+
+func cloneMemberRecords(members []memberRecord) []memberRecord {
+	result := make([]memberRecord, len(members))
+	for index, member := range members {
+		result[index] = member
+		result[index].Addresses = append([]string(nil), member.Addresses...)
+	}
+
+	return result
 }
 
 func (a *machineryAPI) MachineStatus(ctx context.Context, node string) (machineRecord, error) {

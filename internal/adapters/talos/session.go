@@ -33,15 +33,19 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 	if err != nil {
 		return nil, fmt.Errorf("open Talos session: %w", err)
 	}
+	api := &machineryAPI{
+		client:          client,
+		fallbackMembers: fallbackMemberRecords(config.Contexts[contextName].Nodes),
+	}
 
 	return &session{
 		client:            client,
-		nodes:             newNodeReader(&machineryAPI{client: client}, time.Now),
+		nodes:             newNodeReader(api, time.Now),
 		nodeController:    newNodeController(machineryNodeControlClient{client: client}),
 		serviceController: newServiceController(machineryServiceControlClient{client: client}),
-		services:          newServiceReader(client, time.Now),
+		services:          newDetailedServiceReader(api, time.Now),
 		logs:              newServiceLogReader(machineryLogClient{client: client}),
-		events:            newEventReader(&machineryAPI{client: client}, machineryEventsClient{client: client}, time.Now, eventFetchTimeout),
+		events:            newEventReader(api, machineryEventsClient{client: client}, time.Now, eventFetchTimeout),
 		etcd:              newEtcdReader(machineryEtcdClient{client: client}),
 		processes:         newProcessReader(machineryProcessClient{client: client}),
 		disks:             newDiskReader(machineryDiskClient{client: client}),

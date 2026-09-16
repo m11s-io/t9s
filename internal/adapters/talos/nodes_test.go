@@ -92,6 +92,26 @@ func TestNodeReaderReturnsMemberDiscoveryFailureWithoutFabricatingNodes(t *testi
 	assert.Empty(t, got.Nodes)
 }
 
+func TestFallbackMemberRecordsUsesConfiguredNodesWhenDiscoveryIsEmpty(t *testing.T) {
+	fallback := fallbackMemberRecords([]string{" 10.0.0.2 ", "node-1", "10.0.0.2", ""})
+
+	got := preferDiscoveredMembers(nil, fallback)
+
+	assert.Equal(t, []memberRecord{
+		{ID: "10.0.0.2", Hostname: "10.0.0.2", Addresses: []string{"10.0.0.2"}},
+		{ID: "node-1", Hostname: "node-1", Addresses: []string{"node-1"}},
+	}, got)
+	got[0].Addresses[0] = "changed"
+	assert.Equal(t, "10.0.0.2", fallback[0].Addresses[0])
+}
+
+func TestPreferDiscoveredMembersDoesNotMixInConfiguredNodes(t *testing.T) {
+	discovered := []memberRecord{{ID: "discovered", Hostname: "discovered"}}
+	fallback := []memberRecord{{ID: "configured", Hostname: "configured"}}
+
+	assert.Equal(t, discovered, preferDiscoveredMembers(discovered, fallback))
+}
+
 func TestNodeReaderCancellationStopsSchedulingNewNodeWork(t *testing.T) {
 	members := make([]memberRecord, 40)
 	for i := range members {
