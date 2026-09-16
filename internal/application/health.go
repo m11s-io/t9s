@@ -24,6 +24,7 @@ func EvaluateHealth(model Model) []domain.Diagnosis {
 	if evaluableStatus(model.Etcd.Status) {
 		for _, member := range model.Etcd.Value.Members {
 			diagnoses = append(diagnoses, evaluateEtcdMemberUnhealthy(member)...)
+			diagnoses = append(diagnoses, evaluateEtcdMemberAlarmed(member)...)
 		}
 	}
 
@@ -85,6 +86,25 @@ func evaluateNodeServicesDegraded(node domain.NodeSnapshot) []domain.Diagnosis {
 		ResourceKind: "node",
 		ResourceID:   node.ID,
 		ResourceName: node.DisplayName(),
+	}}
+}
+
+// evaluateEtcdMemberAlarmed reports active etcd alarms (NOSPACE, CORRUPT, ...)
+// as critical: a NOSPACE alarm makes the whole cluster read-only until it is
+// cleared, so it must never be hidden behind a healthy-looking member status.
+func evaluateEtcdMemberAlarmed(member domain.EtcdMemberSnapshot) []domain.Diagnosis {
+	if len(member.Alarms) == 0 {
+		return nil
+	}
+
+	return []domain.Diagnosis{{
+		RuleID:       "etcd-member-alarmed",
+		Severity:     domain.SeverityCritical,
+		Summary:      "etcd member has active alarm",
+		Evidence:     append([]string(nil), member.Alarms...),
+		ResourceKind: "etcd-member",
+		ResourceID:   fmt.Sprintf("%d", member.MemberID),
+		ResourceName: member.Hostname,
 	}}
 }
 

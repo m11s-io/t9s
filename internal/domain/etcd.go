@@ -14,6 +14,7 @@ type EtcdMemberSnapshot struct {
 	RaftAppliedIndex uint64
 	StorageVersion   string
 	Errors           []string
+	Alarms           []string
 	StatusKnown      bool
 }
 

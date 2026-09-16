@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/m11s-io/t9s/internal/domain"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,8 @@ type fakeEtcdClient struct {
 	membersErr map[string]error
 	statuses   map[string]*machineapi.EtcdStatusResponse
 	statusErr  map[string]error
+	alarms     map[string]*machineapi.EtcdAlarmListResponse
+	alarmsErr  map[string]error
 }
 
 func (c *fakeEtcdClient) EtcdMemberList(_ context.Context, node string, _ *machineapi.EtcdMemberListRequest) (*machineapi.EtcdMemberListResponse, error) {
@@ -29,6 +32,13 @@ func (c *fakeEtcdClient) EtcdStatus(_ context.Context, node string) (*machineapi
 		return nil, err
 	}
 	return c.statuses[node], nil
+}
+
+func (c *fakeEtcdClient) EtcdAlarmList(_ context.Context, node string) (*machineapi.EtcdAlarmListResponse, error) {
+	if err, ok := c.alarmsErr[node]; ok {
+		return nil, err
+	}
+	return c.alarms[node], nil
 }
 
 func membersResponse(members ...*machineapi.EtcdMember) *machineapi.EtcdMemberListResponse {
@@ -73,6 +83,33 @@ func TestEtcdReaderMergesMembershipAndStatusByMemberID(t *testing.T) {
 	assert.True(t, follower.StatusKnown)
 	assert.False(t, follower.IsLeader)
 	assert.Equal(t, int64(90), follower.DBSize)
+}
+
+func TestEtcdReaderAttachesAlarmsToMembersByID(t *testing.T) {
+	roster := membersResponse(
+		&machineapi.EtcdMember{Id: 1, Hostname: "cp-1"},
+		&machineapi.EtcdMember{Id: 2, Hostname: "cp-2"},
+	)
+	client := &fakeEtcdClient{
+		members:  map[string]*machineapi.EtcdMemberListResponse{"cp-1": roster},
+		statuses: map[string]*machineapi.EtcdStatusResponse{},
+		alarms: map[string]*machineapi.EtcdAlarmListResponse{
+			"cp-1": {Messages: []*machineapi.EtcdAlarm{{MemberAlarms: []*machineapi.EtcdMemberAlarm{
+				{MemberId: 2, Alarm: machineapi.EtcdMemberAlarm_NOSPACE},
+			}}}},
+		},
+	}
+	reader := newEtcdReader(client)
+
+	set, err := reader.List(t.Context(), []string{"cp-1"})
+
+	require.NoError(t, err)
+	byHostname := map[string]domain.EtcdMemberSnapshot{}
+	for _, member := range set.Members {
+		byHostname[member.Hostname] = member
+	}
+	assert.Empty(t, byHostname["cp-1"].Alarms)
+	assert.Equal(t, []string{"NOSPACE"}, byHostname["cp-2"].Alarms)
 }
 
 func TestEtcdReaderTriesMemberListAgainstNextNodeOnFailure(t *testing.T) {

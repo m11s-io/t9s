@@ -27,7 +27,7 @@ func TestEtcdRenderSemanticColumns(t *testing.T) {
 	lines := strings.Split(rendered, "\n")
 	require.Len(t, lines, 3)
 	assert.Equal(t,
-		[]string{"MEMBER", "ROLE", "DB", "SIZE", "RAFT", "INDEX", "ERRORS"},
+		[]string{"MEMBER", "ROLE", "DB", "SIZE", "RAFT", "INDEX", "ERRORS", "ALARMS"},
 		strings.Fields(ansi.Strip(lines[0])),
 	)
 	assert.Contains(t, ansi.Strip(lines[1]), "cp-1")
@@ -35,6 +35,20 @@ func TestEtcdRenderSemanticColumns(t *testing.T) {
 	assert.Contains(t, ansi.Strip(lines[1]), "2.0 MiB")
 	assert.Contains(t, ansi.Strip(lines[2]), "cp-2")
 	assert.Contains(t, ansi.Strip(lines[2]), "?")
+}
+
+func TestEtcdRenderShowsAlarms(t *testing.T) {
+	state := application.EtcdState{
+		Status: application.Ready,
+		Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+			{Hostname: "cp-1", MemberID: 1, StatusKnown: true, Alarms: []string{"NOSPACE"}},
+		}},
+	}
+
+	rendered := ansi.Strip(renderEtcd(120, state))
+
+	assert.Contains(t, rendered, "ALARMS")
+	assert.Contains(t, rendered, "NOSPACE")
 }
 
 func TestEtcdRenderEmptyState(t *testing.T) {

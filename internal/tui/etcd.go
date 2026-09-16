@@ -141,6 +141,7 @@ var etcdColumns = []tableColumn[domain.EtcdMemberSnapshot]{
 	{header: "DB SIZE", minWidth: 10, value: etcdDBSize},
 	{header: "RAFT INDEX", minWidth: 12, value: etcdRaftIndex},
 	{header: "ERRORS", minWidth: 10, value: etcdErrors},
+	{header: "ALARMS", minWidth: 10, value: etcdAlarms},
 }
 
 func etcdRole(member domain.EtcdMemberSnapshot) string {
@@ -178,6 +179,13 @@ func etcdErrors(member domain.EtcdMemberSnapshot) string {
 		return "-"
 	}
 	return strings.Join(member.Errors, "; ")
+}
+
+func etcdAlarms(member domain.EtcdMemberSnapshot) string {
+	if len(member.Alarms) == 0 {
+		return "-"
+	}
+	return strings.Join(member.Alarms, "; ")
 }
 
 func formatBytes(value int64) string {

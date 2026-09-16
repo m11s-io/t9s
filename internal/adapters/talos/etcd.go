@@ -15,6 +15,7 @@ import (
 type etcdClient interface {
 	EtcdMemberList(ctx context.Context, node string, req *machineapi.EtcdMemberListRequest) (*machineapi.EtcdMemberListResponse, error)
 	EtcdStatus(ctx context.Context, node string) (*machineapi.EtcdStatusResponse, error)
+	EtcdAlarmList(ctx context.Context, node string) (*machineapi.EtcdAlarmListResponse, error)
 }
 
 type machineryEtcdClient struct{ client *talosclient.Client }
@@ -25,6 +26,10 @@ func (c machineryEtcdClient) EtcdMemberList(ctx context.Context, node string, re
 
 func (c machineryEtcdClient) EtcdStatus(ctx context.Context, node string) (*machineapi.EtcdStatusResponse, error) {
 	return c.client.EtcdStatus(talosclient.WithNode(ctx, node))
+}
+
+func (c machineryEtcdClient) EtcdAlarmList(ctx context.Context, node string) (*machineapi.EtcdAlarmListResponse, error) {
+	return c.client.EtcdAlarmList(talosclient.WithNode(ctx, node))
 }
 
 type etcdReader struct {
@@ -76,6 +81,8 @@ func (r *etcdReader) List(ctx context.Context, controlPlaneNodes []string) (doma
 		return domain.EtcdSet{}, err
 	}
 
+	r.applyAlarms(ctx, controlPlaneNodes, members, byID)
+
 	sort.SliceStable(members, func(i, j int) bool {
 		return members[i].Hostname < members[j].Hostname
 	})
@@ -113,6 +120,33 @@ func (r *etcdReader) fetchMembership(ctx context.Context, controlPlaneNodes []st
 		lastErr = fmt.Errorf("no control-plane nodes available for etcd member list")
 	}
 	return nil, fmt.Errorf("list etcd members: %w", lastErr)
+}
+
+// applyAlarms attaches cluster-wide etcd alarms (NOSPACE, CORRUPT, ...) to
+// their members by ID. Alarms are cluster-wide, so the first reachable
+// control-plane node is enough and a failure degrades silently like status.
+func (r *etcdReader) applyAlarms(ctx context.Context, controlPlaneNodes []string, members []domain.EtcdMemberSnapshot, byID map[uint64]int) {
+	for _, node := range controlPlaneNodes {
+		response, err := r.client.EtcdAlarmList(ctx, node)
+		if err != nil {
+			continue
+		}
+		for _, message := range response.GetMessages() {
+			for _, alarm := range message.GetMemberAlarms() {
+				index, ok := byID[alarm.GetMemberId()]
+				if !ok {
+					continue
+				}
+				name := alarm.GetAlarm().String()
+				if name == "" || alarm.GetAlarm() == machineapi.EtcdMemberAlarm_NONE {
+					continue
+				}
+				members[index].Alarms = append(members[index].Alarms, name)
+			}
+		}
+
+		return
+	}
 }
 
 func (r *etcdReader) applyStatus(ctx context.Context, node string, members []domain.EtcdMemberSnapshot, byID map[uint64]int) {

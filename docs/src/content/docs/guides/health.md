@@ -7,6 +7,8 @@ description: Explainable cluster health with :overview and :problems.
 
 Diagnoses are deterministic and cite evidence: each one has a severity, a short summary, the resource it's about, and a stable rule identity, so "unhealthy" is always traceable back to why.
 
+Active etcd alarms (`NOSPACE`, `CORRUPT`, and future alarm types) are treated as critical `etcd-member-alarmed` diagnoses — a `NOSPACE` alarm makes the cluster read-only until it is cleared — and are also shown in the `:etcd` view's `ALARMS` column.
+
 ## `:overview`
 
 A compact per-resource-kind breakdown — for example `NODES: 2/3 healthy, 1 warning, 0 critical` — plus the top critical diagnoses inline as a preview. Read-only, no per-row selection; use `:problems` to drill into individual issues.

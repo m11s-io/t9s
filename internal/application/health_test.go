@@ -124,6 +124,23 @@ func TestEvaluateHealthEtcdMemberUnhealthyRule(t *testing.T) {
 	assert.Equal(t, "etcd-member", diagnoses[0].ResourceKind)
 }
 
+func TestEvaluateHealthEtcdMemberAlarmedRule(t *testing.T) {
+	model := application.Model{
+		Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+			{Hostname: "cp-1", MemberID: 1, StatusKnown: true},
+			{Hostname: "cp-2", MemberID: 2, StatusKnown: true, Alarms: []string{"NOSPACE"}},
+		}}},
+	}
+
+	diagnoses := application.EvaluateHealth(model)
+
+	require.Len(t, diagnoses, 1)
+	assert.Equal(t, "etcd-member-alarmed", diagnoses[0].RuleID)
+	assert.Equal(t, domain.SeverityCritical, diagnoses[0].Severity)
+	assert.Equal(t, "cp-2", diagnoses[0].ResourceName)
+	assert.Contains(t, diagnoses[0].Evidence, "NOSPACE")
+}
+
 func TestEvaluateHealthSkipsCollectionsNotYetLoaded(t *testing.T) {
 	model := application.Model{
 		Nodes: application.NodeState{Status: application.Loading, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
