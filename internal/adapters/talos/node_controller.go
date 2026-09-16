@@ -131,11 +131,13 @@ func deriveUpgradeImage(declaredImage, runningTag string) string {
 	return declaredImage + ":" + runningTag
 }
 
-// The v1.13.3 machinery module does not expose ImageFactorySchematic. Until
-// t9s upgrades that SDK, ExtensionStatus's schematic metadata is the supported
-// compatibility source for a live schematic-preserving installer suggestion.
+// installImageLookup resolves the schematic-preserving installer suggestion.
+// Talos v1.14+ publishes the authoritative ImageFactorySchematic resource;
+// pre-v1.14 nodes only expose ExtensionStatus's schematic metadata, which
+// remains the compatibility fallback.
 type installImageLookup interface {
 	declaredInstallImage(context.Context) (string, error)
+	imageFactorySchematic(context.Context) (string, string, string, error)
 	schematicMetadata(context.Context) (string, string, error)
 	platform(context.Context) (string, error)
 	runningTalosVersion(context.Context) (string, error)
@@ -148,13 +150,20 @@ func (c machineryNodeControlClient) CurrentInstallImage(ctx context.Context) (st
 }
 
 func currentInstallImage(ctx context.Context, lookup installImageLookup) (string, error) {
-	// ExtensionStatus supplies the factory URL and live schematic ID, while
-	// PlatformMetadata supplies the canonical Image Factory installer flavor.
-	author, schematicID, _ := lookup.schematicMetadata(ctx)
-	platform, _ := lookup.platform(ctx)
 	declaredImage, declaredErr := lookup.declaredInstallImage(ctx)
 	runningTag, versionErr := lookup.runningTalosVersion(ctx)
 	if versionErr == nil {
+		// ImageFactorySchematic is the authoritative v1.14+ source.
+		if schematicID, flavor, apiURL, err := lookup.imageFactorySchematic(ctx); err == nil {
+			if image := deriveSchematicInstallerImage(apiURL, flavor, schematicID, runningTag); image != "" {
+				return image, nil
+			}
+		}
+		// Fallback for pre-v1.14 nodes: ExtensionStatus supplies the factory
+		// URL and live schematic ID, while PlatformMetadata supplies the
+		// canonical Image Factory installer flavor.
+		author, schematicID, _ := lookup.schematicMetadata(ctx)
+		platform, _ := lookup.platform(ctx)
 		if image := deriveSchematicInstallerImage(parseSchematicFactoryURL(author), platform, schematicID, runningTag); image != "" {
 			return image, nil
 		}
@@ -182,6 +191,20 @@ func (l machineryInstallImageLookup) declaredInstallImage(ctx context.Context) (
 	}
 
 	return cfg.Provider().Machine().Install().Image(), nil
+}
+
+func (l machineryInstallImageLookup) imageFactorySchematic(ctx context.Context) (string, string, string, error) {
+	schematic, err := safe.StateGet[*runtimeresource.ImageFactorySchematic](
+		ctx, l.client.COSI,
+		resource.NewMetadata(runtimeresource.NamespaceName, runtimeresource.ImageFactorySchematicType, runtimeresource.ImageFactorySchematicID, resource.VersionUndefined),
+	)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	spec := schematic.TypedSpec()
+
+	return spec.SchematicID, spec.Flavor, spec.APIURL, nil
 }
 
 func (l machineryInstallImageLookup) schematicMetadata(ctx context.Context) (string, string, error) {

@@ -49,10 +49,19 @@ type fakeInstallImageLookup struct {
 	platformErr  error
 	version      string
 	versionErr   error
+	// ImageFactorySchematic COSI resource (Talos v1.14+).
+	factorySchematic string
+	factoryFlavor    string
+	factoryAPIURL    string
+	factoryErr       error
 }
 
 func (f fakeInstallImageLookup) declaredInstallImage(context.Context) (string, error) {
 	return f.declared, f.declaredErr
+}
+
+func (f fakeInstallImageLookup) imageFactorySchematic(context.Context) (string, string, string, error) {
+	return f.factorySchematic, f.factoryFlavor, f.factoryAPIURL, f.factoryErr
 }
 
 func (f fakeInstallImageLookup) schematicMetadata(context.Context) (string, string, error) {
@@ -79,6 +88,52 @@ func TestCurrentInstallImageUsesCanonicalFactoryMetadata(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "factory.talos.dev/metal-installer/"+schematic+":v1.13.4", image)
+}
+
+func TestCurrentInstallImagePrefersImageFactorySchematic(t *testing.T) {
+	const liveSchematic = "75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673"
+	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
+		declared:         "ghcr.io/siderolabs/installer:v1.13.0",
+		author:           "Image Factory (https://factory.talos.dev/)",
+		schematic:        "legacy-schematic",
+		platformName:     "metal",
+		version:          "v1.14.1",
+		factorySchematic: liveSchematic,
+		factoryFlavor:    "metal",
+		factoryAPIURL:    "https://factory.talos.dev/",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "factory.talos.dev/metal-installer/"+liveSchematic+":v1.14.1", image)
+}
+
+func TestCurrentInstallImageFallsBackToExtensionStatusWhenSchematicResourceAbsent(t *testing.T) {
+	const legacySchematic = "75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673"
+	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
+		author:       "Image Factory (https://factory.talos.dev/)",
+		schematic:    legacySchematic,
+		platformName: "metal",
+		version:      "v1.14.1",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "factory.talos.dev/metal-installer/"+legacySchematic+":v1.14.1", image)
+}
+
+func TestCurrentInstallImageFallsBackToExtensionStatusForInvalidSchematicResource(t *testing.T) {
+	const legacySchematic = "75859b9f9a0bc974287be95a622cc7db6f642581a51435cb87eab7e07df8e673"
+	image, err := currentInstallImage(t.Context(), fakeInstallImageLookup{
+		author:           "Image Factory (https://factory.talos.dev/)",
+		schematic:        legacySchematic,
+		platformName:     "metal",
+		version:          "v1.14.1",
+		factorySchematic: "live",
+		factoryFlavor:    "metal",
+		factoryAPIURL:    "http://factory.talos.dev/",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "factory.talos.dev/metal-installer/"+legacySchematic+":v1.14.1", image)
 }
 
 func TestCurrentInstallImageFallsBackToDeclaredImageForInvalidFactoryMetadata(t *testing.T) {
