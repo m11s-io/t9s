@@ -17,10 +17,37 @@ const (
 	RebootPowercycle
 )
 
+// WipeMode selects which class of storage a reset erases.
+type WipeMode int
+
+const (
+	// WipeModeAll erases the system disk and every user disk.
+	WipeModeAll WipeMode = iota
+	// WipeModeSystemDisk erases only the system disk.
+	WipeModeSystemDisk
+	// WipeModeUserDisks erases only user disks.
+	WipeModeUserDisks
+)
+
+// ResetOptions describes a node reset/wipe. SystemPartitions is left empty in
+// normal use: the disks reader exposes whole disks only, so an empty list
+// means "all system partitions", which is the machinery default.
+type ResetOptions struct {
+	Mode             WipeMode
+	Graceful         bool     // leave etcd before reset
+	Reboot           bool     // true = reboot, false = halt
+	SystemPartitions []string // partition labels; empty = all system partitions
+	// UserDisks are device paths exactly as the disk inventory reports them
+	// (for example /dev/sdb). Talos wipes only listed user disks and never
+	// auto-enumerates, so an empty list means no user disk is erased.
+	UserDisks []string
+}
+
 type NodeController interface {
 	Reboot(ctx context.Context, target string, mode RebootMode) error
 	Shutdown(ctx context.Context, target string, force bool) error
 	Rollback(ctx context.Context, target string) error
+	Reset(ctx context.Context, target string, options ResetOptions) error
 	Upgrade(ctx context.Context, target, image string) error
 	UpgradeStream(ctx context.Context, target, image string) UpgradeStream
 	CurrentInstallImage(ctx context.Context, target string) (string, error)

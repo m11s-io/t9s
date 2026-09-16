@@ -364,6 +364,7 @@ const (
 	ActionShutdown ActionKind = "shutdown"
 	ActionRollback ActionKind = "rollback"
 	ActionUpgrade  ActionKind = "upgrade"
+	ActionReset    ActionKind = "reset"
 )
 
 type PendingAction struct {
@@ -375,6 +376,13 @@ type PendingAction struct {
 	// not an advisory warning.
 	Blocked string
 	Image   string
+	// Reset carries the wipe options for ActionReset; ResetPreview is the
+	// display-only disk classification shown with the pending prompt.
+	Reset        *ports.ResetOptions
+	ResetPreview *ResetPreview
+	// Confirmation records the typed token that was accepted, for audit and
+	// rendering.
+	Confirmation string
 }
 
 type ActionResult struct {
@@ -404,9 +412,36 @@ type RequestAction struct {
 	Kind    ActionKind
 	Targets []string
 	Image   string
+	Reset   *ports.ResetOptions
+	// Preview carries the disk preview the reset overlay loaded, so the
+	// reducer evaluates the real inventory instead of re-reading :disks.
+	Preview      map[string]ResetPreview
+	Confirmation string
 }
 
 func (RequestAction) applicationMessage() {}
+
+// RequestResetPrompt opens the reset overlay for the given targets. The
+// reducer builds a preview-loading effect so the overlay can show the disk
+// scope and risk before the operator types the confirmation token.
+type RequestResetPrompt struct {
+	Targets []string
+}
+
+func (RequestResetPrompt) applicationMessage() {}
+
+// ResetPromptOpened delivers the preview and risk assessment for the reset
+// overlay. A late message is ignored by the TUI when its generation is stale
+// or a confirm is already open.
+type ResetPromptOpened struct {
+	Generation uint64
+	Targets    []string
+	Preview    map[string]ResetPreview
+	Warning    string
+	Blocked    string
+}
+
+func (ResetPromptOpened) applicationMessage() {}
 
 type ConfirmPendingAction struct{}
 

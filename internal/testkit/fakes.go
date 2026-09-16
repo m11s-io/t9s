@@ -33,6 +33,7 @@ type FakeNodeController struct {
 	RebootFunc              func(ctx context.Context, target string, mode ports.RebootMode) error
 	ShutdownFunc            func(ctx context.Context, target string, force bool) error
 	RollbackFunc            func(ctx context.Context, target string) error
+	ResetFunc               func(ctx context.Context, target string, options ports.ResetOptions) error
 	UpgradeFunc             func(ctx context.Context, target, image string) error
 	UpgradeStreamFunc       func(ctx context.Context, target, image string) ports.UpgradeStream
 	CurrentInstallImageFunc func(ctx context.Context, target string) (string, error)
@@ -49,6 +50,13 @@ func (f *FakeNodeController) Shutdown(ctx context.Context, target string, force 
 
 func (f *FakeNodeController) Rollback(ctx context.Context, target string) error {
 	return f.RollbackFunc(ctx, target)
+}
+
+func (f *FakeNodeController) Reset(ctx context.Context, target string, options ports.ResetOptions) error {
+	if f.ResetFunc == nil {
+		return nil
+	}
+	return f.ResetFunc(ctx, target, options)
 }
 
 func (f *FakeNodeController) Upgrade(ctx context.Context, target, image string) error {

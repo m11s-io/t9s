@@ -14,6 +14,176 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
+// ResetPreview classifies a node's disks for the reset overlay. Known is
+// false when the disks reader returned no inventory for the node, in which
+// case the caller must never guess at the wipe scope.
+type ResetPreview struct {
+	Node       string
+	SystemDisk string   // device name of the system disk, "" if none/unknown
+	UserDisks  []string // non-system device names
+	Known      bool
+	Err        string
+}
+
+// BuildResetPreview classifies a disk set into system and user disks. It is
+// pure so the classification is unit-testable and the reducer stays clock-free.
+func BuildResetPreview(node string, set domain.DiskSet) ResetPreview {
+	preview := ResetPreview{Node: node}
+	if len(set.Disks) == 0 {
+		return preview
+	}
+	preview.Known = true
+	for _, disk := range set.Disks {
+		if disk.SystemDisk {
+			if preview.SystemDisk == "" {
+				preview.SystemDisk = disk.DeviceName
+			}
+			continue
+		}
+		// Read-only devices (CD-ROMs, ISOs) cannot be wiped, and Talos
+		// rejects the whole reset request if any listed user disk is
+		// read-only, so never enumerate them as wipe targets.
+		if disk.ReadOnly {
+			continue
+		}
+		preview.UserDisks = append(preview.UserDisks, disk.DeviceName)
+	}
+	return preview
+}
+
+// ResetConfirmationToken is the exact string an operator must type to open a
+// reset: the single target's name, or "wipe N nodes" for a bulk reset. The
+// typed-intent step complements the gated (y/n) confirm that still
+// re-evaluates quorum at confirm time.
+func ResetConfirmationToken(targets []string) string {
+	switch len(targets) {
+	case 0:
+		return ""
+	case 1:
+		return targets[0]
+	default:
+		return fmt.Sprintf("wipe %d nodes", len(targets))
+	}
+}
+
+// ValidateResetConfirmation reports whether the typed token matches the
+// target set. It rejects an empty target list outright.
+func ValidateResetConfirmation(targets []string, typed string) error {
+	if len(targets) == 0 {
+		return fmt.Errorf("no reset targets")
+	}
+	token := ResetConfirmationToken(targets)
+	if strings.TrimSpace(typed) != token {
+		return fmt.Errorf("type %q to confirm this reset", token)
+	}
+	return nil
+}
+
+// resetQuorumBlockReason is the reset-specific hard gate. Unlike
+// etcdQuorumBlockReason it also refuses a control-plane reset while the etcd
+// snapshot is unavailable: a destructive wipe of a member whose quorum impact
+// is unknown is never authorized. It reuses the shared assessEtcdQuorum
+// arithmetic.
+func resetQuorumBlockReason(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string) string {
+	if !targetsIncludeControlPlane(nodes, targets) {
+		return ""
+	}
+	assessment := assessEtcdQuorum(etcd, targets)
+	if !assessment.known {
+		return "refusing: " + assessment.reason
+	}
+	// A reset is irreversible, so an unknown peer is treated as lost (the
+	// pessimistic predicate), matching membership removal rather than the
+	// optimistic gate used for reboots.
+	if assessment.belowQuorum() {
+		return fmt.Sprintf("refusing: would drop etcd to %d/%d — below quorum (need %d)", assessment.remaining, assessment.voters, assessment.floor)
+	}
+	return ""
+}
+
+// resetPreviewFor picks the disk preview for a reset from the currently loaded
+// disks view. It returns nil when no target matches the loaded node, so the
+// caller treats the inventory as unknown rather than guessing.
+func resetPreviewFor(model Model, targets []string) *ResetPreview {
+	if model.Disks.Status != Ready {
+		return nil
+	}
+	for _, target := range targets {
+		if model.Disks.Node == target {
+			preview := BuildResetPreview(target, model.Disks.Value)
+			return &preview
+		}
+	}
+	return nil
+}
+
+// resetActionRisk computes the advisory warning and quorum hard block for a
+// reset. Disk-scope blocking is separate (resetScope). The control-plane
+// quorum gate applies to every reset of a control-plane target, graceful or
+// not.
+func resetActionRisk(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string, options ports.ResetOptions) (string, string) {
+	warning := computeActionWarning(nodes, etcd, targets)
+	if options.Graceful {
+		warning = appendWarning(warning, "node(s) leave etcd before reset")
+	}
+	return warning, resetQuorumBlockReason(nodes, etcd, targets)
+}
+
+// resetScope resolves the user disks a reset will actually erase and reports
+// why the selected mode cannot be honored. Talos never auto-enumerates user
+// disks: it wipes only those listed in UserDisksToWipe, so t9s must list them
+// or the erase silently does nothing. Enumeration is per node, so the modes
+// that erase user disks are single-target only.
+func resetScope(targets []string, options ports.ResetOptions, preview *ResetPreview) ([]string, string) {
+	switch options.Mode {
+	case ports.WipeModeSystemDisk:
+		// System partitions are wiped without a user-disk list.
+		return nil, ""
+	case ports.WipeModeUserDisks:
+		if len(targets) != 1 {
+			return nil, "refusing: user-disk wipe is single-node only"
+		}
+		if preview == nil || !preview.Known {
+			return nil, "refusing: user disk inventory unknown"
+		}
+		if len(preview.UserDisks) == 0 {
+			return nil, "refusing: no user disks discovered"
+		}
+		return append([]string(nil), preview.UserDisks...), ""
+	default: // WipeModeAll
+		if len(targets) != 1 {
+			return nil, "refusing: all-disk wipe is single-node only"
+		}
+		if preview == nil || !preview.Known {
+			return nil, "refusing: user disk inventory unknown"
+		}
+		return append([]string(nil), preview.UserDisks...), ""
+	}
+}
+
+// resetModeBlockReason re-derives the disk-scope block for an already-open
+// pending reset, so a confirm re-evaluates it alongside quorum.
+func resetModeBlockReason(targets []string, options ports.ResetOptions, preview *ResetPreview) string {
+	_, block := resetScope(targets, options, preview)
+	return block
+}
+
+// resetPreviewFrom picks the disk preview for a reset: the one the overlay
+// loaded when present, otherwise the currently loaded :disks view. Only a
+// single target can be previewed.
+func resetPreviewFrom(model Model, targets []string, previews map[string]ResetPreview) *ResetPreview {
+	if len(targets) != 1 {
+		return nil
+	}
+	if previews != nil {
+		if preview, ok := previews[targets[0]]; ok {
+			copied := preview
+			return &copied
+		}
+	}
+	return resetPreviewFor(model, targets)
+}
+
 func computeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string) string {
 	if !targetsIncludeControlPlane(nodes, targets) {
 		return ""
@@ -131,6 +301,14 @@ func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
 // node action against the current snapshot, so a prompt opened while the
 // cluster was healthy is still refused if etcd degraded in the meantime.
 func pendingActionBlockReason(model Model, pending PendingAction) string {
+	if pending.Kind == ActionReset {
+		if pending.Reset != nil {
+			if block := resetModeBlockReason(pending.Targets, *pending.Reset, pending.ResetPreview); block != "" {
+				return block
+			}
+		}
+		return resetQuorumBlockReason(model.Nodes.Value.Nodes, model.Etcd, pending.Targets)
+	}
 	if !targetsIncludeControlPlane(model.Nodes.Value.Nodes, pending.Targets) {
 		return ""
 	}
@@ -447,6 +625,12 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 			err = controller.Shutdown(ctx, target, false)
 		case ActionRollback:
 			err = controller.Rollback(ctx, target)
+		case ActionReset:
+			if pending.Reset == nil {
+				err = fmt.Errorf("reset options are not configured")
+			} else {
+				err = controller.Reset(ctx, target, *pending.Reset)
+			}
 		case ActionUpgrade:
 			err = fmt.Errorf("upgrade action did not use its stream bridge")
 		default:

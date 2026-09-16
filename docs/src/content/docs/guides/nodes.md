@@ -27,6 +27,26 @@ For Talos versions supporting `LifecycleService`, the notice area streams image 
 
 A parseable target tag more than one minor ahead receives an advisory warning that intermediate Talos minor releases are skipped. Talos remains the authority for compatibility checks. This action upgrades Talos only; Kubernetes control-plane upgrades are separate.
 
+## Reset/wipe a Talos node
+
+Start t9s with `--enable-writes` (or `T9S_ENABLE_WRITES`) before using reset. On a selected node (or the marked nodes), press `W`. A content-area overlay opens with the disk preview and risk text; choose the wipe scope, whether the node leaves etcd first (graceful), and whether the node reboots or halts. Then type the confirmation token and press `Enter`. The accepted reset still passes through the final `(y/n)` confirm, which re-evaluates etcd quorum against the current snapshot.
+
+Wipe scope options:
+
+- `ALL` erases the system disk and every discovered user disk (the default). It is single-node only, because the user-disk inventory is per node.
+- `SYSTEM_DISK` erases only the system disk and is bulk-safe (it never touches user disks).
+- `USER_DISKS` erases every discovered user disk, and is refused when the inventory is unknown, when no user disk is discovered, or for a bulk reset — so t9s never guesses which disks to erase.
+
+The confirmation token is the single target's node name, or `wipe N nodes` for a bulk reset. This typed-intent step happens before the gated confirm: the final `(y/n)` is retained because quorum must be re-evaluated at confirm time.
+
+Safety rules:
+
+- Every reset of a control-plane node is hard-gated on etcd quorum, graceful or not. A reset is refused when the target is the last known quorum holder, or when the etcd snapshot is unavailable so the impact is unknown.
+- `ALL` and `USER_DISKS` are refused when the disk inventory is unknown or for a bulk reset, because Talos wipes only the user disks t9s explicitly enumerates. `SYSTEM_DISK` remains available in those cases because it does not touch user disks.
+- The disk preview classifies whole disks only. The disks reader does not expose individual partitions, so system-partition granularity is not selectable; `ALL`/`SYSTEM_DISK` reset the entire system disk.
+- Read-only devices (for example CD-ROMs or ISOs) are never enumerated as wipe targets, because Talos refuses the whole reset request when any listed user disk is read-only.
+- A reset that reboots the node may return a connection error after it actually succeeded. The failure text is generic and the action is not retried.
+
 ## Kubernetes correlation
 
 When the active Talos context's name exactly matches a context name in your kubeconfig, `t9s` automatically enriches each node with its corresponding Kubernetes Node: a `K8S` column (`Ready`/`NotReady`/`Unknown`) in the table, and a `KUBERNETES` block (roles, kubelet version, conditions) in node detail.

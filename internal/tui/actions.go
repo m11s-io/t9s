@@ -41,6 +41,7 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 					actionHint{Key: "R", Label: "Reboot"},
 					actionHint{Key: "X", Label: "Shutdown"},
 					actionHint{Key: "B", Label: "Rollback"},
+					actionHint{Key: "W", Label: "Reset"},
 					actionHint{Key: "U", Label: "Upgrade"},
 				)
 			}

@@ -159,6 +159,13 @@ type fakeNodeControlClient struct {
 	upgradeErr      error
 	currentImage    string
 	currentImageErr error
+	resetReq        *machineapi.ResetRequest
+	resetErr        error
+}
+
+func (c *fakeNodeControlClient) ResetGeneric(ctx context.Context, req *machineapi.ResetRequest) error {
+	c.resetReq = req
+	return c.resetErr
 }
 
 func (c *fakeNodeControlClient) Reboot(ctx context.Context, opts ...talosclient.RebootMode) error {

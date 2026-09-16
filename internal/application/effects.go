@@ -530,6 +530,41 @@ func requestUpgradeImage(controller ports.NodeController, target string, generat
 	}
 }
 
+// loadResetPreview reads each target's disk inventory and returns the overlay
+// preview plus the risk assessment for the default options. A read failure or
+// missing reader leaves that node's preview Known=false; the overlay still
+// opens so the operator sees the unknown scope rather than nothing.
+func loadResetPreview(reader ports.DiskReader, nodes []domain.NodeSnapshot, etcd EtcdState, targets []string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		previews := make(map[string]ResetPreview, len(targets))
+		for _, target := range targets {
+			if reader == nil {
+				previews[target] = ResetPreview{Node: target}
+				continue
+			}
+			set, err := reader.List(ctx, target)
+			if err != nil {
+				previews[target] = ResetPreview{Node: target, Err: err.Error()}
+				continue
+			}
+			previews[target] = BuildResetPreview(target, set)
+		}
+		// Only the mode-independent quorum block is shown up front; the disk
+		// scope depends on the mode the operator picks in the overlay, so the
+		// reducer re-derives it authoritatively (and surfaces any refusal) when
+		// the operator submits.
+		options := ports.ResetOptions{Mode: ports.WipeModeAll, Reboot: true}
+		warning, blocked := resetActionRisk(nodes, etcd, targets, options)
+		return ResetPromptOpened{
+			Generation: generation,
+			Targets:    append([]string(nil), targets...),
+			Preview:    previews,
+			Warning:    warning,
+			Blocked:    blocked,
+		}
+	}
+}
+
 func loadDisks(reader ports.DiskReader, node string, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {

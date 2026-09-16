@@ -44,6 +44,7 @@ type model struct {
 	contexts          contextsModel
 	upgradePrompt     *upgradePromptModel
 	snapshotPrompt    *snapshotPromptModel
+	resetPrompt       *resetPromptModel
 	notice            string
 	views             viewStack
 	splash            bool
@@ -216,7 +217,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
 			return m, m.command(effect)
 		}
-		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && m.snapshotPrompt == nil && !m.filtering() {
+		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && m.snapshotPrompt == nil && m.resetPrompt == nil && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			wasDmesg := m.views.top().Kind == viewDmesg
 			wasClusterHealth := m.views.top().Kind == viewClusterHealth
@@ -368,6 +369,33 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var command tea.Cmd
 			*m.snapshotPrompt, command = m.snapshotPrompt.update(message)
+			return m, command
+		}
+		if m.resetPrompt != nil {
+			switch key {
+			case "esc":
+				m.resetPrompt = nil
+				return m, nil
+			case "enter":
+				prompt := *m.resetPrompt
+				if err := application.ValidateResetConfirmation(prompt.targets, prompt.input.Value()); err != nil {
+					m.resetPrompt.err = err.Error()
+					return m, nil
+				}
+				options := prompt.options
+				m.resetPrompt = nil
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestAction{
+					Kind:         application.ActionReset,
+					Targets:      prompt.targets,
+					Reset:        &options,
+					Preview:      prompt.preview,
+					Confirmation: strings.TrimSpace(prompt.input.Value()),
+				})
+				return m, m.command(effect)
+			}
+			var command tea.Cmd
+			*m.resetPrompt, command = m.resetPrompt.update(message)
 			return m, command
 		}
 		switch key {
@@ -823,6 +851,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if key == "W" && m.writeActionsEnabled() && !m.nodes.filtering {
+			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestResetPrompt{Targets: targets})
+				return m, m.command(effect)
+			}
+		}
 		if key == "U" && m.writeActionsEnabled() && !m.nodes.filtering && m.upgradePrompt == nil {
 			if node, ok := m.nodes.selected(); ok {
 				var effect application.Effect
@@ -864,6 +899,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.nodes.marked = nil
 			m.upgradePrompt = nil
 			m.snapshotPrompt = nil
+			m.resetPrompt = nil
 			m.healthcheck = newHealthcheckModel(m.application.HealthCheck)
 		}
 		var effect application.Effect
@@ -920,6 +956,13 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			prompt := newUpgradePromptModel(opened.Target, opened.Image)
 			m.upgradePrompt = &prompt
 			promptFocus = m.upgradePrompt.input.Focus()
+		}
+		if opened, ok := message.message.(application.ResetPromptOpened); ok &&
+			opened.Generation == m.application.Generation &&
+			m.application.PendingAction == nil && m.application.PendingServiceAction == nil && m.application.PendingEtcdAction == nil &&
+			m.views.top().Kind == viewNodes {
+			prompt := newResetPromptModel(opened.Targets, opened.Preview, opened.Warning, opened.Blocked)
+			m.resetPrompt = &prompt
 		}
 		if opened, ok := message.message.(application.EtcdSnapshotPromptOpened); ok &&
 			opened.Generation == m.application.Generation &&
@@ -991,6 +1034,9 @@ func (m model) activeContent(size contentSize) string {
 
 	if m.contexts.active {
 		return renderResourceFrame(frame, m.contexts.viewSized(innerSize), m.styles.k9s)
+	}
+	if m.resetPrompt != nil {
+		return renderResourceFrame(frame, m.resetPrompt.view(innerSize), m.styles.k9s)
 	}
 
 	var view strings.Builder
@@ -1118,6 +1164,9 @@ func (m model) activePrompt() string {
 	}
 	if m.snapshotPrompt != nil {
 		return m.snapshotPrompt.view()
+	}
+	if m.resetPrompt != nil {
+		return ""
 	}
 	if prompt := m.palette.view(); prompt != "" {
 		return prompt

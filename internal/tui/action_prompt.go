@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 // pendingActionWarningBudget bounds how many runes of a PendingAction.Warning
@@ -45,6 +46,7 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
 	}
 	verb := "Reboot"
+	suffix := ""
 	switch pending.Kind {
 	case application.ActionShutdown:
 		verb = "Shutdown"
@@ -52,6 +54,9 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 		verb = "Rollback"
 	case application.ActionUpgrade:
 		verb = "Upgrade to " + truncateWarningTail(pending.Image, 24)
+	case application.ActionReset:
+		verb = "Reset"
+		suffix = resetPendingSuffix(pending)
 	}
 	if pending.Warning != "" {
 		warning := truncateWarningTail(pending.Warning, pendingActionWarningBudget)
@@ -59,9 +64,25 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 		if pending.Kind == application.ActionUpgrade && len(pending.Targets) == 1 {
 			target = pending.Targets[0]
 		}
-		return fmt.Sprintf("!! %s — %s %s? (y/n)", warning, verb, target)
+		return fmt.Sprintf("!! %s — %s%s %s? (y/n)", warning, verb, suffix, target)
 	}
-	return verb + " " + strings.Join(pending.Targets, ", ") + "? (y/n)"
+	return verb + " " + strings.Join(pending.Targets, ", ") + suffix + "? (y/n)"
+}
+
+// resetPendingSuffix labels the wipe scope in the footer so the mode the
+// operator chose is visible at the final confirm, not only in the overlay.
+func resetPendingSuffix(pending application.PendingAction) string {
+	if pending.Reset == nil {
+		return ""
+	}
+	switch pending.Reset.Mode {
+	case ports.WipeModeSystemDisk:
+		return " (system disk)"
+	case ports.WipeModeUserDisks:
+		return " (user disks)"
+	default:
+		return " (all disks)"
+	}
 }
 
 func renderPendingEtcdActionPrompt(pending application.PendingEtcdAction) string {

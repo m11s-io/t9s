@@ -57,6 +57,7 @@ type nodeControlClient interface {
 	Reboot(ctx context.Context, opts ...talosclient.RebootMode) error
 	Shutdown(ctx context.Context, opts ...talosclient.ShutdownOption) error
 	Rollback(ctx context.Context) error
+	ResetGeneric(ctx context.Context, req *machineapi.ResetRequest) error
 	Upgrade(ctx context.Context, opts ...talosclient.UpgradeOption) error
 	CurrentInstallImage(ctx context.Context) (string, error)
 }
@@ -105,6 +106,31 @@ func (c machineryNodeControlClient) Shutdown(ctx context.Context, opts ...talosc
 
 func (c machineryNodeControlClient) Rollback(ctx context.Context) error {
 	return c.client.Rollback(ctx)
+}
+
+func (c machineryNodeControlClient) ResetGeneric(ctx context.Context, req *machineapi.ResetRequest) error {
+	return c.client.ResetGeneric(ctx, req)
+}
+
+// resetRequestFor maps the normalized reset options onto the machinery request.
+// It is pure so the mapping is unit-testable without a live client.
+func resetRequestFor(options ports.ResetOptions) *machineapi.ResetRequest {
+	req := &machineapi.ResetRequest{
+		Graceful:        options.Graceful,
+		Reboot:          options.Reboot,
+		Mode:            machineapi.ResetRequest_ALL,
+		UserDisksToWipe: append([]string(nil), options.UserDisks...),
+	}
+	switch options.Mode {
+	case ports.WipeModeSystemDisk:
+		req.Mode = machineapi.ResetRequest_SYSTEM_DISK
+	case ports.WipeModeUserDisks:
+		req.Mode = machineapi.ResetRequest_USER_DISKS
+	}
+	for _, label := range options.SystemPartitions {
+		req.SystemPartitionsToWipe = append(req.SystemPartitionsToWipe, &machineapi.ResetPartitionSpec{Label: label, Wipe: true})
+	}
+	return req
 }
 
 func (c machineryNodeControlClient) Upgrade(ctx context.Context, opts ...talosclient.UpgradeOption) error {
@@ -299,6 +325,13 @@ func (c *nodeController) Shutdown(ctx context.Context, target string, force bool
 func (c *nodeController) Rollback(ctx context.Context, target string) error {
 	if err := c.client.Rollback(talosclient.WithNode(ctx, target)); err != nil {
 		return fmt.Errorf("rollback %s: %w", target, err)
+	}
+	return nil
+}
+
+func (c *nodeController) Reset(ctx context.Context, target string, options ports.ResetOptions) error {
+	if err := c.client.ResetGeneric(talosclient.WithNode(ctx, target), resetRequestFor(options)); err != nil {
+		return fmt.Errorf("reset %s: %w", target, err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package application
 import (
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
@@ -666,6 +667,39 @@ func Update(model Model, message Message) (Model, Effect) {
 		if !model.WritesEnabled || model.Upgrade.Active || len(message.Targets) == 0 || message.Kind == ActionUpgrade && len(message.Targets) != 1 {
 			return model, nil
 		}
+		if message.Kind == ActionReset {
+			// Defense in depth: the TUI validates the typed token first, but the
+			// reducer is the last line of defense against a cluster-mutating
+			// action and must not trust it.
+			confirmation := strings.TrimSpace(message.Confirmation)
+			if message.Reset == nil || confirmation != ResetConfirmationToken(message.Targets) {
+				return model, nil
+			}
+			preview := resetPreviewFrom(model, message.Targets, message.Preview)
+			// Resolve the user disks the reset will actually erase; Talos wipes
+			// only the disks explicitly listed, so an empty list means the
+			// user-disk modes do nothing.
+			userDisks, scopeBlock := resetScope(message.Targets, *message.Reset, preview)
+			effective := *message.Reset
+			effective.UserDisks = userDisks
+			warning, quorumBlock := resetActionRisk(model.Nodes.Value.Nodes, model.Etcd, message.Targets, effective)
+			blocked := scopeBlock
+			if blocked == "" {
+				blocked = quorumBlock
+			}
+			model.PendingAction = &PendingAction{
+				Kind:         ActionReset,
+				Targets:      append([]string(nil), message.Targets...),
+				Warning:      warning,
+				Blocked:      blocked,
+				Reset:        &effective,
+				ResetPreview: preview,
+				Confirmation: confirmation,
+			}
+			model.ActionResults = nil
+			model.ActionTotal = 0
+			return model, nil
+		}
 		blocked := ""
 		if targetsIncludeControlPlane(model.Nodes.Value.Nodes, message.Targets) {
 			blocked = etcdQuorumBlockReason(model.Etcd, message.Targets)
@@ -705,6 +739,18 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		model.ActionResults = nil
 		model.ActionTotal = 0
+		return model, nil
+
+	case RequestResetPrompt:
+		// Writes-gated like every other mutation path. The preview is loaded by
+		// an effect so the overlay can show the disk scope before the operator
+		// commits to a wipe.
+		if !model.WritesEnabled || model.Upgrade.Active || len(message.Targets) == 0 {
+			return model, nil
+		}
+		return model, loadResetPreview(model.diskReader, model.Nodes.Value.Nodes, model.Etcd, message.Targets, model.Generation)
+
+	case ResetPromptOpened:
 		return model, nil
 
 	case RequestUpgradePrompt:
