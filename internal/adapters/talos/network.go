@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
@@ -79,6 +80,49 @@ func isInetFamily(family nethelpers.Family) bool {
 	return family == nethelpers.FamilyInet4 || family == nethelpers.FamilyInet6
 }
 
+// routeGateway resolves a route's gateway. Native multipath (ECMP) routes
+// leave the top-level Gateway unset and carry their next-hops instead, so the
+// next-hop gateways are joined for display rather than rendered blank.
+func routeGateway(spec *network.RouteStatusSpec) string {
+	if spec.Gateway.IsValid() {
+		return spec.Gateway.String()
+	}
+	gateways := make([]string, 0, len(spec.NextHops))
+	for _, hop := range spec.NextHops {
+		if hop.Gateway.IsValid() {
+			gateways = append(gateways, hop.Gateway.String())
+		}
+	}
+
+	return strings.Join(gateways, ", ")
+}
+
+// routeLinkNames resolves the link(s) a route belongs to. Multipath routes
+// leave OutLinkName unset and name a link per next-hop, so each distinct
+// next-hop link must receive the route or it disappears from every link view.
+func routeLinkNames(spec *network.RouteStatusSpec) []string {
+	if spec.OutLinkName != "" {
+		return []string{spec.OutLinkName}
+	}
+	seen := make(map[string]struct{}, len(spec.NextHops))
+	names := make([]string, 0, len(spec.NextHops))
+	for _, hop := range spec.NextHops {
+		if hop.OutLinkName == "" {
+			continue
+		}
+		if _, ok := seen[hop.OutLinkName]; ok {
+			continue
+		}
+		seen[hop.OutLinkName] = struct{}{}
+		names = append(names, hop.OutLinkName)
+	}
+	if len(names) == 0 {
+		return []string{""}
+	}
+
+	return names
+}
+
 func (r *networkReader) List(ctx context.Context, node string) (domain.NetworkSet, error) {
 	links, err := r.client.Links(ctx, node)
 	if err != nil {
@@ -111,15 +155,15 @@ func (r *networkReader) List(ctx context.Context, node string) (domain.NetworkSe
 		if !isInetFamily(spec.Family) {
 			continue
 		}
-		gateway := ""
-		if spec.Gateway.IsValid() {
-			gateway = spec.Gateway.String()
+		gateway := routeGateway(spec)
+		table := spec.Table.String()
+		for _, linkName := range routeLinkNames(spec) {
+			routesByLink[linkName] = append(routesByLink[linkName], domain.NetworkRoute{
+				Destination: spec.Destination.String(),
+				Gateway:     gateway,
+				Table:       table,
+			})
 		}
-		routesByLink[spec.OutLinkName] = append(routesByLink[spec.OutLinkName], domain.NetworkRoute{
-			Destination: spec.Destination.String(),
-			Gateway:     gateway,
-			Table:       spec.Table.String(),
-		})
 	}
 
 	snapshots := make([]domain.LinkSnapshot, len(links))

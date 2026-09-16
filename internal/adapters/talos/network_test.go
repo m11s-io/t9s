@@ -101,6 +101,56 @@ func TestNetworkReaderListFiltersNonInetAddressFamilies(t *testing.T) {
 	assert.Empty(t, set.Links[0].Addresses)
 }
 
+func TestNetworkReaderAttachesSingleGatewayRoute(t *testing.T) {
+	route := network.NewRouteStatus(network.NamespaceName, "default")
+	*route.TypedSpec() = network.RouteStatusSpec{
+		Family:      nethelpers.FamilyInet4,
+		Destination: netip.MustParsePrefix("0.0.0.0/0"),
+		Gateway:     netip.MustParseAddr("10.0.0.1"),
+		OutLinkName: "eth0",
+		Table:       nethelpers.RoutingTable(254),
+	}
+	client := &fakeNetworkClient{
+		links:  []*network.LinkStatus{newTestLink("eth0", 1500)},
+		routes: []*network.RouteStatus{route},
+	}
+	reader := newNetworkReader(client)
+
+	set, err := reader.List(t.Context(), "cp-1")
+
+	require.NoError(t, err)
+	require.Len(t, set.Links, 1)
+	require.Len(t, set.Links[0].Routes, 1)
+	assert.Equal(t, "10.0.0.1", set.Links[0].Routes[0].Gateway)
+}
+
+func TestNetworkReaderAttachesMultipathRouteToNextHopLinks(t *testing.T) {
+	route := network.NewRouteStatus(network.NamespaceName, "multipath")
+	*route.TypedSpec() = network.RouteStatusSpec{
+		Family:      nethelpers.FamilyInet4,
+		Destination: netip.MustParsePrefix("10.10.0.0/16"),
+		Table:       nethelpers.RoutingTable(254),
+		NextHops: []network.RouteNextHop{
+			{Gateway: netip.MustParseAddr("10.0.0.1"), OutLinkName: "eth0", Weight: 1},
+			{Gateway: netip.MustParseAddr("10.0.0.2"), OutLinkName: "eth1", Weight: 1},
+		},
+	}
+	client := &fakeNetworkClient{
+		links:  []*network.LinkStatus{newTestLink("eth0", 1500), newTestLink("eth1", 1500)},
+		routes: []*network.RouteStatus{route},
+	}
+	reader := newNetworkReader(client)
+
+	set, err := reader.List(t.Context(), "cp-1")
+
+	require.NoError(t, err)
+	require.Len(t, set.Links, 2)
+	for _, link := range set.Links {
+		require.Len(t, link.Routes, 1, "multipath route must be attached to link %s", link.Name)
+		assert.Equal(t, "10.0.0.1, 10.0.0.2", link.Routes[0].Gateway)
+	}
+}
+
 func TestNetworkReaderListReturnsErrorWhenLinksCallFails(t *testing.T) {
 	client := &fakeNetworkClient{err: errors.New("unreachable")}
 	reader := newNetworkReader(client)
