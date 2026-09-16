@@ -427,13 +427,13 @@ func loadEtcd(reader ports.EtcdReader, controlPlaneNodes []string, generation ui
 func loadProcesses(reader ports.ProcessReader, node string, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {
-			return ProcessesLoaded{Generation: generation}
+			return ProcessesLoaded{Generation: generation, Node: node}
 		}
 		processes, err := reader.List(ctx, node)
 		if err != nil {
-			return ProcessesFailed{Generation: generation, Err: err}
+			return ProcessesFailed{Generation: generation, Node: node, Err: err}
 		}
-		return ProcessesLoaded{Generation: generation, Processes: processes}
+		return ProcessesLoaded{Generation: generation, Node: node, Processes: processes}
 	}
 }
 
@@ -533,26 +533,26 @@ func requestUpgradeImage(controller ports.NodeController, target string, generat
 func loadDisks(reader ports.DiskReader, node string, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {
-			return DisksLoaded{Generation: generation}
+			return DisksLoaded{Generation: generation, Node: node}
 		}
 		disks, err := reader.List(ctx, node)
 		if err != nil {
-			return DisksFailed{Generation: generation, Err: err}
+			return DisksFailed{Generation: generation, Node: node, Err: err}
 		}
-		return DisksLoaded{Generation: generation, Disks: disks}
+		return DisksLoaded{Generation: generation, Node: node, Disks: disks}
 	}
 }
 
 func loadNetwork(reader ports.NetworkReader, node string, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {
-			return NetworkLoaded{Generation: generation}
+			return NetworkLoaded{Generation: generation, Node: node}
 		}
 		set, err := reader.List(ctx, node)
 		if err != nil {
-			return NetworkFailed{Generation: generation, Err: err}
+			return NetworkFailed{Generation: generation, Node: node, Err: err}
 		}
-		return NetworkLoaded{Generation: generation, Network: set}
+		return NetworkLoaded{Generation: generation, Node: node, Network: set}
 	}
 }
 

@@ -392,7 +392,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, loadProcesses(model.processReader, message.Node, model.Generation)
 
 	case ProcessesLoaded:
-		if message.Generation != model.Generation {
+		if message.Generation != model.Generation || message.Node != model.Processes.Node {
 			return model, nil
 		}
 		model.Processes.Status = Ready
@@ -400,7 +400,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case ProcessesFailed:
-		if message.Generation != model.Generation {
+		if message.Generation != model.Generation || message.Node != model.Processes.Node {
 			return model, nil
 		}
 		model.Processes.Status = Failed
@@ -417,7 +417,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, loadDisks(model.diskReader, message.Node, model.Generation)
 
 	case DisksLoaded:
-		if message.Generation != model.Generation {
+		if message.Generation != model.Generation || message.Node != model.Disks.Node {
 			return model, nil
 		}
 		model.Disks.Status = Ready
@@ -425,7 +425,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case DisksFailed:
-		if message.Generation != model.Generation {
+		if message.Generation != model.Generation || message.Node != model.Disks.Node {
 			return model, nil
 		}
 		model.Disks.Status = Failed
@@ -442,7 +442,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, loadNetwork(model.networkReader, message.Node, model.Generation)
 
 	case NetworkLoaded:
-		if message.Generation != model.Generation {
+		if message.Generation != model.Generation || message.Node != model.Network.Node {
 			return model, nil
 		}
 		model.Network.Status = Ready
@@ -450,7 +450,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case NetworkFailed:
-		if message.Generation != model.Generation {
+		if message.Generation != model.Generation || message.Node != model.Network.Node {
 			return model, nil
 		}
 		model.Network.Status = Failed

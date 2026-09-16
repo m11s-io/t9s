@@ -867,12 +867,21 @@ func TestRefreshProcessesRefetchesTheRememberedNode(t *testing.T) {
 func TestProcessesFailedSetsFailedStatus(t *testing.T) {
 	model := application.Model{Generation: 1, Processes: application.ProcessesState{Node: "cp-1"}}
 
-	model, effect := application.Update(model, application.ProcessesFailed{Generation: 1, Err: assert.AnError})
+	model, effect := application.Update(model, application.ProcessesFailed{Generation: 1, Node: "cp-1", Err: assert.AnError})
 
 	assert.Nil(t, effect)
 	assert.Equal(t, application.Failed, model.Processes.Status)
 	assert.Equal(t, "processes unavailable", model.Processes.Err)
 	assert.Equal(t, "cp-1", model.Processes.Node, "failure must not lose track of which node was open")
+}
+
+func TestProcessesLoadedIgnoresResultForAnotherNode(t *testing.T) {
+	model := application.Model{Generation: 1, Processes: application.ProcessesState{Status: application.Loading, Node: "cp-2"}}
+
+	model, _ = application.Update(model, application.ProcessesLoaded{Generation: 1, Node: "cp-1", Processes: domain.ProcessSet{Processes: []domain.ProcessSnapshot{{PID: 1}}}})
+
+	assert.Equal(t, application.Loading, model.Processes.Status, "a late result for a previously opened node must not overwrite the current node")
+	assert.Empty(t, model.Processes.Value.Processes)
 }
 
 func TestSelectContextResetsProcesses(t *testing.T) {
@@ -941,12 +950,21 @@ func TestRefreshDisksRefetchesTheRememberedNode(t *testing.T) {
 func TestDisksFailedSetsFailedStatus(t *testing.T) {
 	model := application.Model{Generation: 1, Disks: application.DisksState{Node: "cp-1"}}
 
-	model, effect := application.Update(model, application.DisksFailed{Generation: 1, Err: assert.AnError})
+	model, effect := application.Update(model, application.DisksFailed{Generation: 1, Node: "cp-1", Err: assert.AnError})
 
 	assert.Nil(t, effect)
 	assert.Equal(t, application.Failed, model.Disks.Status)
 	assert.Equal(t, "disks unavailable", model.Disks.Err)
 	assert.Equal(t, "cp-1", model.Disks.Node, "failure must not lose track of which node was open")
+}
+
+func TestDisksLoadedIgnoresResultForAnotherNode(t *testing.T) {
+	model := application.Model{Generation: 1, Disks: application.DisksState{Status: application.Loading, Node: "cp-2"}}
+
+	model, _ = application.Update(model, application.DisksLoaded{Generation: 1, Node: "cp-1", Disks: domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda"}}}})
+
+	assert.Equal(t, application.Loading, model.Disks.Status, "a late result for a previously opened node must not overwrite the current node")
+	assert.Empty(t, model.Disks.Value.Disks)
 }
 
 func TestSelectContextResetsDisks(t *testing.T) {
@@ -1024,12 +1042,21 @@ func TestRefreshNetworkRefetchesTheRememberedNode(t *testing.T) {
 func TestNetworkFailedSetsFailedStatus(t *testing.T) {
 	model := application.Model{Generation: 1, Network: application.NetworkState{Node: "cp-1"}}
 
-	model, effect := application.Update(model, application.NetworkFailed{Generation: 1, Err: assert.AnError})
+	model, effect := application.Update(model, application.NetworkFailed{Generation: 1, Node: "cp-1", Err: assert.AnError})
 
 	assert.Nil(t, effect)
 	assert.Equal(t, application.Failed, model.Network.Status)
 	assert.Equal(t, "network unavailable", model.Network.Err)
 	assert.Equal(t, "cp-1", model.Network.Node, "failure must not lose track of which node was open")
+}
+
+func TestNetworkLoadedIgnoresResultForAnotherNode(t *testing.T) {
+	model := application.Model{Generation: 1, Network: application.NetworkState{Status: application.Loading, Node: "cp-2"}}
+
+	model, _ = application.Update(model, application.NetworkLoaded{Generation: 1, Node: "cp-1", Network: domain.NetworkSet{Links: []domain.LinkSnapshot{{Name: "eth0"}}}})
+
+	assert.Equal(t, application.Loading, model.Network.Status, "a late result for a previously opened node must not overwrite the current node")
+	assert.Empty(t, model.Network.Value.Links)
 }
 
 func TestSelectContextResetsNetwork(t *testing.T) {

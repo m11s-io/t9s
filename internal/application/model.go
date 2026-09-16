@@ -605,6 +605,7 @@ func (RefreshProcesses) applicationMessage() {}
 
 type ProcessesLoaded struct {
 	Generation uint64
+	Node       string
 	Processes  domain.ProcessSet
 }
 
@@ -612,6 +613,7 @@ func (ProcessesLoaded) applicationMessage() {}
 
 type ProcessesFailed struct {
 	Generation uint64
+	Node       string
 	Err        error
 }
 
@@ -716,6 +718,7 @@ func (RefreshDisks) applicationMessage() {}
 
 type DisksLoaded struct {
 	Generation uint64
+	Node       string
 	Disks      domain.DiskSet
 }
 
@@ -723,6 +726,7 @@ func (DisksLoaded) applicationMessage() {}
 
 type DisksFailed struct {
 	Generation uint64
+	Node       string
 	Err        error
 }
 
@@ -740,6 +744,7 @@ func (RefreshNetwork) applicationMessage() {}
 
 type NetworkLoaded struct {
 	Generation uint64
+	Node       string
 	Network    domain.NetworkSet
 }
 
@@ -747,6 +752,7 @@ func (NetworkLoaded) applicationMessage() {}
 
 type NetworkFailed struct {
 	Generation uint64
+	Node       string
 	Err        error
 }
 
