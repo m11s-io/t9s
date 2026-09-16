@@ -24,9 +24,9 @@ launcher (`--kube-context`/`--node`, see [k9s integration](#k9s-integration)
 below). Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
 additionally enables gated node reboot, shutdown, rollback, and upgrade from
 `:nodes` (`space` to mark, `R`/`X`/`B`/`U` to act, each behind a confirm
-prompt) as well as gated service start/stop/restart from `:services`
-(`S`/`T`/`R`) — see [Security](#security) below; the UI remains read-only
-by default.
+prompt), gated service start/stop/restart from `:services` (`S`/`T`/`R`), and
+gated etcd snapshot/defragment/alarm-disarm from `:etcd` (`s`/`d`/`A`) — see
+[Security](#security) below; the UI remains read-only by default.
 
 Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
@@ -83,9 +83,10 @@ unchanged.
 By default the UI is read-only and offers no mutation or arbitrary
 command path. Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
 additionally allows reboot, shutdown, rollback, and upgrade of selected
-node(s) from the nodes screen, and start/stop/restart of the selected
-service from the services screen, each gated behind an inline confirmation
-that flags control-plane and etcd-quorum risk. The header's `[RO]`/`[RW]` badge
+node(s) from the nodes screen, start/stop/restart of the selected service from
+the services screen, and etcd snapshot/defragment/alarm-disarm from the etcd
+screen, each gated behind its own prompt (a path prompt for snapshot, an inline
+confirmation that flags control-plane and etcd-quorum risk otherwise). The header's `[RO]`/`[RW]` badge
 always reflects the active mode. Talos upgrade progress covers image pull, install, drain, reboot, readiness, and uncordon when the lifecycle API is available; unsupported versions use the legacy upgrade RPC. A target skipping more than one Talos minor release receives an advisory warning. Kubernetes control-plane upgrades are separate. As before, the Talos credentials
 supplied to `t9s` may themselves be privileged — protect the talosconfig
 as a sensitive secret and grant only the permissions the operator needs.

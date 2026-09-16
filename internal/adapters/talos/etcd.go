@@ -3,6 +3,7 @@ package talos
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/m11s-io/t9s/internal/domain"
@@ -16,6 +17,9 @@ type etcdClient interface {
 	EtcdMemberList(ctx context.Context, node string, req *machineapi.EtcdMemberListRequest) (*machineapi.EtcdMemberListResponse, error)
 	EtcdStatus(ctx context.Context, node string) (*machineapi.EtcdStatusResponse, error)
 	EtcdAlarmList(ctx context.Context, node string) (*machineapi.EtcdAlarmListResponse, error)
+	EtcdSnapshot(ctx context.Context, node string, req *machineapi.EtcdSnapshotRequest) (io.ReadCloser, error)
+	EtcdDefragment(ctx context.Context, node string) (*machineapi.EtcdDefragmentResponse, error)
+	EtcdAlarmDisarm(ctx context.Context, node string) (*machineapi.EtcdAlarmDisarmResponse, error)
 }
 
 type machineryEtcdClient struct{ client *talosclient.Client }
@@ -30,6 +34,20 @@ func (c machineryEtcdClient) EtcdStatus(ctx context.Context, node string) (*mach
 
 func (c machineryEtcdClient) EtcdAlarmList(ctx context.Context, node string) (*machineapi.EtcdAlarmListResponse, error) {
 	return c.client.EtcdAlarmList(talosclient.WithNode(ctx, node))
+}
+
+// EtcdSnapshot is deliberately never multiplexed: machinery documents it as a
+// single-node stream, so it is always addressed to exactly one node.
+func (c machineryEtcdClient) EtcdSnapshot(ctx context.Context, node string, req *machineapi.EtcdSnapshotRequest) (io.ReadCloser, error) {
+	return c.client.EtcdSnapshot(talosclient.WithNode(ctx, node), req)
+}
+
+func (c machineryEtcdClient) EtcdDefragment(ctx context.Context, node string) (*machineapi.EtcdDefragmentResponse, error) {
+	return c.client.EtcdDefragment(talosclient.WithNode(ctx, node))
+}
+
+func (c machineryEtcdClient) EtcdAlarmDisarm(ctx context.Context, node string) (*machineapi.EtcdAlarmDisarmResponse, error) {
+	return c.client.EtcdAlarmDisarm(talosclient.WithNode(ctx, node))
 }
 
 type etcdReader struct {

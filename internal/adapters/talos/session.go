@@ -47,6 +47,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		logs:              newServiceLogReader(machineryLogClient{client: client}),
 		events:            newEventReader(api, machineryEventsClient{client: client}, time.Now, eventFetchTimeout),
 		etcd:              newEtcdReader(machineryEtcdClient{client: client}),
+		etcdOperations:    newEtcdOperations(machineryEtcdClient{client: client}),
 		processes:         newProcessReader(machineryProcessClient{client: client}),
 		disks:             newDiskReader(machineryDiskClient{client: client}),
 		network:           newNetworkReader(machineryNetworkClient{client: client}),
@@ -64,6 +65,7 @@ type session struct {
 	logs              ports.ServiceLogReader
 	events            ports.EventReader
 	etcd              ports.EtcdReader
+	etcdOperations    ports.EtcdOperations
 	processes         ports.ProcessReader
 	disks             ports.DiskReader
 	network           ports.NetworkReader
@@ -86,6 +88,8 @@ func (s *session) ServiceLogs() ports.ServiceLogReader { return s.logs }
 func (s *session) Events() ports.EventReader { return s.events }
 
 func (s *session) Etcd() ports.EtcdReader { return s.etcd }
+
+func (s *session) EtcdOperations() ports.EtcdOperations { return s.etcdOperations }
 
 func (s *session) Processes() ports.ProcessReader { return s.processes }
 

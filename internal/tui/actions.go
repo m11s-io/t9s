@@ -48,10 +48,18 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "r", Label: "Refresh"},
 		)
 	case viewEtcd:
-		return append(global,
+		hints := append(global,
 			actionHint{Key: "/", Label: "Filter"},
 			actionHint{Key: "r", Label: "Refresh"},
 		)
+		if writesEnabled {
+			hints = append(hints,
+				actionHint{Key: "s", Label: "Snapshot"},
+				actionHint{Key: "d", Label: "Defragment"},
+				actionHint{Key: "A", Label: "Disarm"},
+			)
+		}
+		return hints
 	case viewServiceLogs:
 		return append(global,
 			actionHint{Key: "/", Label: "Filter"},

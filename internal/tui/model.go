@@ -38,6 +38,7 @@ type model struct {
 	palette           commandModel
 	contexts          contextsModel
 	upgradePrompt     *upgradePromptModel
+	snapshotPrompt    *snapshotPromptModel
 	notice            string
 	views             viewStack
 	splash            bool
@@ -144,7 +145,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+c" {
 			return m, m.shutdown()
 		}
-		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil {
+		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil || m.application.PendingEtcdAction != nil {
 			if key == "y" {
 				// Confirm through the reducer first. A refused confirm (for
 				// example an action that would drop etcd below quorum, or one
@@ -172,6 +173,20 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, tea.Batch(cmds...)
 				}
+				if m.application.PendingEtcdAction != nil {
+					// Confirm through the reducer: a blocked confirm is refused and
+					// leaves the prompt in place, and the reducer is what builds the
+					// maintenance effect, so nothing fires before a successful confirm.
+					if m.application.PendingEtcdAction.Blocked != "" {
+						return m, nil
+					}
+					var effect application.Effect
+					m.application, effect = application.Update(m.application, application.ConfirmEtcdAction{})
+					if m.application.PendingEtcdAction != nil {
+						return m, nil
+					}
+					return m, m.command(effect)
+				}
 				pending := *m.application.PendingServiceAction
 				var confirmEffect application.Effect
 				m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
@@ -192,7 +207,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
 			return m, m.command(effect)
 		}
-		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && !m.filtering() {
+		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && m.snapshotPrompt == nil && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			if views, ok := m.views.pop(); ok {
 				m.views = views
@@ -291,6 +306,32 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var command tea.Cmd
 			*m.upgradePrompt, command = m.upgradePrompt.update(message)
+			return m, command
+		}
+		if m.snapshotPrompt != nil {
+			switch key {
+			case "esc":
+				m.snapshotPrompt = nil
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.CancelEtcdSnapshotPrompt{})
+				return m, m.command(effect)
+			case "enter":
+				node := m.snapshotPrompt.node
+				member := m.snapshotPrompt.member
+				path := m.snapshotPrompt.input.Value()
+				m.snapshotPrompt = nil
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.ConfirmEtcdSnapshotPrompt{Node: node, MemberHostname: member, Path: path})
+				// A synchronous validation failure (invalid path) never emits a
+				// message, so surface it here; runtime outcomes arrive via the
+				// message branch below.
+				if notice := renderEtcdSnapshotNotice(m.application.EtcdSnapshot); notice != "" {
+					m.notice = notice
+				}
+				return m, m.command(effect)
+			}
+			var command tea.Cmd
+			*m.snapshotPrompt, command = m.snapshotPrompt.update(message)
 			return m, command
 		}
 		switch key {
@@ -437,6 +478,25 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewEtcd {
+			// The etcd sub-model is purely presentational and cannot emit
+			// application messages, so the write keys are handled here before
+			// delegating the remaining keys (filter, navigation) to it.
+			if m.writeActionsEnabled() && !m.etcd.filtering {
+				if member, ok := m.etcd.selected(); ok {
+					switch key {
+					case "s":
+						if member.MemberID != 0 && member.Hostname != "" {
+							var effect application.Effect
+							m.application, effect = application.Update(m.application, application.RequestEtcdSnapshotPrompt{Node: member.Hostname, MemberHostname: member.Hostname})
+							return m, m.command(effect)
+						}
+					case "d":
+						return m.requestEtcdAction(application.EtcdActionDefragment, member)
+					case "A":
+						return m.requestEtcdAction(application.EtcdActionDisarmAlarms, member)
+					}
+				}
+			}
 			m.etcd = m.etcd.update(message)
 			return m, nil
 		}
@@ -638,10 +698,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if _, ok := message.message.(application.SelectContext); ok {
 			// A different Talos context may reuse the same node IDs/hostnames
 			// (e.g. cp-1 across clusters); never let a mark or an in-flight
-			// upgrade prompt carry across a context switch and silently
+			// upgrade/snapshot prompt carry across a context switch and silently
 			// mistarget the new cluster.
 			m.nodes.marked = nil
 			m.upgradePrompt = nil
+			m.snapshotPrompt = nil
 		}
 		var effect application.Effect
 		m.application, effect = application.Update(m.application, message.message)
@@ -678,16 +739,30 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = ""
 		}
-		var upgradeFocus tea.Cmd
+		switch message.message.(type) {
+		case application.EtcdSnapshotSucceeded, application.EtcdSnapshotFailed:
+			if notice := renderEtcdSnapshotNotice(m.application.EtcdSnapshot); notice != "" {
+				m.notice = notice
+			}
+		}
+		var promptFocus tea.Cmd
 		if opened, ok := message.message.(application.UpgradePromptOpened); ok &&
 			opened.Generation == m.application.Generation &&
 			m.application.PendingAction == nil && m.application.PendingServiceAction == nil &&
 			m.views.top().Kind == viewNodes {
 			prompt := newUpgradePromptModel(opened.Target, opened.Image)
 			m.upgradePrompt = &prompt
-			upgradeFocus = m.upgradePrompt.input.Focus()
+			promptFocus = m.upgradePrompt.input.Focus()
 		}
-		return m, tea.Batch(m.command(effect), upgradeFocus)
+		if opened, ok := message.message.(application.EtcdSnapshotPromptOpened); ok &&
+			opened.Generation == m.application.Generation &&
+			m.application.PendingAction == nil && m.application.PendingServiceAction == nil && m.application.PendingEtcdAction == nil &&
+			m.views.top().Kind == viewEtcd {
+			prompt := newSnapshotPromptModel(opened.Node, opened.MemberHostname, opened.DefaultPath)
+			m.snapshotPrompt = &prompt
+			promptFocus = m.snapshotPrompt.input.Focus()
+		}
+		return m, tea.Batch(m.command(effect), promptFocus)
 	}
 
 	return m, nil
@@ -843,8 +918,14 @@ func (m model) activePrompt() string {
 	if m.application.PendingServiceAction != nil {
 		return renderPendingServiceActionPrompt(*m.application.PendingServiceAction)
 	}
+	if m.application.PendingEtcdAction != nil {
+		return renderPendingEtcdActionPrompt(*m.application.PendingEtcdAction)
+	}
 	if m.upgradePrompt != nil {
 		return m.upgradePrompt.view()
+	}
+	if m.snapshotPrompt != nil {
+		return m.snapshotPrompt.view()
 	}
 	if prompt := m.palette.view(); prompt != "" {
 		return prompt
@@ -887,6 +968,24 @@ func (m model) activePrompt() string {
 
 func (m model) writeActionsEnabled() bool {
 	return m.application.WritesEnabled && !m.application.Upgrade.Active
+}
+
+// requestEtcdAction opens the maintenance confirm prompt for the selected
+// member. The RPC is addressed to the member's own node: defragment and
+// disarm act on the node they are sent to, so a different target would
+// operate on the wrong member.
+func (m model) requestEtcdAction(kind application.EtcdActionKind, member domain.EtcdMemberSnapshot) (tea.Model, tea.Cmd) {
+	if member.Hostname == "" {
+		return m, nil
+	}
+	var effect application.Effect
+	m.application, effect = application.Update(m.application, application.RequestEtcdAction{
+		Kind:           kind,
+		MemberID:       member.MemberID,
+		MemberHostname: member.Hostname,
+		Node:           member.Hostname,
+	})
+	return m, m.command(effect)
 }
 
 func (m model) command(effect application.Effect) tea.Cmd {

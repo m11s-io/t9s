@@ -24,6 +24,22 @@ const pendingActionWarningBudget = 40
 // long for a bulk action) is the most elidable part: it is dropped in favor
 // of a count when a warning is present, or placed last when there is no
 // warning and the line is short enough not to need truncation.
+// renderEtcdSnapshotNotice turns the standalone snapshot state into a footer
+// notice, so a rejected path or a completed backup reports its path/size
+// instead of only the generic action-results counter.
+func renderEtcdSnapshotNotice(state application.EtcdSnapshotState) string {
+	switch state.Status {
+	case application.Failed:
+		if state.Err != "" {
+			return "snapshot failed: " + state.Err
+		}
+	case application.Ready:
+		return fmt.Sprintf("snapshot %s (%d bytes)", state.Result.Path, state.Result.Size)
+	}
+
+	return ""
+}
+
 func renderPendingActionPrompt(pending application.PendingAction) string {
 	if pending.Blocked != "" {
 		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
@@ -46,6 +62,27 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 		return fmt.Sprintf("!! %s — %s %s? (y/n)", warning, verb, target)
 	}
 	return verb + " " + strings.Join(pending.Targets, ", ") + "? (y/n)"
+}
+
+func renderPendingEtcdActionPrompt(pending application.PendingEtcdAction) string {
+	if pending.Blocked != "" {
+		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
+	}
+	verb := "Defragment"
+	switch pending.Kind {
+	case application.EtcdActionDisarmAlarms:
+		verb = "Disarm alarms"
+	case application.EtcdActionSnapshot:
+		verb = "Snapshot"
+	}
+	target := pending.MemberHostname
+	if target == "" {
+		target = pending.Node
+	}
+	if pending.Warning != "" {
+		return fmt.Sprintf("!! %s — %s %s? (y/n)", truncateWarningTail(pending.Warning, pendingActionWarningBudget), verb, target)
+	}
+	return verb + " " + target + "? (y/n)"
 }
 
 func renderPendingServiceActionPrompt(pending application.PendingServiceAction) string {

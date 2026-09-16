@@ -119,6 +119,33 @@ func (f *FakeEtcdReader) List(ctx context.Context, controlPlaneNodes []string) (
 	return f.ListFunc(ctx, controlPlaneNodes)
 }
 
+type FakeEtcdOperations struct {
+	SnapshotFunc     func(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error)
+	DefragmentFunc   func(ctx context.Context, node string) error
+	DisarmAlarmsFunc func(ctx context.Context, node string) error
+}
+
+func (f *FakeEtcdOperations) Snapshot(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+	if f.SnapshotFunc == nil {
+		return domain.EtcdSnapshotResult{Node: node, Path: path}, nil
+	}
+	return f.SnapshotFunc(ctx, node, path)
+}
+
+func (f *FakeEtcdOperations) Defragment(ctx context.Context, node string) error {
+	if f.DefragmentFunc == nil {
+		return nil
+	}
+	return f.DefragmentFunc(ctx, node)
+}
+
+func (f *FakeEtcdOperations) DisarmAlarms(ctx context.Context, node string) error {
+	if f.DisarmAlarmsFunc == nil {
+		return nil
+	}
+	return f.DisarmAlarmsFunc(ctx, node)
+}
+
 type FakeProcessReader struct {
 	ListFunc func(context.Context, string) (domain.ProcessSet, error)
 }
@@ -188,6 +215,7 @@ type FakeSession struct {
 	LogReader              ports.ServiceLogReader
 	EventReader            ports.EventReader
 	EtcdReader             ports.EtcdReader
+	EtcdOps                ports.EtcdOperations
 	ProcessReader          ports.ProcessReader
 	DiskReader             ports.DiskReader
 	NetworkReader          ports.NetworkReader
@@ -212,6 +240,8 @@ func (f *FakeSession) ServiceLogs() ports.ServiceLogReader { return f.LogReader 
 func (f *FakeSession) Events() ports.EventReader { return f.EventReader }
 
 func (f *FakeSession) Etcd() ports.EtcdReader { return f.EtcdReader }
+
+func (f *FakeSession) EtcdOperations() ports.EtcdOperations { return f.EtcdOps }
 
 func (f *FakeSession) Processes() ports.ProcessReader { return f.ProcessReader }
 

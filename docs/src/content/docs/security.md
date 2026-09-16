@@ -17,6 +17,19 @@ Control-plane actions that would drop etcd below quorum are refused outright —
 the confirmation prompt reports the refusal instead of accepting a `y` — not
 merely warned about.
 
+The same gate covers etcd maintenance: `--enable-writes` additionally allows
+etcd snapshot (`s`), defragment (`d`), and alarm disarm (`A`) from the `:etcd`
+screen, each behind its own prompt. Etcd snapshot writes a local file
+atomically — it streams to a `0600` `<path>.part` file, refuses to overwrite an
+existing final path, verifies the trailing sha256 checksum against the payload,
+and only then commits the staging file into place. t9s adds no credential
+material to the file, but the snapshot itself is a full copy of the cluster's
+etcd keyspace (including Kubernetes `Secret`s), so protect it as cluster data.
+Local destination paths are chosen by the operator, so operators must own that
+directory. A completed snapshot is never deleted automatically. Any node-level
+action that would drop etcd below quorum is refused, not merely warned about,
+and no effect is built or dispatched before a confirmation succeeds.
+
 Talos upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages. Progress and errors are normalized; credentials, talosconfig contents, kubeconfig contents, and registry tokens are not stored in model state or logs. Kubernetes control-plane upgrades are not part of this action.
 
 The supplied Talos credentials can still be privileged. Protect every talosconfig as a sensitive secret and grant only the permissions an operator needs.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -93,7 +94,7 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
 	}
 }
 
@@ -208,7 +209,7 @@ func (r *Runner) replaceSession(effectCtx context.Context, contextName string, g
 		return nil, fmt.Errorf("load nodes: node reader is not configured")
 	}
 
-	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), ctx: sessionCtx}
+	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), ctx: sessionCtx}
 	r.mu.Lock()
 	if generation != r.generation || !r.active {
 		r.mu.Unlock()
@@ -235,11 +236,12 @@ func (r *Runner) clearFailedSession(generation uint64, cancel context.CancelFunc
 
 type managedSession struct {
 	ports.Session
-	nodes  ports.NodeReader
-	logs   ports.ServiceLogReader
-	events ports.EventReader
-	etcd   ports.EtcdReader
-	ctx    context.Context
+	nodes          ports.NodeReader
+	logs           ports.ServiceLogReader
+	events         ports.EventReader
+	etcd           ports.EtcdReader
+	etcdOperations ports.EtcdOperations
+	ctx            context.Context
 }
 
 func (s managedSession) ServiceLogs() ports.ServiceLogReader {
@@ -269,6 +271,54 @@ func (s managedSession) Etcd() ports.EtcdReader {
 		return nil
 	}
 	return boundEtcdReader{EtcdReader: s.etcd, ctx: s.ctx}
+}
+
+func (s managedSession) EtcdOperations() ports.EtcdOperations {
+	if s.etcdOperations == nil {
+		return nil
+	}
+	return boundEtcdOperations{EtcdOperations: s.etcdOperations, ctx: s.ctx}
+}
+
+// boundEtcdOperations ties the long-lived session context to each individual
+// call so a session teardown cancels an in-flight snapshot or maintenance RPC
+// (the adapter removes its .part file on cancellation).
+type boundEtcdOperations struct {
+	ports.EtcdOperations
+	ctx context.Context
+}
+
+func (o boundEtcdOperations) Snapshot(callCtx context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+	ctx, cancel := context.WithCancel(o.ctx)
+	stop := context.AfterFunc(callCtx, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+
+	return o.EtcdOperations.Snapshot(ctx, node, path)
+}
+
+func (o boundEtcdOperations) Defragment(callCtx context.Context, node string) error {
+	ctx, cancel := context.WithCancel(o.ctx)
+	stop := context.AfterFunc(callCtx, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+
+	return o.EtcdOperations.Defragment(ctx, node)
+}
+
+func (o boundEtcdOperations) DisarmAlarms(callCtx context.Context, node string) error {
+	ctx, cancel := context.WithCancel(o.ctx)
+	stop := context.AfterFunc(callCtx, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+
+	return o.EtcdOperations.DisarmAlarms(ctx, node)
 }
 
 type boundEtcdReader struct {
@@ -368,6 +418,55 @@ func loadProcesses(reader ports.ProcessReader, node string, generation uint64) E
 			return ProcessesFailed{Generation: generation, Err: err}
 		}
 		return ProcessesLoaded{Generation: generation, Processes: processes}
+	}
+}
+
+// defaultEtcdSnapshotPathEffect prefills the snapshot path prompt. The clock
+// read lives here, not in the reducer, so the reducer stays pure.
+func defaultEtcdSnapshotPathEffect(contextName, memberHostname, node string, generation uint64) Effect {
+	return func(context.Context, Dependencies) Message {
+		return EtcdSnapshotPromptOpened{
+			Generation:     generation,
+			Node:           node,
+			MemberHostname: memberHostname,
+			DefaultPath:    defaultEtcdSnapshotPath(contextName, memberHostname, time.Now().UTC()),
+		}
+	}
+}
+
+func runEtcdSnapshot(operations ports.EtcdOperations, node, path string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if operations == nil {
+			return EtcdSnapshotFailed{Generation: generation, Err: fmt.Errorf("etcd operations are not configured")}
+		}
+		result, err := operations.Snapshot(ctx, node, path)
+		if err != nil {
+			return EtcdSnapshotFailed{Generation: generation, Err: err}
+		}
+		return EtcdSnapshotSucceeded{Generation: generation, Result: result}
+	}
+}
+
+func runEtcdMaintenance(operations ports.EtcdOperations, pending PendingEtcdAction, generation uint64) Effect {
+	if operations == nil {
+		return func(context.Context, Dependencies) Message {
+			return EtcdActionFailed{Generation: generation, MemberHostname: pending.MemberHostname, Err: fmt.Errorf("etcd operations are not configured")}
+		}
+	}
+	return func(ctx context.Context, _ Dependencies) Message {
+		var err error
+		switch pending.Kind {
+		case EtcdActionDefragment:
+			err = operations.Defragment(ctx, pending.Node)
+		case EtcdActionDisarmAlarms:
+			err = operations.DisarmAlarms(ctx, pending.Node)
+		default:
+			err = fmt.Errorf("unsupported etcd action %q", pending.Kind)
+		}
+		if err != nil {
+			return EtcdActionFailed{Generation: generation, MemberHostname: pending.MemberHostname, Err: err}
+		}
+		return EtcdActionSucceeded{Generation: generation, MemberHostname: pending.MemberHostname}
 	}
 }
 

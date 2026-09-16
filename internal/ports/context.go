@@ -22,6 +22,7 @@ type Session interface {
 	ServiceLogs() ServiceLogReader
 	Events() EventReader
 	Etcd() EtcdReader
+	EtcdOperations() EtcdOperations
 	Processes() ProcessReader
 	Disks() DiskReader
 	Network() NetworkReader

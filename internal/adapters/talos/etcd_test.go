@@ -1,8 +1,10 @@
 package talos
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/m11s-io/t9s/internal/domain"
@@ -18,6 +20,15 @@ type fakeEtcdClient struct {
 	statusErr  map[string]error
 	alarms     map[string]*machineapi.EtcdAlarmListResponse
 	alarmsErr  map[string]error
+
+	snapshotBytes  map[string][]byte
+	snapshotErr    map[string]error
+	snapshotStream func(node string) (io.ReadCloser, error)
+	snapshotNodes  []string
+	defragNodes    []string
+	defragErr      error
+	disarmNodes    []string
+	disarmErr      error
 }
 
 func (c *fakeEtcdClient) EtcdMemberList(_ context.Context, node string, _ *machineapi.EtcdMemberListRequest) (*machineapi.EtcdMemberListResponse, error) {
@@ -39,6 +50,33 @@ func (c *fakeEtcdClient) EtcdAlarmList(_ context.Context, node string) (*machine
 		return nil, err
 	}
 	return c.alarms[node], nil
+}
+
+func (c *fakeEtcdClient) EtcdSnapshot(_ context.Context, node string, _ *machineapi.EtcdSnapshotRequest) (io.ReadCloser, error) {
+	c.snapshotNodes = append(c.snapshotNodes, node)
+	if err, ok := c.snapshotErr[node]; ok {
+		return nil, err
+	}
+	if c.snapshotStream != nil {
+		return c.snapshotStream(node)
+	}
+	return io.NopCloser(bytes.NewReader(c.snapshotBytes[node])), nil
+}
+
+func (c *fakeEtcdClient) EtcdDefragment(_ context.Context, node string) (*machineapi.EtcdDefragmentResponse, error) {
+	c.defragNodes = append(c.defragNodes, node)
+	if c.defragErr != nil {
+		return nil, c.defragErr
+	}
+	return &machineapi.EtcdDefragmentResponse{}, nil
+}
+
+func (c *fakeEtcdClient) EtcdAlarmDisarm(_ context.Context, node string) (*machineapi.EtcdAlarmDisarmResponse, error) {
+	c.disarmNodes = append(c.disarmNodes, node)
+	if c.disarmErr != nil {
+		return nil, c.disarmErr
+	}
+	return &machineapi.EtcdAlarmDisarmResponse{}, nil
 }
 
 func membersResponse(members ...*machineapi.EtcdMember) *machineapi.EtcdMemberListResponse {

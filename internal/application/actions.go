@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blang/semver/v4"
 	"github.com/m11s-io/t9s/internal/domain"
@@ -153,6 +155,64 @@ func etcdQuorumBlockReason(etcd EtcdState, targets []string) string {
 	}
 
 	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
+}
+
+// ValidateEtcdSnapshotPath rejects paths that cannot name a snapshot file:
+// empty/whitespace, directory-like (trailing separator, "." or ".."), or
+// the reserved ".part" suffix the adapter uses for its atomic write. It does
+// not expand "~" — the shell does not do it for us — and it does not reject
+// absolute paths, since backups legitimately target an operator-supplied
+// location.
+func ValidateEtcdSnapshotPath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("snapshot path is required")
+	}
+	if strings.HasSuffix(path, "/") || strings.HasSuffix(path, string(filepath.Separator)) {
+		return fmt.Errorf("snapshot path %q must name a file, not a directory", path)
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == "." || cleaned == ".." || strings.HasSuffix(cleaned, string(filepath.Separator)) {
+		return fmt.Errorf("snapshot path %q must name a file", path)
+	}
+	switch filepath.Base(cleaned) {
+	case "", ".", "..", ".part":
+		return fmt.Errorf("snapshot path %q has an invalid file name", path)
+	}
+	return nil
+}
+
+// defaultEtcdSnapshotPath builds the prefilled destination for a snapshot. It
+// is pure so the reducer stays clock-free and the shape is unit-testable with
+// a fixed time.Time. Context and hostname are sanitized to [A-Za-z0-9._-] so
+// a hostname containing a separator cannot escape the working directory.
+func defaultEtcdSnapshotPath(contextName, memberHostname string, now time.Time) string {
+	return fmt.Sprintf("etcd-%s-%s-%s.db", sanitizeSnapshotToken(contextName), sanitizeSnapshotToken(memberHostname), now.UTC().Format("20060102T150405Z"))
+}
+
+func sanitizeSnapshotToken(value string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+	token := builder.String()
+	for strings.Contains(token, "..") {
+		token = strings.ReplaceAll(token, "..", ".")
+	}
+	if token == "" {
+		return "-"
+	}
+	return token
+}
+
+// DefaultEtcdSnapshotPathForTest exposes defaultEtcdSnapshotPath for tests in
+// package application_test, which cannot see unexported identifiers.
+func DefaultEtcdSnapshotPathForTest(contextName, memberHostname string, now time.Time) string {
+	return defaultEtcdSnapshotPath(contextName, memberHostname, now)
 }
 
 // memberMatchesAnyTarget reports whether an etcd member corresponds to any

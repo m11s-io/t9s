@@ -11,7 +11,7 @@ Press `:` to open the command palette.
 | `:services` | `:svc` | Open Talos services. |
 | `:contexts` | `:ctx` | Select another discovered context. |
 | `:events` | `:ev` | Open the machine event view. |
-| `:etcd` | `:et` | Open etcd membership and status. |
+| `:etcd` | `:et` | Open etcd membership and status; with `--enable-writes`, snapshot/membership maintenance actions live here. See [Etcd operations](/guides/etcd-ops/). |
 | `:overview` | `:ov` | Cluster-wide health summary. See [Health](/guides/health/). |
 | `:problems` | | Drillable list of everything currently unhealthy. See [Health](/guides/health/). |
 | `:resources` | `:res` | Generic Talos resource browser. `:resources <Kind>` (e.g. `:resources MachineStatus`) jumps straight to that kind's instances. See [Resource browser](/guides/resources/). |
@@ -37,6 +37,18 @@ These open from a selected row in `:nodes` rather than through the command palet
 Each of these views supports `r` to refresh and `Esc`/`q` to return to `:nodes`.
 
 `space`, `R`, `X`, `B`, and `U` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
+
+## Etcd-scoped keys
+
+These act on the selected row in `:etcd`:
+
+| Key | Result |
+| --- | --- |
+| `s` | Snapshot the selected member's etcd to a local file, behind a path prompt. Requires `--enable-writes`. See [Etcd operations](/guides/etcd-ops/). |
+| `d` | Defragment the selected member's etcd data directory, behind a confirm prompt. Requires `--enable-writes`. |
+| `A` | Disarm the selected member's active etcd alarms, behind a confirm prompt. Requires `--enable-writes`. |
+
+`s`, `d`, and `A` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
 
 ## Service-scoped keys
 

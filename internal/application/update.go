@@ -54,6 +54,8 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Notice = ""
 		model.PendingAction = nil
 		model.PendingServiceAction = nil
+		model.PendingEtcdAction = nil
+		model.EtcdSnapshot = EtcdSnapshotState{}
 		model.ActionResults = nil
 		model.ActionTotal = 0
 		return model, openSession(message.Name, model.Generation)
@@ -69,6 +71,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.logReader = message.Logs
 		model.eventReader = message.Events
 		model.etcdReader = message.Etcd
+		model.etcdOperations = message.EtcdOperations
 		model.processReader = message.Processes
 		model.diskReader = message.Disks
 		model.networkReader = message.Network
@@ -165,6 +168,109 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		return model, loadEtcd(model.etcdReader, controlPlaneNodes, model.Generation)
+
+	case RequestEtcdSnapshotPrompt:
+		// Snapshot writes a local file and creates an on-node snapshot; treat
+		// it as a write path, consistent with "no mutation path by default".
+		if !model.WritesEnabled || model.Upgrade.Active {
+			return model, nil
+		}
+		model.EtcdSnapshot = EtcdSnapshotState{Status: Loading, MemberNode: message.Node}
+		model.ActionResults = nil
+		model.ActionTotal = 0
+		return model, defaultEtcdSnapshotPathEffect(model.ContextName, message.MemberHostname, message.Node, model.Generation)
+
+	case EtcdSnapshotPromptOpened:
+		return model, nil
+
+	case CancelEtcdSnapshotPrompt:
+		model.EtcdSnapshot = EtcdSnapshotState{}
+		return model, nil
+
+	case ConfirmEtcdSnapshotPrompt:
+		if err := ValidateEtcdSnapshotPath(message.Path); err != nil {
+			model.EtcdSnapshot = EtcdSnapshotState{Status: Failed, Err: err.Error(), MemberNode: message.Node}
+			return model, nil
+		}
+		return model, runEtcdSnapshot(model.etcdOperations, message.Node, message.Path, model.Generation)
+
+	case EtcdSnapshotSucceeded:
+		if message.Generation != model.Generation {
+			return model, nil
+		}
+		model.EtcdSnapshot = EtcdSnapshotState{Status: Ready, Result: message.Result, MemberNode: message.Result.Node}
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Result.Node})
+		model.ActionTotal = 1
+		return model, nil
+
+	case EtcdSnapshotFailed:
+		if message.Generation != model.Generation {
+			return model, nil
+		}
+		errText := "snapshot failed"
+		if message.Err != nil {
+			errText = message.Err.Error()
+		}
+		model.EtcdSnapshot.Status = Failed
+		model.EtcdSnapshot.Err = errText
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: model.EtcdSnapshot.MemberNode, Err: errText})
+		model.ActionTotal = 1
+		return model, nil
+
+	case RequestEtcdAction:
+		if !model.WritesEnabled || model.Upgrade.Active || message.MemberHostname == "" {
+			return model, nil
+		}
+		model.PendingEtcdAction = &PendingEtcdAction{
+			Kind:           message.Kind,
+			MemberID:       message.MemberID,
+			MemberHostname: message.MemberHostname,
+			Node:           message.Node,
+		}
+		model.ActionResults = nil
+		model.ActionTotal = 0
+		return model, nil
+
+	case ConfirmEtcdAction:
+		// Confirm through the reducer only: a blocked or absent pending
+		// action produces no effect, so nothing fires before a successful
+		// confirm.
+		if model.PendingEtcdAction == nil || model.PendingEtcdAction.Blocked != "" {
+			return model, nil
+		}
+		pending := *model.PendingEtcdAction
+		model.PendingEtcdAction = nil
+		model.ActionTotal = 1
+		return model, runEtcdMaintenance(model.etcdOperations, pending, model.Generation)
+
+	case EtcdActionSucceeded:
+		if message.Generation != model.Generation {
+			return model, nil
+		}
+		model.PendingEtcdAction = nil
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.MemberHostname})
+		// Remove stale membership/alarm state: a successful disarm changes the
+		// etct view's ALARMS column, so refresh rather than trust the cached
+		// snapshot.
+		model.Etcd.Status = Loading
+		model.Etcd.Err = ""
+		controlPlaneNodes := controlPlaneHostnames(model.Nodes.Value.Nodes)
+		if len(controlPlaneNodes) == 0 {
+			return model, nil
+		}
+		return model, loadEtcd(model.etcdReader, controlPlaneNodes, model.Generation)
+
+	case EtcdActionFailed:
+		if message.Generation != model.Generation {
+			return model, nil
+		}
+		errText := "action failed"
+		if message.Err != nil {
+			errText = message.Err.Error()
+		}
+		model.PendingEtcdAction = nil
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.MemberHostname, Err: errText})
+		return model, nil
 
 	case KubernetesNodesLoaded:
 		if message.Generation != model.Generation {
@@ -329,6 +435,7 @@ func Update(model Model, message Message) (Model, Effect) {
 	case CancelPendingAction:
 		model.PendingAction = nil
 		model.PendingServiceAction = nil
+		model.PendingEtcdAction = nil
 		return model, nil
 
 	case ConfirmPendingAction:

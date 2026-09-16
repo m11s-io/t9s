@@ -33,6 +33,7 @@ type Model struct {
 	Services               ServiceState
 	Events                 EventState
 	Etcd                   EtcdState
+	EtcdSnapshot           EtcdSnapshotState
 	Processes              ProcessesState
 	Disks                  DisksState
 	Network                NetworkState
@@ -45,6 +46,7 @@ type Model struct {
 	logReader              ports.ServiceLogReader
 	eventReader            ports.EventReader
 	etcdReader             ports.EtcdReader
+	etcdOperations         ports.EtcdOperations
 	processReader          ports.ProcessReader
 	diskReader             ports.DiskReader
 	networkReader          ports.NetworkReader
@@ -57,6 +59,7 @@ type Model struct {
 	Logs                   LogState
 	PendingAction          *PendingAction
 	PendingServiceAction   *PendingServiceAction
+	PendingEtcdAction      *PendingEtcdAction
 	ActionResults          []ActionResult
 	// ActionTotal is the number of targets the currently-in-flight bulk
 	// action was confirmed against. ActionResults grows one entry at a time
@@ -92,6 +95,37 @@ type EtcdState struct {
 	Status LoadStatus
 	Value  domain.EtcdSet
 	Err    string
+}
+
+// EtcdSnapshotState is the standalone snapshot flow's result/notice. It is
+// separate from EtcdState so a local backup never disturbs the membership
+// view.
+type EtcdSnapshotState struct {
+	Status     LoadStatus
+	Result     domain.EtcdSnapshotResult
+	Err        string
+	MemberNode string
+}
+
+// EtcdActionKind identifies a write action on the :etcd view.
+type EtcdActionKind string
+
+const (
+	EtcdActionSnapshot     EtcdActionKind = "snapshot"
+	EtcdActionDefragment   EtcdActionKind = "defragment"
+	EtcdActionDisarmAlarms EtcdActionKind = "disarm-alarms"
+)
+
+// PendingEtcdAction is a confirmed-but-not-yet-run :etcd write action. Blocked
+// is non-empty when the action must not be confirmed at all, mirroring
+// PendingAction.Blocked.
+type PendingEtcdAction struct {
+	Kind           EtcdActionKind
+	MemberID       uint64
+	MemberHostname string
+	Node           string
+	Warning        string
+	Blocked        string
 }
 
 type ProcessesState struct {
@@ -412,6 +446,7 @@ type SessionOpened struct {
 	Logs              ports.ServiceLogReader
 	Events            ports.EventReader
 	Etcd              ports.EtcdReader
+	EtcdOperations    ports.EtcdOperations
 	Processes         ports.ProcessReader
 	Disks             ports.DiskReader
 	Network           ports.NetworkReader
@@ -500,6 +535,79 @@ type ProcessesFailed struct {
 }
 
 func (ProcessesFailed) applicationMessage() {}
+
+type RequestEtcdSnapshotPrompt struct {
+	Node           string
+	MemberHostname string
+}
+
+func (RequestEtcdSnapshotPrompt) applicationMessage() {}
+
+type EtcdSnapshotPromptOpened struct {
+	Generation     uint64
+	Node           string
+	MemberHostname string
+	DefaultPath    string
+}
+
+func (EtcdSnapshotPromptOpened) applicationMessage() {}
+
+type ConfirmEtcdSnapshotPrompt struct {
+	Node           string
+	MemberHostname string
+	Path           string
+}
+
+func (ConfirmEtcdSnapshotPrompt) applicationMessage() {}
+
+type EtcdSnapshotSucceeded struct {
+	Generation uint64
+	Result     domain.EtcdSnapshotResult
+}
+
+func (EtcdSnapshotSucceeded) applicationMessage() {}
+
+// CancelEtcdSnapshotPrompt resets the snapshot flow when the operator escapes
+// the path prompt, so a cancelled prompt cannot leave the state stuck in
+// Loading.
+type CancelEtcdSnapshotPrompt struct{}
+
+func (CancelEtcdSnapshotPrompt) applicationMessage() {}
+
+type EtcdSnapshotFailed struct {
+	Generation uint64
+	Err        error
+}
+
+func (EtcdSnapshotFailed) applicationMessage() {}
+
+type RequestEtcdAction struct {
+	Kind           EtcdActionKind
+	MemberID       uint64
+	MemberHostname string
+	Node           string
+}
+
+func (RequestEtcdAction) applicationMessage() {}
+
+type ConfirmEtcdAction struct{}
+
+func (ConfirmEtcdAction) applicationMessage() {}
+
+type EtcdActionSucceeded struct {
+	Generation     uint64
+	MemberHostname string
+}
+
+func (EtcdActionSucceeded) applicationMessage() {}
+
+type EtcdActionFailed struct {
+	Generation     uint64
+	MemberHostname string
+	Err            error
+}
+
+func (EtcdActionFailed) applicationMessage() {}
 
 type RequestUpgradePrompt struct {
 	Target string

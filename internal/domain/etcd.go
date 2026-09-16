@@ -21,3 +21,13 @@ type EtcdMemberSnapshot struct {
 type EtcdSet struct {
 	Members []EtcdMemberSnapshot
 }
+
+// EtcdSnapshotResult describes a completed local etcd backup. It carries no
+// talosconfig, certificate, or token material: only the node it came from,
+// the local path, its size, and the hex sha256 trailer.
+type EtcdSnapshotResult struct {
+	Node   string
+	Path   string
+	Size   int64
+	SHA256 string
+}
