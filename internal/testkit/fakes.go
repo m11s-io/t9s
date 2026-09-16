@@ -194,6 +194,22 @@ func (f *FakeNetstatReader) List(ctx context.Context, node string) (domain.Socke
 	return f.ListFunc(ctx, node)
 }
 
+type FakeMountReader struct {
+	ListFunc func(context.Context, string) (domain.MountSet, error)
+}
+
+func (f *FakeMountReader) List(ctx context.Context, node string) (domain.MountSet, error) {
+	return f.ListFunc(ctx, node)
+}
+
+type FakeMemoryReader struct {
+	ListFunc func(context.Context, string) (domain.MemorySnapshot, error)
+}
+
+func (f *FakeMemoryReader) List(ctx context.Context, node string) (domain.MemorySnapshot, error) {
+	return f.ListFunc(ctx, node)
+}
+
 type FakeDmesgReader struct {
 	OpenFunc func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error)
 }
@@ -277,6 +293,8 @@ type FakeSession struct {
 	NetworkReader          ports.NetworkReader
 	DmesgReader            ports.DmesgReader
 	NetstatReader          ports.NetstatReader
+	MountReader            ports.MountReader
+	MemoryReader           ports.MemoryReader
 	ResourceKindReader     ports.ResourceKindReader
 	ResourceInstanceReader ports.ResourceInstanceReader
 	CloseFunc              func() error
@@ -310,6 +328,10 @@ func (f *FakeSession) Network() ports.NetworkReader { return f.NetworkReader }
 func (f *FakeSession) Dmesg() ports.DmesgReader { return f.DmesgReader }
 
 func (f *FakeSession) Netstat() ports.NetstatReader { return f.NetstatReader }
+
+func (f *FakeSession) Mounts() ports.MountReader { return f.MountReader }
+
+func (f *FakeSession) Memory() ports.MemoryReader { return f.MemoryReader }
 
 func (f *FakeSession) ResourceKinds() ports.ResourceKindReader { return f.ResourceKindReader }
 

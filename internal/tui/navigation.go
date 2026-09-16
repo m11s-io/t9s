@@ -22,6 +22,8 @@ const (
 	viewLinkDetail
 	viewDmesg
 	viewNetstat
+	viewMounts
+	viewMemory
 	viewOverview
 	viewProblems
 	viewResourceKinds

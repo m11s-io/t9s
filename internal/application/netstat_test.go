@@ -106,6 +106,12 @@ func TestSessionOpenedWiresDiagnosticReaders(t *testing.T) {
 		Netstat: &testkit.FakeNetstatReader{ListFunc: func(context.Context, string) (domain.SocketSet, error) {
 			return domain.SocketSet{}, nil
 		}},
+		Mounts: &testkit.FakeMountReader{ListFunc: func(context.Context, string) (domain.MountSet, error) {
+			return domain.MountSet{}, nil
+		}},
+		Memory: &testkit.FakeMemoryReader{ListFunc: func(context.Context, string) (domain.MemorySnapshot, error) {
+			return domain.MemorySnapshot{}, nil
+		}},
 	})
 	require.NotNil(t, effect)
 
@@ -114,6 +120,18 @@ func TestSessionOpenedWiresDiagnosticReaders(t *testing.T) {
 	message := effect(t.Context(), application.Dependencies{})
 	_, ok := message.(application.NetstatLoaded)
 	assert.True(t, ok, "the Netstat reader must be wired from SessionOpened")
+
+	model, effect = application.Update(model, application.OpenMounts{Node: "cp-1"})
+	require.NotNil(t, effect)
+	message = effect(t.Context(), application.Dependencies{})
+	_, ok = message.(application.MountsLoaded)
+	assert.True(t, ok, "the Mount reader must be wired from SessionOpened")
+
+	model, effect = application.Update(model, application.OpenMemory{Node: "cp-1"})
+	require.NotNil(t, effect)
+	message = effect(t.Context(), application.Dependencies{})
+	_, ok = message.(application.MemoryLoaded)
+	assert.True(t, ok, "the Memory reader must be wired from SessionOpened")
 
 	_, effect = application.Update(model, application.OpenDmesg{Request: domain.DmesgRequest{Node: "cp-1"}})
 	require.NotNil(t, effect)

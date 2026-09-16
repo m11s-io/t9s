@@ -39,6 +39,8 @@ type Model struct {
 	Network                NetworkState
 	Dmesg                  DmesgState
 	Netstat                SocketState
+	Mounts                 MountState
+	Memory                 MemoryState
 	ResourceBrowser        ResourceBrowserState
 	Kubernetes             KubernetesState
 	nodeReader             ports.NodeReader
@@ -54,6 +56,8 @@ type Model struct {
 	networkReader          ports.NetworkReader
 	dmesgReader            ports.DmesgReader
 	netstatReader          ports.NetstatReader
+	mountReader            ports.MountReader
+	memoryReader           ports.MemoryReader
 	resourceKindReader     ports.ResourceKindReader
 	resourceInstanceReader ports.ResourceInstanceReader
 	kubernetesReader       ports.KubernetesNodeReader
@@ -176,6 +180,20 @@ type NetworkState struct {
 type SocketState struct {
 	Status LoadStatus
 	Value  domain.SocketSet
+	Err    string
+	Node   string
+}
+
+type MountState struct {
+	Status LoadStatus
+	Value  domain.MountSet
+	Err    string
+	Node   string
+}
+
+type MemoryState struct {
+	Status LoadStatus
+	Value  domain.MemorySnapshot
 	Err    string
 	Node   string
 }
@@ -494,6 +512,8 @@ type SessionOpened struct {
 	Network           ports.NetworkReader
 	Dmesg             ports.DmesgReader
 	Netstat           ports.NetstatReader
+	Mounts            ports.MountReader
+	Memory            ports.MemoryReader
 	ResourceKinds     ports.ResourceKindReader
 	Resources         ports.ResourceInstanceReader
 	KubernetesNodes   ports.KubernetesNodeReader
@@ -740,6 +760,58 @@ type NetstatFailed struct {
 }
 
 func (NetstatFailed) applicationMessage() {}
+
+type OpenMounts struct {
+	Node string
+}
+
+func (OpenMounts) applicationMessage() {}
+
+type RefreshMounts struct{}
+
+func (RefreshMounts) applicationMessage() {}
+
+type MountsLoaded struct {
+	Generation uint64
+	Node       string
+	Mounts     domain.MountSet
+}
+
+func (MountsLoaded) applicationMessage() {}
+
+type MountsFailed struct {
+	Generation uint64
+	Node       string
+	Err        error
+}
+
+func (MountsFailed) applicationMessage() {}
+
+type OpenMemory struct {
+	Node string
+}
+
+func (OpenMemory) applicationMessage() {}
+
+type RefreshMemory struct{}
+
+func (RefreshMemory) applicationMessage() {}
+
+type MemoryLoaded struct {
+	Generation uint64
+	Node       string
+	Memory     domain.MemorySnapshot
+}
+
+func (MemoryLoaded) applicationMessage() {}
+
+type MemoryFailed struct {
+	Generation uint64
+	Node       string
+	Err        error
+}
+
+func (MemoryFailed) applicationMessage() {}
 
 type OpenDmesg struct {
 	Request domain.DmesgRequest

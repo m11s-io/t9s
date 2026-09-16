@@ -28,6 +28,8 @@ type Session interface {
 	Network() NetworkReader
 	Dmesg() DmesgReader
 	Netstat() NetstatReader
+	Mounts() MountReader
+	Memory() MemoryReader
 	ResourceKinds() ResourceKindReader
 	Resources() ResourceInstanceReader
 	Close() error

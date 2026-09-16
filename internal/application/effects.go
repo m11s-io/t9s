@@ -94,7 +94,7 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), Mounts: session.Mounts(), Memory: session.Memory(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
 	}
 }
 
@@ -607,6 +607,32 @@ func loadNetstat(reader ports.NetstatReader, node string, generation uint64) Eff
 			return NetstatFailed{Generation: generation, Node: node, Err: err}
 		}
 		return NetstatLoaded{Generation: generation, Node: node, Sockets: set}
+	}
+}
+
+func loadMounts(reader ports.MountReader, node string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if reader == nil {
+			return MountsLoaded{Generation: generation, Node: node}
+		}
+		set, err := reader.List(ctx, node)
+		if err != nil {
+			return MountsFailed{Generation: generation, Node: node, Err: err}
+		}
+		return MountsLoaded{Generation: generation, Node: node, Mounts: set}
+	}
+}
+
+func loadMemory(reader ports.MemoryReader, node string, generation uint64) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if reader == nil {
+			return MemoryLoaded{Generation: generation, Node: node}
+		}
+		snapshot, err := reader.List(ctx, node)
+		if err != nil {
+			return MemoryFailed{Generation: generation, Node: node, Err: err}
+		}
+		return MemoryLoaded{Generation: generation, Node: node, Memory: snapshot}
 	}
 }
 

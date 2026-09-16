@@ -32,6 +32,8 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 				actionHint{Key: "n", Label: "Network"},
 				actionHint{Key: "e", Label: "Dmesg"},
 				actionHint{Key: "s", Label: "Netstat"},
+				actionHint{Key: "m", Label: "Mounts"},
+				actionHint{Key: "f", Label: "Memory"},
 			)
 			if writesEnabled {
 				hints = append(hints,
@@ -101,6 +103,16 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "q/Esc", Label: "Back"},
 		)
 	case viewNetstat:
+		return append(global,
+			actionHint{Key: "/", Label: "Filter"},
+			actionHint{Key: "r", Label: "Refresh"},
+		)
+	case viewMounts:
+		return append(global,
+			actionHint{Key: "/", Label: "Filter"},
+			actionHint{Key: "r", Label: "Refresh"},
+		)
+	case viewMemory:
 		return append(global,
 			actionHint{Key: "/", Label: "Filter"},
 			actionHint{Key: "r", Label: "Refresh"},

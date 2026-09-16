@@ -52,6 +52,8 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.dmesgStream = nil
 		model.dmesgGeneration++
 		model.Netstat = SocketState{}
+		model.Mounts = MountState{}
+		model.Memory = MemoryState{}
 		model.ResourceBrowser = ResourceBrowserState{}
 		model.Logs = LogState{}
 		model.logStream = nil
@@ -82,6 +84,8 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.networkReader = message.Network
 		model.dmesgReader = message.Dmesg
 		model.netstatReader = message.Netstat
+		model.mountReader = message.Mounts
+		model.memoryReader = message.Memory
 		model.resourceKindReader = message.ResourceKinds
 		model.resourceInstanceReader = message.Resources
 		model.kubernetesReader = message.KubernetesNodes
@@ -475,6 +479,58 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Netstat.Status = Loading
 		model.Netstat.Err = ""
 		return model, loadNetstat(model.netstatReader, model.Netstat.Node, model.Generation)
+
+	case OpenMounts:
+		model.Mounts = MountState{Status: Loading, Node: message.Node}
+		return model, loadMounts(model.mountReader, message.Node, model.Generation)
+
+	case MountsLoaded:
+		// Generation alone is not enough: re-opening another node does not bump
+		// it, so a late result for the previous node must be dropped by node.
+		if message.Generation != model.Generation || message.Node != model.Mounts.Node {
+			return model, nil
+		}
+		model.Mounts.Status = Ready
+		model.Mounts.Value = message.Mounts
+		return model, nil
+
+	case MountsFailed:
+		if message.Generation != model.Generation || message.Node != model.Mounts.Node {
+			return model, nil
+		}
+		model.Mounts.Status = Failed
+		model.Mounts.Err = "mounts unavailable"
+		return model, nil
+
+	case RefreshMounts:
+		model.Mounts.Status = Loading
+		model.Mounts.Err = ""
+		return model, loadMounts(model.mountReader, model.Mounts.Node, model.Generation)
+
+	case OpenMemory:
+		model.Memory = MemoryState{Status: Loading, Node: message.Node}
+		return model, loadMemory(model.memoryReader, message.Node, model.Generation)
+
+	case MemoryLoaded:
+		if message.Generation != model.Generation || message.Node != model.Memory.Node {
+			return model, nil
+		}
+		model.Memory.Status = Ready
+		model.Memory.Value = message.Memory
+		return model, nil
+
+	case MemoryFailed:
+		if message.Generation != model.Generation || message.Node != model.Memory.Node {
+			return model, nil
+		}
+		model.Memory.Status = Failed
+		model.Memory.Err = "memory unavailable"
+		return model, nil
+
+	case RefreshMemory:
+		model.Memory.Status = Loading
+		model.Memory.Err = ""
+		return model, loadMemory(model.memoryReader, model.Memory.Node, model.Generation)
 
 	case OpenDmesg:
 		oldStream := model.dmesgStream

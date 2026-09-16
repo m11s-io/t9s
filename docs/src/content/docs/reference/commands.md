@@ -30,6 +30,8 @@ These open from a selected row in `:nodes` rather than through the command palet
 | `n` | Open network interfaces, addresses, and routes. |
 | `e` | Stream the node's kernel log (dmesg). See [Node diagnostics](/guides/diagnostics/). |
 | `s` | Open the node's network sockets (netstat). See [Node diagnostics](/guides/diagnostics/). |
+| `m` | Open the node's filesystem mounts. See [Node diagnostics](/guides/diagnostics/). |
+| `f` | Open the node's memory usage. See [Node diagnostics](/guides/diagnostics/). |
 | `space` | Mark/unmark the selected node for a bulk action. Requires `--enable-writes`. |
 | `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
 | `X` | Shut down the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |

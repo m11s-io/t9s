@@ -34,5 +34,5 @@ func TestActionHintsIncludesReadDiagnosticKeys(t *testing.T) {
 	for i, hint := range hints {
 		keys[i] = hint.Key
 	}
-	assert.Equal(t, []string{"?", ":", "/", "d", "r", "p", "k", "n", "e", "s"}, keys)
+	assert.Equal(t, []string{"?", ":", "/", "d", "r", "p", "k", "n", "e", "s", "m", "f"}, keys)
 }

@@ -9,7 +9,7 @@ The node explorer is the initial t9s view. Return to it with `:nodes` or `:no`.
 - Press `Enter` or `d` to open read-only node details.
 - Press `r` to refresh the resource snapshot.
 - Press `Esc` or `q` to return from details.
-- Press `e` for the node's kernel log (dmesg) or `s` for its network sockets (netstat); see [Node diagnostics](/guides/diagnostics/).
+- Press `e` for the node's kernel log (dmesg), `s` for its network sockets (netstat), `m` for its filesystem mounts, or `f` for its memory usage; see [Node diagnostics](/guides/diagnostics/).
 
 ## Filter nodes
 

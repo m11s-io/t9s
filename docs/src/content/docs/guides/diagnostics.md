@@ -1,9 +1,9 @@
 ---
 title: Node diagnostics
-description: Inspect a node's kernel log and network sockets.
+description: Inspect a node's kernel log, network sockets, mounts, and memory.
 ---
 
-These read-only views open from a selected node in `:nodes` — neither is a standalone top-level command. Both are scoped to the node the view was opened for, and `r` re-fetches that same node rather than whatever is currently selected back in `:nodes`. Press `Esc` or `q` to return to `:nodes`.
+These read-only views open from a selected node in `:nodes` — none is a standalone top-level command. Each is scoped to the node the view was opened for, and `r` re-fetches that same node rather than whatever is currently selected back in `:nodes`. Press `Esc` or `q` to return to `:nodes`.
 
 ## Dmesg
 
@@ -27,6 +27,18 @@ Press `s` on a selected node to list its network sockets: `PROTO`, `STATE`, `LOC
 
 Press `/` to filter across protocol, state, local address, remote address, and process name. There is no detail page; the selected row carries all the surfaced fields.
 
+## Mounts
+
+Press `m` on a selected node to list its filesystem mounts: `FILESYSTEM`, `SIZE`, `USED`, `AVAIL`, `USE%`, and `MOUNTED`. `USED` is `SIZE - AVAIL`, and `USE%` is the used fraction of the mounted filesystem (reported as `0%` when the size is unknown rather than dividing by zero).
+
+Press `/` to filter across filesystem and mount point. There is no detail page; the selected row carries all the surfaced fields.
+
+## Memory
+
+Press `f` on a selected node to show a curated subset of its `/proc/meminfo` as `METRIC` and `VALUE` rows: total, used (with the derived percentage of total), available, free, buffers, cached, swap total, swap free, dirty, and slab. Byte values are rendered with binary unit suffixes.
+
+Press `/` to filter across the metric label and value. There is no detail page.
+
 ## Read-only guarantee
 
-Both views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.
+All four views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.

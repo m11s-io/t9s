@@ -32,6 +32,8 @@ type model struct {
 	network           networkModel
 	dmesg             logsModel
 	netstat           netstatModel
+	mounts            mountsModel
+	memory            memoryModel
 	problems          problemsModel
 	resourceKinds     resourceKindsModel
 	resourceInstances resourceInstancesModel
@@ -109,6 +111,8 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		network:           newNetworkModel(applicationModel.Network),
 		dmesg:             newDmesgModel(applicationModel.Dmesg),
 		netstat:           newNetstatModel(applicationModel.Netstat),
+		mounts:            newMountsModel(applicationModel.Mounts),
+		memory:            newMemoryModel(applicationModel.Memory),
 		problems:          newProblemsModel(application.EvaluateHealth(applicationModel)),
 		resourceKinds:     newResourceKindsModel(applicationModel.ResourceBrowser),
 		resourceInstances: newResourceInstancesModel(applicationModel.ResourceBrowser),
@@ -440,6 +444,18 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.netstat = m.netstat.setState(m.application.Netstat)
 				return m, m.command(effect)
 			}
+			if !m.filtering() && m.views.top().Kind == viewMounts {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RefreshMounts{})
+				m.mounts = m.mounts.setState(m.application.Mounts)
+				return m, m.command(effect)
+			}
+			if !m.filtering() && m.views.top().Kind == viewMemory {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RefreshMemory{})
+				m.memory = m.memory.setState(m.application.Memory)
+				return m, m.command(effect)
+			}
 			if !m.filtering() && (m.views.top().Kind == viewOverview || m.views.top().Kind == viewProblems) {
 				var servicesEffect, etcdEffect application.Effect
 				m.application, servicesEffect = application.Update(m.application, application.RefreshServices{})
@@ -473,6 +489,14 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewNetstat {
 			m.netstat = m.netstat.update(message)
+			return m, nil
+		}
+		if m.views.top().Kind == viewMounts {
+			m.mounts = m.mounts.update(message)
+			return m, nil
+		}
+		if m.views.top().Kind == viewMemory {
+			m.memory = m.memory.update(message)
 			return m, nil
 		}
 		if m.views.top().Kind == viewServices {
@@ -709,6 +733,26 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if key == "m" && !m.nodes.filtering {
+			if _, ok := m.nodes.selected(); ok {
+				node := m.nodes.selectedValue()
+				m.views = m.views.push(viewFrame{Kind: viewMounts, Label: fallback(node.DisplayName()) + " > mounts"})
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.OpenMounts{Node: node.Target()})
+				m.mounts = newMountsModel(m.application.Mounts)
+				return m, m.command(effect)
+			}
+		}
+		if key == "f" && !m.nodes.filtering {
+			if _, ok := m.nodes.selected(); ok {
+				node := m.nodes.selectedValue()
+				m.views = m.views.push(viewFrame{Kind: viewMemory, Label: fallback(node.DisplayName()) + " > memory"})
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.OpenMemory{Node: node.Target()})
+				m.memory = newMemoryModel(m.application.Memory)
+				return m, m.command(effect)
+			}
+		}
 		if key == "R" && m.writeActionsEnabled() && !m.nodes.filtering {
 			if targets := m.nodes.actionTargets(); len(targets) > 0 {
 				var effect application.Effect
@@ -794,6 +838,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.network = m.network.setState(m.application.Network)
 		m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
 		m.netstat = m.netstat.setState(m.application.Netstat)
+		m.mounts = m.mounts.setState(m.application.Mounts)
+		m.memory = m.memory.setState(m.application.Memory)
 		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 		m.resourceKinds = m.resourceKinds.setState(m.application.ResourceBrowser)
 		m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
@@ -926,6 +972,10 @@ func (m model) activeContent(size contentSize) string {
 		view.WriteString(m.dmesg.viewSized(innerSize))
 	case viewNetstat:
 		view.WriteString(m.netstat.viewSized(innerSize))
+	case viewMounts:
+		view.WriteString(m.mounts.viewSized(innerSize))
+	case viewMemory:
+		view.WriteString(m.memory.viewSized(innerSize))
 	case viewOverview:
 		view.WriteString(renderOverview(m.application))
 	case viewProblems:
@@ -978,6 +1028,12 @@ func (m model) filtering() bool {
 	}
 	if m.views.top().Kind == viewNetstat {
 		return m.netstat.filtering
+	}
+	if m.views.top().Kind == viewMounts {
+		return m.mounts.filtering
+	}
+	if m.views.top().Kind == viewMemory {
+		return m.memory.filtering
 	}
 	if m.views.top().Kind == viewProblems {
 		return m.problems.filtering
@@ -1039,6 +1095,12 @@ func (m model) activePrompt() string {
 	}
 	if m.views.top().Kind == viewNetstat && (m.netstat.filtering || m.netstat.filter != "") {
 		return "/" + m.netstat.filter
+	}
+	if m.views.top().Kind == viewMounts && (m.mounts.filtering || m.mounts.filter != "") {
+		return "/" + m.mounts.filter
+	}
+	if m.views.top().Kind == viewMemory && (m.memory.filtering || m.memory.filter != "") {
+		return "/" + m.memory.filter
 	}
 	if m.views.top().Kind == viewProblems && (m.problems.filtering || m.problems.filter != "") {
 		return "/" + m.problems.filter
