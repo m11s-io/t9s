@@ -55,6 +55,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		netstat:           newNetstatReader(machineryNetstatClient{client: client}),
 		mounts:            newMountReader(machineryMountClient{client: client}),
 		memory:            newMemoryReader(machineryMemoryClient{client: client}),
+		clusterHealth:     newClusterHealthReader(machineryClusterHealthClient{client: client}),
 		resourceKinds:     newResourceKindReader(machineryResourceKindClient{client: client}),
 		resourceInstances: newResourceInstanceReader(machineryResourceInstanceClient{client: client}),
 	}, nil
@@ -77,6 +78,7 @@ type session struct {
 	netstat           ports.NetstatReader
 	mounts            ports.MountReader
 	memory            ports.MemoryReader
+	clusterHealth     ports.ClusterHealthReader
 	resourceKinds     ports.ResourceKindReader
 	resourceInstances ports.ResourceInstanceReader
 }
@@ -112,6 +114,8 @@ func (s *session) Netstat() ports.NetstatReader { return s.netstat }
 func (s *session) Mounts() ports.MountReader { return s.mounts }
 
 func (s *session) Memory() ports.MemoryReader { return s.memory }
+
+func (s *session) ClusterHealth() ports.ClusterHealthReader { return s.clusterHealth }
 
 func (s *session) ResourceKinds() ports.ResourceKindReader { return s.resourceKinds }
 

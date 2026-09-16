@@ -31,6 +31,7 @@ type model struct {
 	disks             disksModel
 	network           networkModel
 	dmesg             logsModel
+	healthcheck       healthcheckModel
 	netstat           netstatModel
 	mounts            mountsModel
 	memory            memoryModel
@@ -110,6 +111,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		disks:             newDisksModel(applicationModel.Disks),
 		network:           newNetworkModel(applicationModel.Network),
 		dmesg:             newDmesgModel(applicationModel.Dmesg),
+		healthcheck:       newHealthcheckModel(applicationModel.HealthCheck),
 		netstat:           newNetstatModel(applicationModel.Netstat),
 		mounts:            newMountsModel(applicationModel.Mounts),
 		memory:            newMemoryModel(applicationModel.Memory),
@@ -217,6 +219,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && m.snapshotPrompt == nil && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			wasDmesg := m.views.top().Kind == viewDmesg
+			wasClusterHealth := m.views.top().Kind == viewClusterHealth
 			if views, ok := m.views.pop(); ok {
 				m.views = views
 				if wasLogs {
@@ -229,6 +232,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.CloseDmesg{})
 					m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
+					return m, m.command(effect)
+				}
+				if wasClusterHealth {
+					var effect application.Effect
+					m.application, effect = application.Update(m.application, application.CloseClusterHealth{})
+					m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
 					return m, m.command(effect)
 				}
 			}
@@ -296,6 +305,19 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.application, instancesEffect = application.Update(m.application, application.SelectResourceKind{Kind: argument})
 					m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
 					return m, tea.Batch(m.command(kindsEffect), m.command(instancesEffect))
+				case commandClusterHealth:
+					// Push over a nodes root so q/Esc returns to :nodes like the other
+					// streaming views, rather than replacing the whole stack.
+					m.views = newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}).push(viewFrame{Kind: viewClusterHealth, Label: "healthcheck"})
+					timeout := defaultClusterHealthWait
+					if parsed, ok := healthcheckCommandArgument(value); ok {
+						timeout = parsed
+					}
+					request := application.ClusterHealthRequestFromNodes(m.application.Nodes.Value.Nodes, timeout)
+					var effect application.Effect
+					m.application, effect = application.Update(m.application, application.OpenClusterHealth{Request: request})
+					m.healthcheck = newHealthcheckModel(m.application.HealthCheck)
+					return m, m.command(effect)
 				case commandUnknown:
 					m.notice = unknownCommandNotice(value)
 					return m, nil
@@ -359,6 +381,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.filtering() {
 				wasLogs := m.views.top().Kind == viewServiceLogs
 				wasDmesg := m.views.top().Kind == viewDmesg
+				wasClusterHealth := m.views.top().Kind == viewClusterHealth
 				if views, ok := m.views.pop(); ok {
 					m.views = views
 					if wasLogs {
@@ -371,6 +394,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 						var effect application.Effect
 						m.application, effect = application.Update(m.application, application.CloseDmesg{})
 						m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
+						return m, m.command(effect)
+					}
+					if wasClusterHealth {
+						var effect application.Effect
+						m.application, effect = application.Update(m.application, application.CloseClusterHealth{})
+						m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
 						return m, m.command(effect)
 					}
 					return m, nil
@@ -438,6 +467,15 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
 				return m, m.command(effect)
 			}
+			if !m.filtering() && m.views.top().Kind == viewClusterHealth {
+				// Rebuild node lists from the current :nodes snapshot so a check
+				// started before nodes settled can be re-run against them.
+				request := application.ClusterHealthRequestFromNodes(m.application.Nodes.Value.Nodes, m.healthcheck.state.Request.WaitTimeout)
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.OpenClusterHealth{Request: request})
+				m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
+				return m, m.command(effect)
+			}
 			if !m.filtering() && m.views.top().Kind == viewNetstat {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RefreshNetstat{})
@@ -483,6 +521,17 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.ClearDmesg{})
 				m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
+				return m, m.command(effect)
+			}
+			return m, nil
+		}
+		if m.views.top().Kind == viewClusterHealth {
+			m.healthcheck = m.healthcheck.update(message)
+			if m.healthcheck.clearRequested {
+				m.healthcheck.clearRequested = false
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.ClearClusterHealth{})
+				m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
 				return m, m.command(effect)
 			}
 			return m, nil
@@ -815,6 +864,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.nodes.marked = nil
 			m.upgradePrompt = nil
 			m.snapshotPrompt = nil
+			m.healthcheck = newHealthcheckModel(m.application.HealthCheck)
 		}
 		var effect application.Effect
 		m.application, effect = application.Update(m.application, message.message)
@@ -837,6 +887,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.disks = m.disks.setState(m.application.Disks)
 		m.network = m.network.setState(m.application.Network)
 		m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
+		m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
 		m.netstat = m.netstat.setState(m.application.Netstat)
 		m.mounts = m.mounts.setState(m.application.Mounts)
 		m.memory = m.memory.setState(m.application.Memory)
@@ -970,6 +1021,8 @@ func (m model) activeContent(size contentSize) string {
 		view.WriteString(renderLinkDetail(m.network.selectedValue()))
 	case viewDmesg:
 		view.WriteString(m.dmesg.viewSized(innerSize))
+	case viewClusterHealth:
+		view.WriteString(m.healthcheck.viewSized(innerSize))
 	case viewNetstat:
 		view.WriteString(m.netstat.viewSized(innerSize))
 	case viewMounts:
@@ -1025,6 +1078,9 @@ func (m model) filtering() bool {
 	}
 	if m.views.top().Kind == viewDmesg {
 		return m.dmesg.filtering
+	}
+	if m.views.top().Kind == viewClusterHealth {
+		return m.healthcheck.filtering
 	}
 	if m.views.top().Kind == viewNetstat {
 		return m.netstat.filtering
@@ -1092,6 +1148,9 @@ func (m model) activePrompt() string {
 	}
 	if m.views.top().Kind == viewDmesg && (m.dmesg.filtering || m.dmesg.filter != "") {
 		return "/" + m.dmesg.filter
+	}
+	if m.views.top().Kind == viewClusterHealth && (m.healthcheck.filtering || m.healthcheck.filter != "") {
+		return "/" + m.healthcheck.filter
 	}
 	if m.views.top().Kind == viewNetstat && (m.netstat.filtering || m.netstat.filter != "") {
 		return "/" + m.netstat.filter

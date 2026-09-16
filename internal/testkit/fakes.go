@@ -210,6 +210,38 @@ func (f *FakeMemoryReader) List(ctx context.Context, node string) (domain.Memory
 	return f.ListFunc(ctx, node)
 }
 
+type FakeClusterHealthReader struct {
+	OpenFunc func(context.Context, domain.ClusterHealthRequest) (ports.ClusterHealthStream, error)
+}
+
+func (f *FakeClusterHealthReader) Open(ctx context.Context, request domain.ClusterHealthRequest) (ports.ClusterHealthStream, error) {
+	return f.OpenFunc(ctx, request)
+}
+
+type FakeClusterHealthStream struct {
+	Progress []domain.ClusterHealthProgress
+	Err      error
+
+	index  int
+	closed bool
+}
+
+func (s *FakeClusterHealthStream) Next(context.Context) (domain.ClusterHealthProgress, error) {
+	if s.index < len(s.Progress) {
+		progress := s.Progress[s.index]
+		s.index++
+		return progress, s.Err
+	}
+	return domain.ClusterHealthProgress{EOF: true}, s.Err
+}
+
+func (s *FakeClusterHealthStream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func (s *FakeClusterHealthStream) Closed() bool { return s.closed }
+
 type FakeDmesgReader struct {
 	OpenFunc func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error)
 }
@@ -295,6 +327,7 @@ type FakeSession struct {
 	NetstatReader          ports.NetstatReader
 	MountReader            ports.MountReader
 	MemoryReader           ports.MemoryReader
+	ClusterHealthReader    ports.ClusterHealthReader
 	ResourceKindReader     ports.ResourceKindReader
 	ResourceInstanceReader ports.ResourceInstanceReader
 	CloseFunc              func() error
@@ -332,6 +365,8 @@ func (f *FakeSession) Netstat() ports.NetstatReader { return f.NetstatReader }
 func (f *FakeSession) Mounts() ports.MountReader { return f.MountReader }
 
 func (f *FakeSession) Memory() ports.MemoryReader { return f.MemoryReader }
+
+func (f *FakeSession) ClusterHealth() ports.ClusterHealthReader { return f.ClusterHealthReader }
 
 func (f *FakeSession) ResourceKinds() ports.ResourceKindReader { return f.ResourceKindReader }
 

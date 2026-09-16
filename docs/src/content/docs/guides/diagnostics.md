@@ -3,7 +3,7 @@ title: Node diagnostics
 description: Inspect a node's kernel log, network sockets, mounts, and memory.
 ---
 
-These read-only views open from a selected node in `:nodes` — none is a standalone top-level command. Each is scoped to the node the view was opened for, and `r` re-fetches that same node rather than whatever is currently selected back in `:nodes`. Press `Esc` or `q` to return to `:nodes`.
+These read-only views open from a selected node in `:nodes` — none is a standalone top-level command. For a server-side, streaming cluster readiness check (not node-scoped), see [`:healthcheck`](/guides/health/#healthcheck). Each is scoped to the node the view was opened for, and `r` re-fetches that same node rather than whatever is currently selected back in `:nodes`. Press `Esc` or `q` to return to `:nodes`.
 
 ## Dmesg
 

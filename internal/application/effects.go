@@ -94,7 +94,7 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), Mounts: session.Mounts(), Memory: session.Memory(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), Mounts: session.Mounts(), Memory: session.Memory(), ClusterHealth: session.ClusterHealth(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
 	}
 }
 
@@ -209,7 +209,7 @@ func (r *Runner) replaceSession(effectCtx context.Context, contextName string, g
 		return nil, fmt.Errorf("load nodes: node reader is not configured")
 	}
 
-	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), dmesg: session.Dmesg(), ctx: sessionCtx}
+	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), dmesg: session.Dmesg(), clusterHealth: session.ClusterHealth(), ctx: sessionCtx}
 	r.mu.Lock()
 	if generation != r.generation || !r.active {
 		r.mu.Unlock()
@@ -242,6 +242,7 @@ type managedSession struct {
 	etcd           ports.EtcdReader
 	etcdOperations ports.EtcdOperations
 	dmesg          ports.DmesgReader
+	clusterHealth  ports.ClusterHealthReader
 	ctx            context.Context
 }
 
@@ -250,6 +251,13 @@ func (s managedSession) Dmesg() ports.DmesgReader {
 		return nil
 	}
 	return boundDmesgReader{DmesgReader: s.dmesg, ctx: s.ctx}
+}
+
+func (s managedSession) ClusterHealth() ports.ClusterHealthReader {
+	if s.clusterHealth == nil {
+		return nil
+	}
+	return boundClusterHealthReader{ClusterHealthReader: s.clusterHealth, ctx: s.ctx}
 }
 
 func (s managedSession) ServiceLogs() ports.ServiceLogReader {
@@ -657,6 +665,72 @@ func readDmesgBatch(stream ports.DmesgStream, generation, streamGeneration uint6
 		batch, err := stream.Next(ctx)
 		return DmesgBatchLoaded{Generation: generation, StreamGeneration: streamGeneration, Batch: batch, Err: err}
 	}
+}
+
+func openClusterHealth(reader ports.ClusterHealthReader, request domain.ClusterHealthRequest, generation, streamGeneration uint64, old ports.ClusterHealthStream) Effect {
+	return func(ctx context.Context, _ Dependencies) Message {
+		if old != nil {
+			_ = old.Close()
+		}
+		if reader == nil {
+			return clusterHealthOpened{Generation: generation, StreamGeneration: streamGeneration, Err: fmt.Errorf("cluster health reader is not configured")}
+		}
+		stream, err := reader.Open(ctx, request)
+		return clusterHealthOpened{Generation: generation, StreamGeneration: streamGeneration, Stream: stream, Err: err}
+	}
+}
+
+func readClusterHealthBatch(stream ports.ClusterHealthStream, generation, streamGeneration uint64) Effect {
+	if stream == nil {
+		return nil
+	}
+	return func(ctx context.Context, _ Dependencies) Message {
+		progress, err := stream.Next(ctx)
+		return ClusterHealthProgressLoaded{Generation: generation, StreamGeneration: streamGeneration, Progress: progress, Err: err}
+	}
+}
+
+func closeClusterHealth(stream ports.ClusterHealthStream) Effect {
+	if stream == nil {
+		return nil
+	}
+	return func(context.Context, Dependencies) Message {
+		_ = stream.Close()
+		return nil
+	}
+}
+
+type boundClusterHealthReader struct {
+	ports.ClusterHealthReader
+	ctx context.Context
+}
+
+func (r boundClusterHealthReader) Open(callCtx context.Context, request domain.ClusterHealthRequest) (ports.ClusterHealthStream, error) {
+	ctx, cancel := context.WithCancel(r.ctx)
+	stop := context.AfterFunc(callCtx, cancel)
+	stream, err := r.ClusterHealthReader.Open(ctx, request)
+	if err != nil {
+		stop()
+		cancel()
+		return nil, err
+	}
+	return &boundClusterHealthStream{ClusterHealthStream: stream, cancel: cancel, stop: stop}, nil
+}
+
+type boundClusterHealthStream struct {
+	ports.ClusterHealthStream
+	cancel context.CancelFunc
+	stop   func() bool
+}
+
+func (s *boundClusterHealthStream) Close() error {
+	if s.stop != nil {
+		s.stop()
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return s.ClusterHealthStream.Close()
 }
 
 func closeDmesg(stream ports.DmesgStream) Effect {

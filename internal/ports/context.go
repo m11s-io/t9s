@@ -30,6 +30,7 @@ type Session interface {
 	Netstat() NetstatReader
 	Mounts() MountReader
 	Memory() MemoryReader
+	ClusterHealth() ClusterHealthReader
 	ResourceKinds() ResourceKindReader
 	Resources() ResourceInstanceReader
 	Close() error

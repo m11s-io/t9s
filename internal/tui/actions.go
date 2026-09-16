@@ -102,6 +102,13 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "r", Label: "Reconnect"},
 			actionHint{Key: "q/Esc", Label: "Back"},
 		)
+	case viewClusterHealth:
+		return append(global,
+			actionHint{Key: "/", Label: "Filter"},
+			actionHint{Key: "C", Label: "Clear"},
+			actionHint{Key: "r", Label: "Reconnect"},
+			actionHint{Key: "q/Esc", Label: "Back"},
+		)
 	case viewNetstat:
 		return append(global,
 			actionHint{Key: "/", Label: "Filter"},

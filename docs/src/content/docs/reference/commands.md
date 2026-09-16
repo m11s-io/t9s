@@ -14,6 +14,7 @@ Press `:` to open the command palette.
 | `:etcd` | `:et` | Open etcd membership and status; with `--enable-writes`, snapshot/membership maintenance actions live here. See [Etcd operations](/guides/etcd-ops/). |
 | `:overview` | `:ov` | Cluster-wide health summary. See [Health](/guides/health/). |
 | `:problems` | | Drillable list of everything currently unhealthy. See [Health](/guides/health/). |
+| `:healthcheck` | `:hc` | Stream the server-side cluster health check; accepts an optional wait timeout (e.g. `:healthcheck 5m`, default 60s). See [Cluster health check](/guides/health/#healthcheck). |
 | `:resources` | `:res` | Generic Talos resource browser. `:resources <Kind>` (e.g. `:resources MachineStatus`) jumps straight to that kind's instances. See [Resource browser](/guides/resources/). |
 
 Unknown commands produce a notice and do not execute a shell command. The palette has no arbitrary execution path.

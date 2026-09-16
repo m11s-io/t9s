@@ -29,6 +29,7 @@ const (
 	viewResourceKinds
 	viewResourceInstances
 	viewResourceDetail
+	viewClusterHealth
 )
 
 type viewFrame struct {

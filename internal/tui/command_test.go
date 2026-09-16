@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
@@ -32,6 +33,21 @@ func TestResolveCommandAcceptsResourcesWithAndWithoutArgument(t *testing.T) {
 	assert.Equal(t, "MachineStatus", argument)
 
 	_, ok = resourcesCommandArgument("nodes")
+	assert.False(t, ok)
+}
+
+func TestResolveCommandHealthcheckWithAndWithoutArgument(t *testing.T) {
+	assert.Equal(t, commandClusterHealth, resolveCommand("healthcheck"))
+	assert.Equal(t, commandClusterHealth, resolveCommand("hc"))
+	assert.Equal(t, commandClusterHealth, resolveCommand("healthcheck 5m"))
+	assert.Equal(t, commandUnknown, resolveCommand("healthcheck nonsense"))
+	assert.Equal(t, commandUnknown, resolveCommand(" healthcheck"), "leading whitespace must invalidate the command")
+
+	timeout, ok := healthcheckCommandArgument("healthcheck 5m")
+	assert.True(t, ok)
+	assert.Equal(t, 5*time.Minute, timeout)
+
+	_, ok = healthcheckCommandArgument("nodes")
 	assert.False(t, ok)
 }
 

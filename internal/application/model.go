@@ -38,6 +38,7 @@ type Model struct {
 	Disks                  DisksState
 	Network                NetworkState
 	Dmesg                  DmesgState
+	HealthCheck            ClusterHealthState
 	Netstat                SocketState
 	Mounts                 MountState
 	Memory                 MemoryState
@@ -55,6 +56,7 @@ type Model struct {
 	diskReader             ports.DiskReader
 	networkReader          ports.NetworkReader
 	dmesgReader            ports.DmesgReader
+	clusterHealthReader    ports.ClusterHealthReader
 	netstatReader          ports.NetstatReader
 	mountReader            ports.MountReader
 	memoryReader           ports.MemoryReader
@@ -65,6 +67,8 @@ type Model struct {
 	logGeneration          uint64
 	dmesgStream            ports.DmesgStream
 	dmesgGeneration        uint64
+	clusterHealthStream    ports.ClusterHealthStream
+	healthGeneration       uint64
 	Notice                 string
 	Logs                   LogState
 	PendingAction          *PendingAction
@@ -207,6 +211,18 @@ type DmesgState struct {
 	Err       string
 	EOF       bool
 	Following bool
+}
+
+// ClusterHealthState is the streaming server-side cluster health check view.
+// VerdictReady is true only after a clean EOF, so an interrupted or failed
+// check never reads as healthy.
+type ClusterHealthState struct {
+	Status       LoadStatus
+	Request      domain.ClusterHealthRequest
+	Lines        []string
+	Err          string
+	EOF          bool
+	VerdictReady bool
 }
 
 type ResourceBrowserState struct {
@@ -514,6 +530,7 @@ type SessionOpened struct {
 	Netstat           ports.NetstatReader
 	Mounts            ports.MountReader
 	Memory            ports.MemoryReader
+	ClusterHealth     ports.ClusterHealthReader
 	ResourceKinds     ports.ResourceKindReader
 	Resources         ports.ResourceInstanceReader
 	KubernetesNodes   ports.KubernetesNodeReader
@@ -839,6 +856,38 @@ type dmesgOpened struct {
 }
 
 func (dmesgOpened) applicationMessage() {}
+
+type OpenClusterHealth struct {
+	Request domain.ClusterHealthRequest
+}
+
+func (OpenClusterHealth) applicationMessage() {}
+
+type CloseClusterHealth struct{}
+
+func (CloseClusterHealth) applicationMessage() {}
+
+type ClearClusterHealth struct{}
+
+func (ClearClusterHealth) applicationMessage() {}
+
+type clusterHealthOpened struct {
+	Generation       uint64
+	StreamGeneration uint64
+	Stream           ports.ClusterHealthStream
+	Err              error
+}
+
+func (clusterHealthOpened) applicationMessage() {}
+
+type ClusterHealthProgressLoaded struct {
+	Generation       uint64
+	StreamGeneration uint64
+	Progress         domain.ClusterHealthProgress
+	Err              error
+}
+
+func (ClusterHealthProgressLoaded) applicationMessage() {}
 
 type DmesgBatchLoaded struct {
 	Generation       uint64

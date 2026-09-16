@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -20,6 +21,7 @@ const (
 	commandOverview
 	commandProblems
 	commandResources
+	commandClusterHealth
 )
 
 type commandModel struct {
@@ -30,7 +32,7 @@ type commandModel struct {
 func newCommandModel() commandModel {
 	input := textinput.New()
 	input.Prompt = "COMMAND :"
-	input.Placeholder = "nodes, services, or contexts"
+	input.Placeholder = "nodes, services, contexts, or healthcheck"
 	input.CharLimit = 64
 	return commandModel{input: input}
 }
@@ -53,12 +55,35 @@ func resolveCommand(value string) command {
 		return commandProblems
 	case "resources", "res":
 		return commandResources
+	case "healthcheck", "hc":
+		return commandClusterHealth
 	default:
 		if _, ok := resourcesCommandArgument(value); ok {
 			return commandResources
 		}
+		if _, ok := healthcheckCommandArgument(value); ok {
+			return commandClusterHealth
+		}
 		return commandUnknown
 	}
+}
+
+// healthcheckCommandArgument parses the optional trailing Go duration from a
+// ":healthcheck <duration>" command. An unparseable or non-positive duration
+// is rejected so the command stays a closed enum (it resolves to
+// commandUnknown).
+func healthcheckCommandArgument(value string) (time.Duration, bool) {
+	for _, prefix := range []string{"healthcheck ", "hc "} {
+		if strings.HasPrefix(value, prefix) {
+			argument := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+			timeout, err := time.ParseDuration(argument)
+			if err != nil || timeout <= 0 {
+				return 0, false
+			}
+			return timeout, true
+		}
+	}
+	return 0, false
 }
 
 func resourcesCommandArgument(value string) (string, bool) {

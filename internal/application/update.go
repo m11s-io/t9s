@@ -2,10 +2,15 @@ package application
 
 import (
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
 )
+
+// maxClusterHealthLines bounds the retained health-check transcript so a
+// misbehaving server cannot grow the view without limit.
+const maxClusterHealthLines = 500
 
 func NewModel(contextOverride string) (Model, Effect) {
 	model := Model{
@@ -51,6 +56,9 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Dmesg = DmesgState{}
 		model.dmesgStream = nil
 		model.dmesgGeneration++
+		model.HealthCheck = ClusterHealthState{}
+		model.clusterHealthStream = nil
+		model.healthGeneration++
 		model.Netstat = SocketState{}
 		model.Mounts = MountState{}
 		model.Memory = MemoryState{}
@@ -83,6 +91,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.diskReader = message.Disks
 		model.networkReader = message.Network
 		model.dmesgReader = message.Dmesg
+		model.clusterHealthReader = message.ClusterHealth
 		model.netstatReader = message.Netstat
 		model.mountReader = message.Mounts
 		model.memoryReader = message.Memory
@@ -596,6 +605,60 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		return model, readDmesgBatch(model.dmesgStream, message.Generation, message.StreamGeneration)
 
+	case OpenClusterHealth:
+		oldStream := model.clusterHealthStream
+		model.healthGeneration++
+		model.clusterHealthStream = nil
+		model.HealthCheck = ClusterHealthState{Status: Loading, Request: message.Request}
+		return model, openClusterHealth(model.clusterHealthReader, message.Request, model.Generation, model.healthGeneration, oldStream)
+
+	case CloseClusterHealth:
+		stream := model.clusterHealthStream
+		model.healthGeneration++
+		model.clusterHealthStream = nil
+		model.HealthCheck = ClusterHealthState{}
+		return model, closeClusterHealth(stream)
+
+	case ClearClusterHealth:
+		model.HealthCheck.Lines = nil
+		return model, nil
+
+	case clusterHealthOpened:
+		if message.Generation != model.Generation || message.StreamGeneration != model.healthGeneration {
+			return model, closeClusterHealth(message.Stream)
+		}
+		if message.Err != nil || message.Stream == nil {
+			model.HealthCheck.Status = Failed
+			model.HealthCheck.Err = "cluster health check unavailable"
+			return model, nil
+		}
+		model.clusterHealthStream = message.Stream
+		model.HealthCheck.Status = Ready
+		return model, readClusterHealthBatch(message.Stream, message.Generation, message.StreamGeneration)
+
+	case ClusterHealthProgressLoaded:
+		if message.Generation != model.Generation || model.healthGeneration != 0 && message.StreamGeneration != model.healthGeneration {
+			return model, nil
+		}
+		if message.Progress.Message != "" {
+			model.HealthCheck.Lines = append(model.HealthCheck.Lines, message.Progress.Message)
+			if excess := len(model.HealthCheck.Lines) - maxClusterHealthLines; excess > 0 {
+				model.HealthCheck.Lines = append([]string(nil), model.HealthCheck.Lines[excess:]...)
+			}
+		}
+		if message.Err != nil || message.Progress.Err != "" {
+			model.HealthCheck.Status = Failed
+			model.HealthCheck.Err = "cluster health check unavailable"
+			return model, nil
+		}
+		if message.Progress.EOF {
+			model.HealthCheck.EOF = true
+			model.HealthCheck.VerdictReady = true
+			model.HealthCheck.Status = Ready
+			return model, nil
+		}
+		return model, readClusterHealthBatch(model.clusterHealthStream, message.Generation, message.StreamGeneration)
+
 	case RequestAction:
 		// Defense in depth: the TUI already refuses to send RequestAction
 		// while writes are disabled, but the reducer must not trust that —
@@ -1025,6 +1088,37 @@ func controlPlaneHostnames(nodes []domain.NodeSnapshot) []string {
 		hostnames = append(hostnames, target)
 	}
 	return hostnames
+}
+
+// ClusterHealthRequestFromNodes builds the ClusterInfo request from the current
+// node snapshots. Only parseable IP addresses are included: the Talos server
+// rejects hostnames, so Names are used only when they themselves parse as an
+// IP. Empty lists are tolerated — the server falls back to its own discovery.
+func ClusterHealthRequestFromNodes(nodes []domain.NodeSnapshot, timeout time.Duration) domain.ClusterHealthRequest {
+	var controlPlane, workers []string
+	for _, node := range nodes {
+		switch node.Role {
+		case domain.NodeRoleControl:
+			controlPlane = appendNodeIP(controlPlane, node)
+		case domain.NodeRoleWorker:
+			workers = appendNodeIP(workers, node)
+		}
+	}
+	return domain.ClusterHealthRequest{ControlPlaneNodes: controlPlane, WorkerNodes: workers, WaitTimeout: timeout}
+}
+
+func appendNodeIP(target []string, node domain.NodeSnapshot) []string {
+	for _, candidate := range node.Addresses {
+		if _, err := netip.ParseAddr(candidate); err == nil {
+			return append(target, candidate)
+		}
+	}
+	if node.Name != "" {
+		if _, err := netip.ParseAddr(node.Name); err == nil {
+			return append(target, node.Name)
+		}
+	}
+	return target
 }
 
 // ControlPlaneHostnamesForTest exposes controlPlaneHostnames for tests in

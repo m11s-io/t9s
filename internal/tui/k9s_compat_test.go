@@ -18,6 +18,7 @@ func TestK9sCompatibilityActionMatrix(t *testing.T) {
 		{name: "help is a child view", view: viewHelp, keys: []string{"q/Esc"}},
 		{name: "logs use familiar follow controls", view: viewServiceLogs, keys: []string{"?", ":", "/", "s", "w", "C", "r", "q/Esc"}},
 		{name: "dmesg streams like logs", view: viewDmesg, keys: []string{"?", ":", "/", "s", "w", "C", "r", "q/Esc"}},
+		{name: "healthcheck streams like dmesg", view: viewClusterHealth, keys: []string{"?", ":", "/", "C", "r", "q/Esc"}},
 		{name: "netstat is a read-only list", view: viewNetstat, keys: []string{"?", ":", "/", "r"}},
 		{name: "mounts is a read-only list", view: viewMounts, keys: []string{"?", ":", "/", "r"}},
 		{name: "memory is a read-only list", view: viewMemory, keys: []string{"?", ":", "/", "r"}},

@@ -46,24 +46,25 @@ func TestEtcdOperationsMembershipSurface(t *testing.T) {
 // below fails until EtcdOperations() is added to the Session interface.
 type sessionStub struct{}
 
-func (sessionStub) Nodes() NodeReader                 { return nil }
-func (sessionStub) NodeActions() NodeController       { return nil }
-func (sessionStub) ServiceActions() ServiceController { return nil }
-func (sessionStub) Services() ServiceReader           { return nil }
-func (sessionStub) ServiceLogs() ServiceLogReader     { return nil }
-func (sessionStub) Events() EventReader               { return nil }
-func (sessionStub) Etcd() EtcdReader                  { return nil }
-func (sessionStub) Processes() ProcessReader          { return nil }
-func (sessionStub) Disks() DiskReader                 { return nil }
-func (sessionStub) Network() NetworkReader            { return nil }
-func (sessionStub) Dmesg() DmesgReader                { return nil }
-func (sessionStub) Netstat() NetstatReader            { return nil }
-func (sessionStub) Mounts() MountReader               { return nil }
-func (sessionStub) Memory() MemoryReader              { return nil }
-func (sessionStub) ResourceKinds() ResourceKindReader { return nil }
-func (sessionStub) Resources() ResourceInstanceReader { return nil }
-func (sessionStub) EtcdOperations() EtcdOperations    { return stubEtcdOperations{} }
-func (sessionStub) Close() error                      { return nil }
+func (sessionStub) Nodes() NodeReader                  { return nil }
+func (sessionStub) NodeActions() NodeController        { return nil }
+func (sessionStub) ServiceActions() ServiceController  { return nil }
+func (sessionStub) Services() ServiceReader            { return nil }
+func (sessionStub) ServiceLogs() ServiceLogReader      { return nil }
+func (sessionStub) Events() EventReader                { return nil }
+func (sessionStub) Etcd() EtcdReader                   { return nil }
+func (sessionStub) Processes() ProcessReader           { return nil }
+func (sessionStub) Disks() DiskReader                  { return nil }
+func (sessionStub) Network() NetworkReader             { return nil }
+func (sessionStub) Dmesg() DmesgReader                 { return nil }
+func (sessionStub) Netstat() NetstatReader             { return nil }
+func (sessionStub) Mounts() MountReader                { return nil }
+func (sessionStub) Memory() MemoryReader               { return nil }
+func (sessionStub) ClusterHealth() ClusterHealthReader { return nil }
+func (sessionStub) ResourceKinds() ResourceKindReader  { return nil }
+func (sessionStub) Resources() ResourceInstanceReader  { return nil }
+func (sessionStub) EtcdOperations() EtcdOperations     { return stubEtcdOperations{} }
+func (sessionStub) Close() error                       { return nil }
 
 var _ Session = sessionStub{}
 
