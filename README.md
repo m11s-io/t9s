@@ -32,7 +32,7 @@ Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
 implemented.
 
-The supported Talos version is **v1.13.3**. Talos upgrades are node-level operations: t9s upgrades the Talos OS on the selected node; it does not perform a Kubernetes control-plane upgrade.
+The supported Talos version is **v1.14.1**. Talos upgrades are node-level operations: t9s upgrades the Talos OS on the selected node; it does not perform a Kubernetes control-plane upgrade.
 
 ## Install
 
@@ -47,7 +47,7 @@ download, checksum verification, and `PATH` setup steps.
 
 ## Build, test, and run
 
-Go 1.26.3 is required.
+Go 1.27.1 is required.
 
 ```bash
 go build ./cmd/t9s

@@ -24,8 +24,8 @@ describe("documentation MVP", () => {
 
   test("records supported Talos and Go versions", async () => {
     const install = await readFile(new URL("../src/content/docs/getting-started/installation.md", import.meta.url), "utf8");
-    expect(install).toContain("Talos v1.13.3");
-    expect(install).toContain("Go 1.26.3");
+    expect(install).toContain("Talos v1.14.1");
+    expect(install).toContain("Go 1.27.1");
   });
 
   test("documents both Talos configuration variables", async () => {

@@ -3,7 +3,7 @@ title: Contributing
 description: Build, test, and extend t9s without crossing its architecture boundaries.
 ---
 
-Use Go 1.26.3 on Linux to match CI. The supported Talos SDK and cluster version is v1.13.3.
+Use Go 1.27.1 on Linux to match CI. The supported Talos SDK and cluster version is v1.14.1.
 
 ```bash
 go build ./cmd/t9s

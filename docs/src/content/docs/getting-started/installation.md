@@ -5,8 +5,8 @@ description: Build and run t9s against a Talos Linux cluster.
 
 ## Requirements
 
-- Go 1.26.3 (only required to build from source)
-- Access to a Talos v1.13.3 cluster
+- Go 1.27.1 (only required to build from source)
+- Access to a Talos v1.14.1 cluster
 - A valid Talos configuration with at least one context
 
 ## Homebrew
