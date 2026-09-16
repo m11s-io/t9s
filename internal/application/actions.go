@@ -157,6 +157,166 @@ func etcdQuorumBlockReason(etcd EtcdState, targets []string) string {
 	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
 }
 
+// isDestructiveEtcdMembership reports whether a kind changes cluster
+// membership and therefore requires a snapshot of the target first.
+func isDestructiveEtcdMembership(kind EtcdActionKind) bool {
+	return kind == EtcdActionRemoveMember || kind == EtcdActionLeaveCluster
+}
+
+// etcdMembershipAssessment classifies a single-member removal/leave against
+// the current snapshot. Unlike assessEtcdQuorum (which takes node-name
+// targets), it resolves the member by numeric ID and/or hostname.
+type etcdMembershipAssessment struct {
+	found   bool
+	voter   bool
+	healthy bool
+	// target is the matched member's own hostname (or decimal ID), so the
+	// quorum assessment counts the member the caller actually matched rather
+	// than an echoed caller string.
+	target string
+	reason string
+}
+
+// assessEtcdMembership locates the member being changed. found is false when
+// etcd data is unavailable (Loading/Failed/Idle) or the member is absent from
+// the last snapshot; either way the caller cannot compute impact.
+func assessEtcdMembership(etcd EtcdState, memberID uint64, memberHostname string) etcdMembershipAssessment {
+	if etcd.Status != Ready && etcd.Status != Partial {
+		return etcdMembershipAssessment{reason: "etcd membership unknown (etcd data unavailable)"}
+	}
+	for _, member := range etcd.Value.Members {
+		if memberMatchesMember(member, memberID, memberHostname) {
+			return etcdMembershipAssessment{
+				found:   true,
+				voter:   !member.IsLearner,
+				healthy: member.StatusKnown && len(member.Errors) == 0,
+				target:  membershipTargetForMember(member),
+			}
+		}
+	}
+
+	return etcdMembershipAssessment{reason: "member is not in the current etcd snapshot"}
+}
+
+func memberMatchesMember(member domain.EtcdMemberSnapshot, memberID uint64, memberHostname string) bool {
+	if memberHostname != "" && member.Hostname == memberHostname {
+		return true
+	}
+
+	return memberID != 0 && member.MemberID == memberID
+}
+
+// membershipTargetForMember is the target string fed to assessEtcdQuorum for a
+// matched member: its hostname when present, otherwise the decimal member ID
+// (matching memberMatchesAnyTarget's numeric comparison).
+func membershipTargetForMember(member domain.EtcdMemberSnapshot) string {
+	if strings.TrimSpace(member.Hostname) != "" {
+		return member.Hostname
+	}
+	if member.MemberID != 0 {
+		return strconv.FormatUint(member.MemberID, 10)
+	}
+
+	return ""
+}
+
+// etcdMembershipBlockReason is the membership-specific hard gate. It composes
+// the quorum assessment with membership facts the generic gate cannot see:
+// an unknown snapshot, an absent member, and a forced Remove of a member that
+// is still healthy (which must go through graceful leave instead). Learners
+// do not vote, so removing one is never quorum-blocked.
+func etcdMembershipBlockReason(etcd EtcdState, kind EtcdActionKind, memberID uint64, memberHostname string) string {
+	assessment := assessEtcdMembership(etcd, memberID, memberHostname)
+	if !assessment.found {
+		return "refusing: " + assessment.reason
+	}
+	if kind == EtcdActionRemoveMember && assessment.healthy {
+		return "refusing: member is healthy — use leave (L)"
+	}
+	if assessment.target == "" {
+		return "refusing: cannot identify the member to change"
+	}
+	quorum := assessEtcdQuorum(etcd, []string{assessment.target})
+	if !quorum.known {
+		return "refusing: etcd quorum impact unknown"
+	}
+	// Irreversible membership surgery uses the pessimistic predicate: an
+	// unknown peer is treated as lost, not as optimistically healthy. A read
+	// blip must not authorize a removal that could strand the cluster.
+	if quorum.belowQuorum() {
+		return fmt.Sprintf("refusing: would drop etcd to %d/%d — below quorum (need %d)", quorum.remaining, quorum.voters, quorum.floor)
+	}
+
+	return ""
+}
+
+// etcdMembershipWarning is the advisory text for a membership change that is
+// allowed but leaves no fault tolerance. A learner target is quorum-neutral
+// and never warns. The block reason is authoritative; this is display only.
+func etcdMembershipWarning(etcd EtcdState, _ EtcdActionKind, memberID uint64, memberHostname string) string {
+	assessment := assessEtcdMembership(etcd, memberID, memberHostname)
+	if !assessment.found || !assessment.voter {
+		return ""
+	}
+	if assessment.target == "" {
+		return ""
+	}
+	quorum := assessEtcdQuorum(etcd, []string{assessment.target})
+	if !quorum.known {
+		return quorum.reason
+	}
+	if quorum.remaining <= quorum.floor {
+		return fmt.Sprintf("would drop etcd to %d/%d — no fault tolerance (need %d)", quorum.remaining, quorum.voters, quorum.floor)
+	}
+
+	return ""
+}
+
+// etcdSnapshotNodeFor picks a source member for the mandatory pre-removal
+// snapshot: a healthy voter other than the target, so the snapshot is taken
+// from a live node whenever one exists. When no other healthy voter is known
+// it falls back to the target's own hostname (a local snapshot is still
+// valid; the caller surfaces the degraded source in the prompt).
+func etcdSnapshotNodeFor(etcd EtcdState, memberID uint64, memberHostname string) string {
+	if etcd.Status == Ready || etcd.Status == Partial {
+		for _, member := range etcd.Value.Members {
+			if member.IsLearner || member.Hostname == "" {
+				continue
+			}
+			if memberMatchesMember(member, memberID, memberHostname) {
+				continue
+			}
+			if member.StatusKnown && len(member.Errors) == 0 {
+				return member.Hostname
+			}
+		}
+	}
+
+	return memberHostname
+}
+
+// firstOtherControlPlaneHostname returns a control-plane hostname other than
+// exclude, used to address a forced removal when the snapshot source is the
+// (possibly dead) target itself.
+func firstOtherControlPlaneHostname(nodes []domain.NodeSnapshot, exclude string) string {
+	for _, hostname := range controlPlaneHostnames(nodes) {
+		if hostname != exclude {
+			return hostname
+		}
+	}
+
+	return ""
+}
+
+// appendWarning joins a new advisory onto an existing one.
+func appendWarning(existing, extra string) string {
+	if existing == "" {
+		return extra
+	}
+
+	return existing + "; " + extra
+}
+
 // ValidateEtcdSnapshotPath rejects paths that cannot name a snapshot file:
 // empty/whitespace, directory-like (trailing separator, "." or ".."), or
 // the reserved ".part" suffix the adapter uses for its atomic write. It does

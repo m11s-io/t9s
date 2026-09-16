@@ -176,15 +176,14 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				if m.application.PendingEtcdAction != nil {
 					// Confirm through the reducer: a blocked confirm is refused and
 					// leaves the prompt in place, and the reducer is what builds the
-					// maintenance effect, so nothing fires before a successful confirm.
+					// effect, so nothing fires before a successful confirm. A
+					// destructive action stays pending across the snapshot stage, so
+					// dispatch whatever effect the reducer returned.
 					if m.application.PendingEtcdAction.Blocked != "" {
 						return m, nil
 					}
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.ConfirmEtcdAction{})
-					if m.application.PendingEtcdAction != nil {
-						return m, nil
-					}
 					return m, m.command(effect)
 				}
 				pending := *m.application.PendingServiceAction
@@ -494,6 +493,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 						return m.requestEtcdAction(application.EtcdActionDefragment, member)
 					case "A":
 						return m.requestEtcdAction(application.EtcdActionDisarmAlarms, member)
+					case "R":
+						return m.requestEtcdAction(application.EtcdActionRemoveMember, member)
+					case "L":
+						return m.requestEtcdAction(application.EtcdActionLeaveCluster, member)
 					}
 				}
 			}

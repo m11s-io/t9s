@@ -220,3 +220,44 @@ func TestEtcdOperationsDisarmAlarmsCallsClient(t *testing.T) {
 	require.NoError(t, operations.DisarmAlarms(t.Context(), "cp-1"))
 	assert.Equal(t, []string{"cp-1"}, client.disarmNodes)
 }
+
+func TestEtcdOperationsRemoveMemberByIDSendsNumericID(t *testing.T) {
+	client := &fakeEtcdClient{}
+	operations := newEtcdOperations(client)
+
+	require.NoError(t, operations.RemoveMemberByID(t.Context(), "cp-2", 7))
+
+	assert.Equal(t, []string{"cp-2"}, client.removeMemberNodes)
+	assert.Equal(t, []uint64{7}, client.removeMemberIDs)
+}
+
+func TestEtcdOperationsRemoveMemberByIDWrapsError(t *testing.T) {
+	client := &fakeEtcdClient{removeMemberErr: errors.New("member not found")}
+	operations := newEtcdOperations(client)
+
+	err := operations.RemoveMemberByID(t.Context(), "cp-2", 7)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cp-2")
+	assert.Contains(t, err.Error(), "member not found")
+}
+
+func TestEtcdOperationsLeaveClusterTargetsMemberNode(t *testing.T) {
+	client := &fakeEtcdClient{}
+	operations := newEtcdOperations(client)
+
+	require.NoError(t, operations.LeaveCluster(t.Context(), "cp-1"))
+
+	assert.Equal(t, []string{"cp-1"}, client.leaveNodes)
+}
+
+func TestEtcdOperationsLeaveClusterWrapsError(t *testing.T) {
+	client := &fakeEtcdClient{leaveErr: errors.New("not a member")}
+	operations := newEtcdOperations(client)
+
+	err := operations.LeaveCluster(t.Context(), "cp-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cp-1")
+	assert.Contains(t, err.Error(), "not a member")
+}

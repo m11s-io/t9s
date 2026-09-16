@@ -5,14 +5,16 @@ description: Snapshot, defragment, and disarm alarms from the :etcd view.
 
 All actions on this page require `--enable-writes` (or `T9S_ENABLE_WRITES`) and
 run only after their own prompt: a path prompt for `s`, an inline `(y/n)`
-confirmation for `d`/`A`. With writes disabled the keys below are inert and
-the read-only membership view is unchanged.
+confirmation for `R`/`L`/`d`/`A`. With writes disabled the keys below are inert
+and the read-only membership view is unchanged.
 
 Open `:etcd` (`:et`) and select a member row.
 
 | Key | Action | Notes |
 | --- | --- | --- |
 | `s` | Snapshot the selected member's etcd to a local file. | Opens a path prompt prefilled with a timestamped default. |
+| `R` | **Remove** the selected member by ID (forced). | Destructive: snapshots first, then hard-gated on quorum. Only for a dead member. |
+| `L` | **Leave** the cluster gracefully. | Destructive: snapshots first, then hard-gated on quorum. For a live member. |
 | `d` | Defragment the selected member's etcd data directory. | Resource-heavy; acts on one node at a time. |
 | `A` | Disarm the selected member's active etcd alarms. | Does not reclaim disk and does not repair corruption. |
 
@@ -45,6 +47,40 @@ like innocuous metadata.
 
 Failed snapshots have no effect on cluster state; the notice reports the
 error and nothing on the node is changed.
+
+## Remove member (`R`) and leave cluster (`L`)
+
+These are the only actions that change etcd membership. They are irreversible,
+so t9s enforces two safety rules before either can run.
+
+**1. Snapshot before destructive.** Confirming `R`/`L` does not fire the
+membership RPC immediately. t9s first takes a full local snapshot of the
+target cluster to a timestamped path (shown in the confirm prompt, e.g.
+`after snapshot to etcd-<context>-<hostname>-20260818T231500Z.db`). If that
+snapshot fails or is cancelled, the removal is aborted with the error and
+**no membership change happens**. The snapshot is written with the same
+atomic, checksum-verified, no-clobber guarantees as `s` above. The snapshot is
+taken from a healthy voter other than the target when one exists.
+
+**2. Quorum hard gate.** Removing or leaving a voting member that would drop
+the cluster below quorum is refused outright — the prompt reports the refusal
+and `y` does nothing. Unknown etcd state (`Loading`/`Failed`/`Idle`) is
+likewise refused for membership changes, not merely warned about, because a
+removal is irreversible. Removing a **learner** is quorum-neutral and is not
+blocked by the gate (it still requires the snapshot).
+
+### `R` vs `L`
+
+- Use **`L` (leave)** for a member that is still running and reachable. The
+  RPC is executed by the member itself, so it is addressed to the selected
+  member's own node, and the member shuts down cleanly as it leaves.
+- Use **`R` (remove)** only for a member that is already dead/unreachable.
+  The RPC is addressed to a live control-plane member. Forcing the removal of
+  a member that is still reporting healthy is refused — t9s steers you to `L`.
+
+Add `--enable-writes` first, select the member row, then `R` or `L`. After a
+successful change the `:etcd` view re-reads membership so the member list
+reflects the new cluster.
 
 ## Defragment (`d`)
 

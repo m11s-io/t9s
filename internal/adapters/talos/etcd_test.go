@@ -29,6 +29,12 @@ type fakeEtcdClient struct {
 	defragErr      error
 	disarmNodes    []string
 	disarmErr      error
+
+	removeMemberNodes []string
+	removeMemberIDs   []uint64
+	removeMemberErr   error
+	leaveNodes        []string
+	leaveErr          error
 }
 
 func (c *fakeEtcdClient) EtcdMemberList(_ context.Context, node string, _ *machineapi.EtcdMemberListRequest) (*machineapi.EtcdMemberListResponse, error) {
@@ -77,6 +83,17 @@ func (c *fakeEtcdClient) EtcdAlarmDisarm(_ context.Context, node string) (*machi
 		return nil, c.disarmErr
 	}
 	return &machineapi.EtcdAlarmDisarmResponse{}, nil
+}
+
+func (c *fakeEtcdClient) EtcdRemoveMemberByID(_ context.Context, node string, req *machineapi.EtcdRemoveMemberByIDRequest) error {
+	c.removeMemberNodes = append(c.removeMemberNodes, node)
+	c.removeMemberIDs = append(c.removeMemberIDs, req.GetMemberId())
+	return c.removeMemberErr
+}
+
+func (c *fakeEtcdClient) EtcdLeaveCluster(_ context.Context, node string, _ *machineapi.EtcdLeaveClusterRequest) error {
+	c.leaveNodes = append(c.leaveNodes, node)
+	return c.leaveErr
 }
 
 func membersResponse(members ...*machineapi.EtcdMember) *machineapi.EtcdMemberListResponse {

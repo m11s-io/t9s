@@ -17,6 +17,12 @@ type EtcdOperations interface {
 	// path. Single node only. The implementation writes atomically
 	// (<path>.part -> <path>) and verifies the sha256 trailer.
 	Snapshot(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error)
+	// RemoveMemberByID forcibly removes an etcd member by numeric member ID.
+	// Used for dead/unreachable members; prefer LeaveCluster for live ones.
+	RemoveMemberByID(ctx context.Context, node string, memberID uint64) error
+	// LeaveCluster makes the member reached at node leave the cluster
+	// gracefully. Must be addressed to the member's own node.
+	LeaveCluster(ctx context.Context, node string) error
 	// Defragment releases unused space in the etcd data dir on node.
 	Defragment(ctx context.Context, node string) error
 	// DisarmAlarms disarms active etcd alarms (NOSPACE, CORRUPT, ...) on node.

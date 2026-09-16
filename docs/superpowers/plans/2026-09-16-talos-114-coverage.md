@@ -124,11 +124,14 @@ These apply to every new capability (from report 05):
   adapter controller, `ActionKind`, gated reducer (`!WritesEnabled` or upgrade
   active), warning computation, effect builder, key bound only when
   `writeActionsEnabled()`, confirm prompt, and `security.md`.
-- **Safety:** conservative is correct. Reset/wipe, etcd membership changes,
-  bootstrap/recover, and block-device wipe require a typed target confirmation,
-  not just `(y/n)`. Never proceed when the operation would drop etcd below
-  quorum (existing `computeEtcdQuorumWarning` becomes a hard gate); learners do
-  not count toward quorum. Snapshot before membership surgery.
+- **Safety:** conservative is correct. Never proceed when the operation would
+  drop etcd below quorum (existing `computeEtcdQuorumWarning` becomes a hard
+  gate); learners do not count toward quorum. Snapshot before membership
+  surgery. Typed target confirmation (not just `(y/n)`) remains the target for
+  reset/wipe, bootstrap/recover, and block-device wipe. Etcd membership changes
+  currently ship with an explicit `(y/n)` confirm plus the mandatory
+  snapshot-first pipeline and quorum hard gate; upgrading them to a typed
+  target confirmation is a tracked follow-up (blueprint open question #2).
 - **Health:** missing data is `unknown`, never `healthy` (`evaluableStatus`
   guards rules). Add new `RuleID`s for every new resource class.
 - **Tests/docs are part of done:** fake in `internal/testkit/fakes.go`, adapter

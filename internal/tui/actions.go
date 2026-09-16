@@ -55,6 +55,8 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 		if writesEnabled {
 			hints = append(hints,
 				actionHint{Key: "s", Label: "Snapshot"},
+				actionHint{Key: "R", Label: "Remove"},
+				actionHint{Key: "L", Label: "Leave"},
 				actionHint{Key: "d", Label: "Defragment"},
 				actionHint{Key: "A", Label: "Disarm"},
 			)

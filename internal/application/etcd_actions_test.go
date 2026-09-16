@@ -154,6 +154,72 @@ func TestConfirmEtcdActionRefusesBlockedAction(t *testing.T) {
 	require.NotNil(t, model.PendingEtcdAction, "a blocked etcd action must not be consumed by confirm")
 }
 
+func TestRequestEtcdActionClearsStaleSnapshotState(t *testing.T) {
+	model := application.Model{Generation: 1, WritesEnabled: true, ContextName: "prod", EtcdSnapshot: application.EtcdSnapshotState{Status: application.Ready, Result: domain.EtcdSnapshotResult{Path: "/old.db"}}}
+
+	model, _ = application.Update(model, application.RequestEtcdAction{Kind: application.EtcdActionDefragment, MemberID: 1, MemberHostname: "cp-1", Node: "cp-1"})
+
+	assert.Equal(t, application.EtcdSnapshotState{}, model.EtcdSnapshot, "a pending membership action must not let a stale snapshot notice mask its outcome")
+}
+
+func TestEtcdSnapshotSucceededIgnoresUnrelatedSnapshotDuringMembership(t *testing.T) {
+	model := application.Model{
+		Generation: 1,
+		PendingEtcdAction: &application.PendingEtcdAction{
+			Kind: application.EtcdActionRemoveMember, Stage: application.EtcdStageSnapshot,
+			MemberID: 1, MemberHostname: "cp-1", SnapshotNode: "cp-2", SnapshotPath: "/tmp/snap.db",
+		},
+	}
+
+	model, effect := application.Update(model, application.EtcdSnapshotSucceeded{Generation: 1, Result: domain.EtcdSnapshotResult{Node: "cp-9", Path: "/other.db"}})
+
+	assert.Nil(t, effect, "a snapshot from a different source must not satisfy the destructive stage")
+	require.NotNil(t, model.PendingEtcdAction)
+	assert.Equal(t, application.EtcdStageSnapshot, model.PendingEtcdAction.Stage)
+}
+
+func TestRequestEtcdActionRemoveFallsBackToLiveControlPlaneNode(t *testing.T) {
+	model := application.Model{
+		Generation:    1,
+		WritesEnabled: true,
+		ContextName:   "prod",
+		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+			{Name: "cp-1", Role: domain.NodeRoleControl},
+			{Name: "cp-2", Role: domain.NodeRoleControl},
+		}}},
+		Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+			{MemberID: 1, Hostname: "cp-1", StatusKnown: false},
+		}}},
+	}
+
+	model, _ = application.Update(model, application.RequestEtcdAction{Kind: application.EtcdActionRemoveMember, MemberID: 1, MemberHostname: "cp-1", Node: "cp-1"})
+
+	require.NotNil(t, model.PendingEtcdAction)
+	assert.Equal(t, "cp-2", model.PendingEtcdAction.Node, "force-remove must be addressed to a live node, not the dead target")
+	assert.Contains(t, model.PendingEtcdAction.Warning, "snapshot source is the target")
+}
+
+func TestConfirmEtcdActionRefreshesWarning(t *testing.T) {
+	model := application.Model{
+		Generation:    1,
+		WritesEnabled: true,
+		Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+			{Hostname: "cp-1", MemberID: 1, StatusKnown: true},
+			{Hostname: "cp-2", MemberID: 2, StatusKnown: true},
+			{Hostname: "cp-3", MemberID: 3, StatusKnown: true},
+		}}},
+		PendingEtcdAction: &application.PendingEtcdAction{
+			Kind: application.EtcdActionLeaveCluster, Stage: application.EtcdStageIdle,
+			MemberID: 1, MemberHostname: "cp-1", Node: "cp-1", SnapshotNode: "cp-1", SnapshotPath: "/tmp/snap.db",
+		},
+	}
+
+	model, _ = application.Update(model, application.ConfirmEtcdAction{})
+
+	require.NotNil(t, model.PendingEtcdAction)
+	assert.Contains(t, model.PendingEtcdAction.Warning, "would drop etcd to 2/3")
+}
+
 func TestRequestEtcdActionRequiresWritesEnabled(t *testing.T) {
 	model := application.Model{Generation: 1}
 

@@ -45,10 +45,12 @@ These act on the selected row in `:etcd`:
 | Key | Result |
 | --- | --- |
 | `s` | Snapshot the selected member's etcd to a local file, behind a path prompt. Requires `--enable-writes`. See [Etcd operations](/guides/etcd-ops/). |
+| `R` | Remove the selected member by ID (forced), behind a confirm prompt. Snapshots first, then refuses if it would drop etcd below quorum. Requires `--enable-writes`. |
+| `L` | Make the selected member leave the cluster gracefully, behind a confirm prompt. Snapshots first, then refuses if it would drop etcd below quorum. Requires `--enable-writes`. |
 | `d` | Defragment the selected member's etcd data directory, behind a confirm prompt. Requires `--enable-writes`. |
 | `A` | Disarm the selected member's active etcd alarms, behind a confirm prompt. Requires `--enable-writes`. |
 
-`s`, `d`, and `A` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
+`s`, `R`, `L`, `d`, and `A` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
 
 ## Service-scoped keys
 

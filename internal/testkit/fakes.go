@@ -120,9 +120,11 @@ func (f *FakeEtcdReader) List(ctx context.Context, controlPlaneNodes []string) (
 }
 
 type FakeEtcdOperations struct {
-	SnapshotFunc     func(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error)
-	DefragmentFunc   func(ctx context.Context, node string) error
-	DisarmAlarmsFunc func(ctx context.Context, node string) error
+	SnapshotFunc         func(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error)
+	RemoveMemberByIDFunc func(ctx context.Context, node string, memberID uint64) error
+	LeaveClusterFunc     func(ctx context.Context, node string) error
+	DefragmentFunc       func(ctx context.Context, node string) error
+	DisarmAlarmsFunc     func(ctx context.Context, node string) error
 }
 
 func (f *FakeEtcdOperations) Snapshot(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
@@ -130,6 +132,20 @@ func (f *FakeEtcdOperations) Snapshot(ctx context.Context, node, path string) (d
 		return domain.EtcdSnapshotResult{Node: node, Path: path}, nil
 	}
 	return f.SnapshotFunc(ctx, node, path)
+}
+
+func (f *FakeEtcdOperations) RemoveMemberByID(ctx context.Context, node string, memberID uint64) error {
+	if f.RemoveMemberByIDFunc == nil {
+		return nil
+	}
+	return f.RemoveMemberByIDFunc(ctx, node, memberID)
+}
+
+func (f *FakeEtcdOperations) LeaveCluster(ctx context.Context, node string) error {
+	if f.LeaveClusterFunc == nil {
+		return nil
+	}
+	return f.LeaveClusterFunc(ctx, node)
 }
 
 func (f *FakeEtcdOperations) Defragment(ctx context.Context, node string) error {

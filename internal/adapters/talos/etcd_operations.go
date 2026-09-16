@@ -128,6 +128,27 @@ func syncDir(dir string) {
 	}
 }
 
+// RemoveMemberByID forcibly removes a member by numeric ID. It is irreversible
+// membership surgery, so callers must snapshot the target first.
+func (o *etcdOperations) RemoveMemberByID(ctx context.Context, node string, memberID uint64) error {
+	if err := o.client.EtcdRemoveMemberByID(ctx, node, &machineapi.EtcdRemoveMemberByIDRequest{MemberId: memberID}); err != nil {
+		return fmt.Errorf("remove etcd member %d via %s: %w", memberID, node, err)
+	}
+
+	return nil
+}
+
+// LeaveCluster makes the member reached at node leave its cluster gracefully.
+// The RPC is executed by the member itself, so node must be that member's own
+// node.
+func (o *etcdOperations) LeaveCluster(ctx context.Context, node string) error {
+	if err := o.client.EtcdLeaveCluster(ctx, node, &machineapi.EtcdLeaveClusterRequest{}); err != nil {
+		return fmt.Errorf("etcd leave cluster on %s: %w", node, err)
+	}
+
+	return nil
+}
+
 func (o *etcdOperations) Defragment(ctx context.Context, node string) error {
 	if _, err := o.client.EtcdDefragment(ctx, node); err != nil {
 		return fmt.Errorf("defragment etcd on %s: %w", node, err)

@@ -447,6 +447,37 @@ func runEtcdSnapshot(operations ports.EtcdOperations, node, path string, generat
 	}
 }
 
+// runEtcdMembership performs the destructive membership RPC. It is only ever
+// reached after the mandatory pre-removal snapshot has succeeded (the reducer
+// emits it from EtcdSnapshotSucceeded) and never for a blocked action.
+func runEtcdMembership(operations ports.EtcdOperations, pending PendingEtcdAction, generation uint64) Effect {
+	fail := func(err error) Message {
+		return EtcdActionFailed{Generation: generation, MemberHostname: pending.MemberHostname, Err: err}
+	}
+	if operations == nil {
+		return func(context.Context, Dependencies) Message {
+			return fail(fmt.Errorf("etcd operations are not configured"))
+		}
+	}
+
+	return func(ctx context.Context, _ Dependencies) Message {
+		var err error
+		switch pending.Kind {
+		case EtcdActionRemoveMember:
+			err = operations.RemoveMemberByID(ctx, pending.Node, pending.MemberID)
+		case EtcdActionLeaveCluster:
+			err = operations.LeaveCluster(ctx, pending.Node)
+		default:
+			err = fmt.Errorf("unsupported etcd membership action %q", pending.Kind)
+		}
+		if err != nil {
+			return fail(err)
+		}
+
+		return EtcdActionSucceeded{Generation: generation, MemberHostname: pending.MemberHostname}
+	}
+}
+
 func runEtcdMaintenance(operations ports.EtcdOperations, pending PendingEtcdAction, generation uint64) Effect {
 	if operations == nil {
 		return func(context.Context, Dependencies) Message {

@@ -18,6 +18,8 @@ type etcdClient interface {
 	EtcdStatus(ctx context.Context, node string) (*machineapi.EtcdStatusResponse, error)
 	EtcdAlarmList(ctx context.Context, node string) (*machineapi.EtcdAlarmListResponse, error)
 	EtcdSnapshot(ctx context.Context, node string, req *machineapi.EtcdSnapshotRequest) (io.ReadCloser, error)
+	EtcdRemoveMemberByID(ctx context.Context, node string, req *machineapi.EtcdRemoveMemberByIDRequest) error
+	EtcdLeaveCluster(ctx context.Context, node string, req *machineapi.EtcdLeaveClusterRequest) error
 	EtcdDefragment(ctx context.Context, node string) (*machineapi.EtcdDefragmentResponse, error)
 	EtcdAlarmDisarm(ctx context.Context, node string) (*machineapi.EtcdAlarmDisarmResponse, error)
 }
@@ -40,6 +42,14 @@ func (c machineryEtcdClient) EtcdAlarmList(ctx context.Context, node string) (*m
 // single-node stream, so it is always addressed to exactly one node.
 func (c machineryEtcdClient) EtcdSnapshot(ctx context.Context, node string, req *machineapi.EtcdSnapshotRequest) (io.ReadCloser, error) {
 	return c.client.EtcdSnapshot(talosclient.WithNode(ctx, node), req)
+}
+
+func (c machineryEtcdClient) EtcdRemoveMemberByID(ctx context.Context, node string, req *machineapi.EtcdRemoveMemberByIDRequest) error {
+	return c.client.EtcdRemoveMemberByID(talosclient.WithNode(ctx, node), req)
+}
+
+func (c machineryEtcdClient) EtcdLeaveCluster(ctx context.Context, node string, req *machineapi.EtcdLeaveClusterRequest) error {
+	return c.client.EtcdLeaveCluster(talosclient.WithNode(ctx, node), req)
 }
 
 func (c machineryEtcdClient) EtcdDefragment(ctx context.Context, node string) (*machineapi.EtcdDefragmentResponse, error) {

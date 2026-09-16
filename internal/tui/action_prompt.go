@@ -74,15 +74,25 @@ func renderPendingEtcdActionPrompt(pending application.PendingEtcdAction) string
 		verb = "Disarm alarms"
 	case application.EtcdActionSnapshot:
 		verb = "Snapshot"
+	case application.EtcdActionRemoveMember:
+		verb = "Remove member"
+	case application.EtcdActionLeaveCluster:
+		verb = "Leave cluster"
 	}
 	target := pending.MemberHostname
 	if target == "" {
 		target = pending.Node
 	}
-	if pending.Warning != "" {
-		return fmt.Sprintf("!! %s — %s %s? (y/n)", truncateWarningTail(pending.Warning, pendingActionWarningBudget), verb, target)
+	// Destructive membership actions make the mandatory pre-removal snapshot
+	// explicit so the operator knows a backup is taken first.
+	suffix := ""
+	if pending.SnapshotPath != "" {
+		suffix = " after snapshot to " + pending.SnapshotPath
 	}
-	return verb + " " + target + "? (y/n)"
+	if pending.Warning != "" {
+		return fmt.Sprintf("!! %s — %s %s%s? (y/n)", truncateWarningTail(pending.Warning, pendingActionWarningBudget), verb, target, suffix)
+	}
+	return verb + " " + target + suffix + "? (y/n)"
 }
 
 func renderPendingServiceActionPrompt(pending application.PendingServiceAction) string {

@@ -2,6 +2,7 @@ package application
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -198,6 +199,20 @@ func Update(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation {
 			return model, nil
 		}
+		// Destructive membership pipeline: the snapshot is the mandatory first
+		// step. Only after it succeeds does the membership RPC run.
+		// Identity check: only the snapshot this destructive action asked for
+		// may satisfy the stage. An unrelated standalone snapshot that happens
+		// to complete first falls through to the standalone branch instead of
+		// unlocking a membership change with the wrong backup.
+		if model.PendingEtcdAction != nil && model.PendingEtcdAction.Stage == EtcdStageSnapshot &&
+			message.Result.Node == model.PendingEtcdAction.SnapshotNode &&
+			message.Result.Path == model.PendingEtcdAction.SnapshotPath {
+			pending := *model.PendingEtcdAction
+			pending.Stage = EtcdStageOperation
+			model.PendingEtcdAction.Stage = EtcdStageOperation
+			return model, runEtcdMembership(model.etcdOperations, pending, model.Generation)
+		}
 		model.EtcdSnapshot = EtcdSnapshotState{Status: Ready, Result: message.Result, MemberNode: message.Result.Node}
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Result.Node})
 		model.ActionTotal = 1
@@ -211,6 +226,18 @@ func Update(model Model, message Message) (Model, Effect) {
 		if message.Err != nil {
 			errText = message.Err.Error()
 		}
+		// Mandatory abort: a failed snapshot must cancel the destructive
+		// membership action outright — the membership RPC is never scheduled.
+		if model.PendingEtcdAction != nil && model.PendingEtcdAction.Stage == EtcdStageSnapshot {
+			target := model.PendingEtcdAction.MemberHostname
+			model.PendingEtcdAction = nil
+			// Record the failure on the snapshot state too, so a stray standalone
+			// snapshot that set Ready cannot mask the aborted removal notice.
+			model.EtcdSnapshot = EtcdSnapshotState{Status: Failed, Err: errText, MemberNode: target}
+			model.ActionResults = append(model.ActionResults, ActionResult{Target: target, Err: errText})
+			model.ActionTotal = 1
+			return model, nil
+		}
 		model.EtcdSnapshot.Status = Failed
 		model.EtcdSnapshot.Err = errText
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: model.EtcdSnapshot.MemberNode, Err: errText})
@@ -221,22 +248,66 @@ func Update(model Model, message Message) (Model, Effect) {
 		if !model.WritesEnabled || model.Upgrade.Active || message.MemberHostname == "" {
 			return model, nil
 		}
-		model.PendingEtcdAction = &PendingEtcdAction{
+		pending := PendingEtcdAction{
 			Kind:           message.Kind,
+			Stage:          EtcdStageIdle,
 			MemberID:       message.MemberID,
 			MemberHostname: message.MemberHostname,
 			Node:           message.Node,
 		}
+		if isDestructiveEtcdMembership(message.Kind) {
+			pending.Warning = etcdMembershipWarning(model.Etcd, message.Kind, message.MemberID, message.MemberHostname)
+			pending.Blocked = etcdMembershipBlockReason(model.Etcd, message.Kind, message.MemberID, message.MemberHostname)
+			pending.SnapshotNode = etcdSnapshotNodeFor(model.Etcd, message.MemberID, message.MemberHostname)
+			pending.SnapshotPath = defaultEtcdSnapshotPath(model.ContextName, message.MemberHostname, time.Now().UTC())
+			if message.Kind == EtcdActionLeaveCluster {
+				// Leave is executed by the member itself.
+				pending.Node = message.MemberHostname
+			} else if pending.SnapshotNode != "" && pending.SnapshotNode != pending.MemberHostname {
+				// A dead member cannot answer the removal RPC, so address it to
+				// the live member the snapshot came from.
+				pending.Node = pending.SnapshotNode
+			} else if hostname := firstOtherControlPlaneHostname(model.Nodes.Value.Nodes, pending.MemberHostname); hostname != "" {
+				// Snapshot source fell back to the target; still address the RPC
+				// to a live control-plane node when one is known.
+				pending.Node = hostname
+			}
+			if pending.SnapshotNode == pending.MemberHostname {
+				pending.Warning = appendWarning(pending.Warning, "snapshot source is the target member; removal will fail if it is unreachable")
+			}
+		}
+		model.PendingEtcdAction = &pending
+		// A pending membership action takes over the footer, so a stale
+		// standalone snapshot notice cannot mask its outcome.
+		model.EtcdSnapshot = EtcdSnapshotState{}
 		model.ActionResults = nil
 		model.ActionTotal = 0
 		return model, nil
 
 	case ConfirmEtcdAction:
-		// Confirm through the reducer only: a blocked or absent pending
-		// action produces no effect, so nothing fires before a successful
-		// confirm.
+		// Confirm through the reducer only: a blocked, absent, or already-stage-
+		// advanced pending action produces no effect, so nothing fires before a
+		// successful confirm.
 		if model.PendingEtcdAction == nil || model.PendingEtcdAction.Blocked != "" {
 			return model, nil
+		}
+		if model.PendingEtcdAction.Stage == EtcdStageSnapshot || model.PendingEtcdAction.Stage == EtcdStageOperation {
+			return model, nil
+		}
+		if isDestructiveEtcdMembership(model.PendingEtcdAction.Kind) {
+			// Re-evaluate against the current snapshot: a removal that became
+			// quorum-unsafe (or whose member vanished) after the prompt opened is
+			// refused and the prompt stays pending for an explicit cancel.
+			if reason := etcdMembershipBlockReason(model.Etcd, model.PendingEtcdAction.Kind, model.PendingEtcdAction.MemberID, model.PendingEtcdAction.MemberHostname); reason != "" {
+				model.PendingEtcdAction.Blocked = reason
+				return model, nil
+			}
+			// Refresh the advisory too: the cluster may have degraded (or
+			// recovered) since the prompt opened.
+			model.PendingEtcdAction.Warning = etcdMembershipWarning(model.Etcd, model.PendingEtcdAction.Kind, model.PendingEtcdAction.MemberID, model.PendingEtcdAction.MemberHostname)
+			model.PendingEtcdAction.Stage = EtcdStageSnapshot
+			model.ActionTotal = 1
+			return model, runEtcdSnapshot(model.etcdOperations, model.PendingEtcdAction.SnapshotNode, model.PendingEtcdAction.SnapshotPath, model.Generation)
 		}
 		pending := *model.PendingEtcdAction
 		model.PendingEtcdAction = nil

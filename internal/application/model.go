@@ -114,16 +114,34 @@ const (
 	EtcdActionSnapshot     EtcdActionKind = "snapshot"
 	EtcdActionDefragment   EtcdActionKind = "defragment"
 	EtcdActionDisarmAlarms EtcdActionKind = "disarm-alarms"
+	EtcdActionRemoveMember EtcdActionKind = "remove-member"
+	EtcdActionLeaveCluster EtcdActionKind = "leave-cluster"
+)
+
+// EtcdActionStage tracks where a pending :etcd action is in its lifecycle.
+// Destructive membership actions move Idle -> Snapshot -> Operation so the
+// membership RPC cannot run before a snapshot of the target has succeeded.
+type EtcdActionStage string
+
+const (
+	EtcdStageIdle      EtcdActionStage = "idle"
+	EtcdStageSnapshot  EtcdActionStage = "snapshot"
+	EtcdStageOperation EtcdActionStage = "operation"
 )
 
 // PendingEtcdAction is a confirmed-but-not-yet-run :etcd write action. Blocked
 // is non-empty when the action must not be confirmed at all, mirroring
-// PendingAction.Blocked.
+// PendingAction.Blocked. SnapshotNode/SnapshotPath are only set for the
+// destructive membership kinds, which require a snapshot of the target member
+// before the membership change.
 type PendingEtcdAction struct {
 	Kind           EtcdActionKind
+	Stage          EtcdActionStage
 	MemberID       uint64
 	MemberHostname string
 	Node           string
+	SnapshotNode   string
+	SnapshotPath   string
 	Warning        string
 	Blocked        string
 }

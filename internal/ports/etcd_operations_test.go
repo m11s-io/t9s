@@ -19,6 +19,10 @@ func (stubEtcdOperations) Defragment(_ context.Context, _ string) error { return
 
 func (stubEtcdOperations) DisarmAlarms(_ context.Context, _ string) error { return nil }
 
+func (stubEtcdOperations) RemoveMemberByID(_ context.Context, _ string, _ uint64) error { return nil }
+
+func (stubEtcdOperations) LeaveCluster(_ context.Context, _ string) error { return nil }
+
 var _ EtcdOperations = stubEtcdOperations{}
 
 func TestEtcdOperationsSnapshotReturnsResult(t *testing.T) {
@@ -29,6 +33,13 @@ func TestEtcdOperationsSnapshotReturnsResult(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "cp-1", result.Node)
 	assert.Equal(t, "/tmp/etcd.db", result.Path)
+}
+
+func TestEtcdOperationsMembershipSurface(t *testing.T) {
+	var operations EtcdOperations = stubEtcdOperations{}
+
+	require.NoError(t, operations.RemoveMemberByID(t.Context(), "cp-2", 7))
+	require.NoError(t, operations.LeaveCluster(t.Context(), "cp-1"))
 }
 
 // sessionStub implements every Session method so the compile-time assertion
