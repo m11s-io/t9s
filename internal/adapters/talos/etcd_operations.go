@@ -163,6 +163,15 @@ func (o *etcdOperations) DisarmAlarms(ctx context.Context, node string) error {
 	return nil
 }
 
+// ForfeitLeadership asks the member reached at node to give up leadership. The
+// RPC is executed by the member itself, so node must be that member's own node.
+func (o *etcdOperations) ForfeitLeadership(ctx context.Context, node string) error {
+	if _, err := o.client.EtcdForfeitLeadership(ctx, node, &machineapi.EtcdForfeitLeadershipRequest{}); err != nil {
+		return fmt.Errorf("forfeit leadership on %s: %w", node, err)
+	}
+	return nil
+}
+
 // contextReader aborts an in-flight copy the moment ctx is canceled, so a
 // session teardown cancels a multi-gigabyte snapshot promptly and the defer
 // above removes the .part file.

@@ -28,4 +28,9 @@ type EtcdOperations interface {
 	// DisarmAlarms disarms active etcd alarms (NOSPACE, CORRUPT, ...) on node.
 	// It does not reclaim disk and does not repair corruption.
 	DisarmAlarms(ctx context.Context, node string) error
+	// ForfeitLeadership asks node's etcd member to give up leadership so a
+	// preferred member can take over. Single-node scope; no snapshot, no
+	// membership change, and quorum-neutral (leadership transfer cannot drop
+	// quorum).
+	ForfeitLeadership(ctx context.Context, node string) error
 }

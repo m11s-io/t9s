@@ -27,7 +27,7 @@ These open from a selected row in `:nodes` rather than through the command palet
 | --- | --- |
 | `Enter` / `d` | Open node detail. |
 | `p` | Open processes. See [Processes, disks, and network](/guides/processes-disks-network/). |
-| `k` | Open disks. |
+| `k` | Open disks (with `--enable-writes`, `W` there wipes a single device). See [Processes, disks, and network](/guides/processes-disks-network/). |
 | `n` | Open network interfaces, addresses, and routes. |
 | `e` | Stream the node's kernel log (dmesg). See [Node diagnostics](/guides/diagnostics/). |
 | `s` | Open the node's network sockets (netstat). See [Node diagnostics](/guides/diagnostics/). |
@@ -44,6 +44,17 @@ Each of these views supports `r` to refresh (reconnect for dmesg) and `Esc`/`q` 
 
 `space`, `R`, `X`, `B`, `W`, and `U` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
 
+## Disks-scoped keys
+
+These act on the selected row in `:disks` (opened with `k` from `:nodes`):
+
+| Key | Result |
+| --- | --- |
+| `Enter` / `d` | Open disk detail. |
+| `W` | Wipe the selected block device, behind a typed device-path prompt and a confirm step. The system disk and read-only devices are refused. Requires `--enable-writes`. See [Processes, disks, and network](/guides/processes-disks-network/). |
+
+`W` is inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
+
 ## Etcd-scoped keys
 
 These act on the selected row in `:etcd`:
@@ -55,8 +66,9 @@ These act on the selected row in `:etcd`:
 | `L` | Make the selected member leave the cluster gracefully, behind a confirm prompt. Snapshots first, then refuses if it would drop etcd below quorum. Requires `--enable-writes`. |
 | `d` | Defragment the selected member's etcd data directory, behind a confirm prompt. Requires `--enable-writes`. |
 | `A` | Disarm the selected member's active etcd alarms, behind a confirm prompt. Requires `--enable-writes`. |
+| `F` | Make the selected member forfeit leadership so another member can take over, behind a confirm prompt. Quorum-neutral; no snapshot. Requires `--enable-writes`. |
 
-`s`, `R`, `L`, `d`, and `A` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
+`s`, `R`, `L`, `d`, `A`, and `F` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
 
 ## Service-scoped keys
 

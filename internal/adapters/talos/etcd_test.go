@@ -35,6 +35,8 @@ type fakeEtcdClient struct {
 	removeMemberErr   error
 	leaveNodes        []string
 	leaveErr          error
+	forfeitNodes      []string
+	forfeitErr        error
 }
 
 func (c *fakeEtcdClient) EtcdMemberList(_ context.Context, node string, _ *machineapi.EtcdMemberListRequest) (*machineapi.EtcdMemberListResponse, error) {
@@ -94,6 +96,14 @@ func (c *fakeEtcdClient) EtcdRemoveMemberByID(_ context.Context, node string, re
 func (c *fakeEtcdClient) EtcdLeaveCluster(_ context.Context, node string, _ *machineapi.EtcdLeaveClusterRequest) error {
 	c.leaveNodes = append(c.leaveNodes, node)
 	return c.leaveErr
+}
+
+func (c *fakeEtcdClient) EtcdForfeitLeadership(_ context.Context, node string, _ *machineapi.EtcdForfeitLeadershipRequest) (*machineapi.EtcdForfeitLeadershipResponse, error) {
+	c.forfeitNodes = append(c.forfeitNodes, node)
+	if c.forfeitErr != nil {
+		return nil, c.forfeitErr
+	}
+	return &machineapi.EtcdForfeitLeadershipResponse{}, nil
 }
 
 func membersResponse(members ...*machineapi.EtcdMember) *machineapi.EtcdMemberListResponse {

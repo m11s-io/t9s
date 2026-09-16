@@ -261,3 +261,23 @@ func TestEtcdOperationsLeaveClusterWrapsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "cp-1")
 	assert.Contains(t, err.Error(), "not a member")
 }
+
+func TestEtcdOperationsForfeitLeadershipTargetsMemberNode(t *testing.T) {
+	client := &fakeEtcdClient{}
+	operations := newEtcdOperations(client)
+
+	require.NoError(t, operations.ForfeitLeadership(t.Context(), "cp-1"))
+
+	assert.Equal(t, []string{"cp-1"}, client.forfeitNodes)
+}
+
+func TestEtcdOperationsForfeitLeadershipWrapsError(t *testing.T) {
+	client := &fakeEtcdClient{forfeitErr: errors.New("not the leader")}
+	operations := newEtcdOperations(client)
+
+	err := operations.ForfeitLeadership(t.Context(), "cp-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cp-1")
+	assert.Contains(t, err.Error(), "not the leader")
+}

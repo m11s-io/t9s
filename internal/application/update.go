@@ -74,6 +74,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.EtcdSnapshot = EtcdSnapshotState{}
 		model.ActionResults = nil
 		model.ActionTotal = 0
+		model.refreshDisksTarget = ""
 		return model, openSession(message.Name, model.Generation)
 
 	case SessionOpened:
@@ -275,7 +276,13 @@ func Update(model Model, message Message) (Model, Effect) {
 			MemberHostname: message.MemberHostname,
 			Node:           message.Node,
 		}
-		if isDestructiveEtcdMembership(message.Kind) {
+		if message.Kind == EtcdActionForfeitLeadership {
+			// Leadership forfeit is quorum-neutral: never snapshotted, never
+			// hard-blocked. The only advisory is when no healthy follower is
+			// known to take over.
+			pending.Node = message.MemberHostname
+			pending.Warning = etcdLeadershipWarning(model.Etcd, message.MemberHostname)
+		} else if isDestructiveEtcdMembership(message.Kind) {
 			pending.Warning = etcdMembershipWarning(model.Etcd, message.Kind, message.MemberID, message.MemberHostname)
 			pending.Blocked = etcdMembershipBlockReason(model.Etcd, message.Kind, message.MemberID, message.MemberHostname)
 			pending.SnapshotNode = etcdSnapshotNodeFor(model.Etcd, message.MemberID, message.MemberHostname)
@@ -700,6 +707,28 @@ func Update(model Model, message Message) (Model, Effect) {
 			model.ActionTotal = 0
 			return model, nil
 		}
+		if message.Kind == ActionWipeDevice {
+			// Single device per confirmation, and the typed token must name that
+			// device. Defense in depth: the TUI validates first, but the reducer
+			// is the last line of defense against a cluster-mutating action.
+			if message.DeviceWipe == nil || len(message.Targets) != 1 || message.Targets[0] != message.DeviceWipe.Node {
+				return model, nil
+			}
+			if err := ValidateDeviceWipeConfirmation(message.DeviceWipe.Device, message.Confirmation); err != nil {
+				return model, nil
+			}
+			wipe := *message.DeviceWipe
+			model.PendingAction = &PendingAction{
+				Kind:         ActionWipeDevice,
+				Targets:      append([]string(nil), message.Targets...),
+				Blocked:      deviceWipeBlockReason(model.Disks, wipe),
+				DeviceWipe:   &wipe,
+				Confirmation: strings.TrimSpace(message.Confirmation),
+			}
+			model.ActionResults = nil
+			model.ActionTotal = 0
+			return model, nil
+		}
 		blocked := ""
 		if targetsIncludeControlPlane(model.Nodes.Value.Nodes, message.Targets) {
 			blocked = etcdQuorumBlockReason(model.Etcd, message.Targets)
@@ -789,6 +818,9 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		if model.PendingAction != nil {
 			model.ActionTotal = len(model.PendingAction.Targets)
+			if model.PendingAction.Kind == ActionWipeDevice && model.PendingAction.DeviceWipe != nil {
+				model.refreshDisksTarget = model.PendingAction.DeviceWipe.Node
+			}
 		} else if model.PendingServiceAction != nil {
 			model.ActionTotal = 1
 		}
@@ -868,6 +900,12 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target})
+		if model.refreshDisksTarget != "" && model.refreshDisksTarget == message.Target {
+			model.refreshDisksTarget = ""
+			model.Disks.Status = Loading
+			model.Disks.Err = ""
+			return model, loadDisks(model.diskReader, model.Disks.Node, model.Generation)
+		}
 		return model, nil
 
 	case ActionFailed:
@@ -879,6 +917,9 @@ func Update(model Model, message Message) (Model, Effect) {
 			errText = message.Err.Error()
 		}
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText})
+		if model.refreshDisksTarget == message.Target {
+			model.refreshDisksTarget = ""
+		}
 		return model, nil
 
 	case OpenResourceBrowser:

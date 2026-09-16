@@ -23,6 +23,8 @@ func (stubEtcdOperations) RemoveMemberByID(_ context.Context, _ string, _ uint64
 
 func (stubEtcdOperations) LeaveCluster(_ context.Context, _ string) error { return nil }
 
+func (stubEtcdOperations) ForfeitLeadership(_ context.Context, _ string) error { return nil }
+
 var _ EtcdOperations = stubEtcdOperations{}
 
 func TestEtcdOperationsSnapshotReturnsResult(t *testing.T) {

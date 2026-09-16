@@ -85,6 +85,12 @@ type Model struct {
 
 	upgradeResults <-chan upgradeStreamResult
 	upgradeCancel  context.CancelFunc
+
+	// refreshDisksTarget is the node whose single-device wipe is in flight, so
+	// its success re-reads that node's :disks inventory, which otherwise would
+	// keep showing the erased device. It is cleared by the matching terminal
+	// result so an unrelated action's completion cannot leave it stuck.
+	refreshDisksTarget string
 }
 
 type NodeState struct {
@@ -125,11 +131,12 @@ type EtcdSnapshotState struct {
 type EtcdActionKind string
 
 const (
-	EtcdActionSnapshot     EtcdActionKind = "snapshot"
-	EtcdActionDefragment   EtcdActionKind = "defragment"
-	EtcdActionDisarmAlarms EtcdActionKind = "disarm-alarms"
-	EtcdActionRemoveMember EtcdActionKind = "remove-member"
-	EtcdActionLeaveCluster EtcdActionKind = "leave-cluster"
+	EtcdActionSnapshot          EtcdActionKind = "snapshot"
+	EtcdActionDefragment        EtcdActionKind = "defragment"
+	EtcdActionDisarmAlarms      EtcdActionKind = "disarm-alarms"
+	EtcdActionRemoveMember      EtcdActionKind = "remove-member"
+	EtcdActionLeaveCluster      EtcdActionKind = "leave-cluster"
+	EtcdActionForfeitLeadership EtcdActionKind = "forfeit-leadership"
 )
 
 // EtcdActionStage tracks where a pending :etcd action is in its lifecycle.
@@ -360,11 +367,12 @@ func (SelectContext) applicationMessage() {}
 type ActionKind string
 
 const (
-	ActionReboot   ActionKind = "reboot"
-	ActionShutdown ActionKind = "shutdown"
-	ActionRollback ActionKind = "rollback"
-	ActionUpgrade  ActionKind = "upgrade"
-	ActionReset    ActionKind = "reset"
+	ActionReboot     ActionKind = "reboot"
+	ActionShutdown   ActionKind = "shutdown"
+	ActionRollback   ActionKind = "rollback"
+	ActionUpgrade    ActionKind = "upgrade"
+	ActionReset      ActionKind = "reset"
+	ActionWipeDevice ActionKind = "wipe-device"
 )
 
 type PendingAction struct {
@@ -380,6 +388,9 @@ type PendingAction struct {
 	// display-only disk classification shown with the pending prompt.
 	Reset        *ports.ResetOptions
 	ResetPreview *ResetPreview
+	// DeviceWipe carries the single-device BlockDeviceWipe options for
+	// ActionWipeDevice.
+	DeviceWipe *ports.DeviceWipeOptions
 	// Confirmation records the typed token that was accepted, for audit and
 	// rendering.
 	Confirmation string
@@ -409,10 +420,11 @@ type upgradeStreamResult struct {
 }
 
 type RequestAction struct {
-	Kind    ActionKind
-	Targets []string
-	Image   string
-	Reset   *ports.ResetOptions
+	Kind       ActionKind
+	Targets    []string
+	Image      string
+	Reset      *ports.ResetOptions
+	DeviceWipe *ports.DeviceWipeOptions
 	// Preview carries the disk preview the reset overlay loaded, so the
 	// reducer evaluates the real inventory instead of re-reading :disks.
 	Preview      map[string]ResetPreview

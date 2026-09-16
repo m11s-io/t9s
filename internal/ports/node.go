@@ -43,11 +43,32 @@ type ResetOptions struct {
 	UserDisks []string
 }
 
+// DeviceWipeMethod selects how a block device is erased.
+type DeviceWipeMethod int
+
+const (
+	// DeviceWipeFast erases just enough to make prior data unrecoverable
+	// (signatures, filesystem, partition-table metadata) without zeroing.
+	DeviceWipeFast DeviceWipeMethod = iota
+	// DeviceWipeZeroes writes zeroes over the whole device; much slower.
+	DeviceWipeZeroes
+)
+
+// DeviceWipeOptions describes a single-device BlockDeviceWipe. Device is the
+// device path exactly as the disk inventory reports it (for example
+// /dev/sdb); the adapter strips the /dev/ prefix the server expects.
+type DeviceWipeOptions struct {
+	Node   string
+	Device string
+	Method DeviceWipeMethod
+}
+
 type NodeController interface {
 	Reboot(ctx context.Context, target string, mode RebootMode) error
 	Shutdown(ctx context.Context, target string, force bool) error
 	Rollback(ctx context.Context, target string) error
 	Reset(ctx context.Context, target string, options ResetOptions) error
+	WipeDevice(ctx context.Context, node, device string, method DeviceWipeMethod) error
 	Upgrade(ctx context.Context, target, image string) error
 	UpgradeStream(ctx context.Context, target, image string) UpgradeStream
 	CurrentInstallImage(ctx context.Context, target string) (string, error)

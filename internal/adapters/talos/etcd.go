@@ -22,6 +22,7 @@ type etcdClient interface {
 	EtcdLeaveCluster(ctx context.Context, node string, req *machineapi.EtcdLeaveClusterRequest) error
 	EtcdDefragment(ctx context.Context, node string) (*machineapi.EtcdDefragmentResponse, error)
 	EtcdAlarmDisarm(ctx context.Context, node string) (*machineapi.EtcdAlarmDisarmResponse, error)
+	EtcdForfeitLeadership(ctx context.Context, node string, req *machineapi.EtcdForfeitLeadershipRequest) (*machineapi.EtcdForfeitLeadershipResponse, error)
 }
 
 type machineryEtcdClient struct{ client *talosclient.Client }
@@ -58,6 +59,10 @@ func (c machineryEtcdClient) EtcdDefragment(ctx context.Context, node string) (*
 
 func (c machineryEtcdClient) EtcdAlarmDisarm(ctx context.Context, node string) (*machineapi.EtcdAlarmDisarmResponse, error) {
 	return c.client.EtcdAlarmDisarm(talosclient.WithNode(ctx, node))
+}
+
+func (c machineryEtcdClient) EtcdForfeitLeadership(ctx context.Context, node string, req *machineapi.EtcdForfeitLeadershipRequest) (*machineapi.EtcdForfeitLeadershipResponse, error) {
+	return c.client.EtcdForfeitLeadership(talosclient.WithNode(ctx, node), req)
 }
 
 type etcdReader struct {

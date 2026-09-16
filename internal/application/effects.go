@@ -337,6 +337,17 @@ func (o boundEtcdOperations) DisarmAlarms(callCtx context.Context, node string) 
 	return o.EtcdOperations.DisarmAlarms(ctx, node)
 }
 
+func (o boundEtcdOperations) ForfeitLeadership(callCtx context.Context, node string) error {
+	ctx, cancel := context.WithCancel(o.ctx)
+	stop := context.AfterFunc(callCtx, cancel)
+	defer func() {
+		stop()
+		cancel()
+	}()
+
+	return o.EtcdOperations.ForfeitLeadership(ctx, node)
+}
+
 type boundEtcdReader struct {
 	ports.EtcdReader
 	ctx context.Context
@@ -507,6 +518,8 @@ func runEtcdMaintenance(operations ports.EtcdOperations, pending PendingEtcdActi
 			err = operations.Defragment(ctx, pending.Node)
 		case EtcdActionDisarmAlarms:
 			err = operations.DisarmAlarms(ctx, pending.Node)
+		case EtcdActionForfeitLeadership:
+			err = operations.ForfeitLeadership(ctx, pending.Node)
 		default:
 			err = fmt.Errorf("unsupported etcd action %q", pending.Kind)
 		}

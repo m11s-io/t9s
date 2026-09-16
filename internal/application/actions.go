@@ -168,6 +168,51 @@ func resetModeBlockReason(targets []string, options ports.ResetOptions, preview 
 	return block
 }
 
+// NormalizeDeviceToken trims surrounding whitespace and a leading /dev/ so a
+// typed confirmation matches the device whatever form the operator or the
+// inventory uses.
+func NormalizeDeviceToken(device string) string {
+	return strings.TrimPrefix(strings.TrimSpace(device), "/dev/")
+}
+
+// ValidateDeviceWipeConfirmation reports whether the typed token names the
+// selected device, tolerating the optional /dev/ prefix on either side.
+func ValidateDeviceWipeConfirmation(device, typed string) error {
+	if NormalizeDeviceToken(device) == "" {
+		return fmt.Errorf("no device selected")
+	}
+	if NormalizeDeviceToken(typed) != NormalizeDeviceToken(device) {
+		return fmt.Errorf("type %q to confirm wiping this device", device)
+	}
+	return nil
+}
+
+// deviceWipeBlockReason is the hard gate for a single-device BlockDeviceWipe.
+// It refuses the system disk, read-only devices, and any device that cannot be
+// verified against the loaded inventory — a wipe is irreversible, so an
+// unknown target is never authorized.
+func deviceWipeBlockReason(disks DisksState, wipe ports.DeviceWipeOptions) string {
+	if wipe.Node == "" || wipe.Device == "" {
+		return "refusing: no device selected"
+	}
+	if disks.Status != Ready || disks.Node != wipe.Node {
+		return fmt.Sprintf("refusing: disk inventory for %s is not loaded", wipe.Node)
+	}
+	for _, disk := range disks.Value.Disks {
+		if disk.DeviceName != wipe.Device {
+			continue
+		}
+		if disk.SystemDisk {
+			return fmt.Sprintf("refusing: %s is the system disk", wipe.Device)
+		}
+		if disk.ReadOnly {
+			return fmt.Sprintf("refusing: %s is read-only", wipe.Device)
+		}
+		return ""
+	}
+	return fmt.Sprintf("refusing: %s is not in the current inventory", wipe.Device)
+}
+
 // resetPreviewFrom picks the disk preview for a reset: the one the overlay
 // loaded when present, otherwise the currently loaded :disks view. Only a
 // single target can be previewed.
@@ -309,6 +354,15 @@ func pendingActionBlockReason(model Model, pending PendingAction) string {
 		}
 		return resetQuorumBlockReason(model.Nodes.Value.Nodes, model.Etcd, pending.Targets)
 	}
+	if pending.Kind == ActionWipeDevice {
+		// Re-evaluate against the current inventory: a device that became the
+		// system disk or vanished after the prompt opened must be refused. This
+		// is deliberately not quorum-gated: wiping a data disk never drops etcd.
+		if pending.DeviceWipe == nil {
+			return "refusing: no device selected"
+		}
+		return deviceWipeBlockReason(model.Disks, *pending.DeviceWipe)
+	}
 	if !targetsIncludeControlPlane(model.Nodes.Value.Nodes, pending.Targets) {
 		return ""
 	}
@@ -333,6 +387,36 @@ func etcdQuorumBlockReason(etcd EtcdState, targets []string) string {
 	}
 
 	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
+}
+
+// etcdLeadershipWarning is the advisory for a leadership forfeit. A forfeit is
+// quorum-neutral — the member keeps voting — so it is never hard-blocked; the
+// only risk it warns about is that no healthy follower is known to take the
+// leadership it is giving up. A target that is not the current leader (or whose
+// status is unknown) has nothing to forfeit and never warns.
+func etcdLeadershipWarning(etcd EtcdState, memberHostname string) string {
+	if etcd.Status != Ready && etcd.Status != Partial {
+		return ""
+	}
+	targetIsLeader := false
+	for _, member := range etcd.Value.Members {
+		if member.Hostname == memberHostname && member.StatusKnown && member.IsLeader {
+			targetIsLeader = true
+			break
+		}
+	}
+	if !targetIsLeader {
+		return ""
+	}
+	for _, member := range etcd.Value.Members {
+		if member.IsLearner || member.Hostname == memberHostname {
+			continue
+		}
+		if member.StatusKnown && len(member.Errors) == 0 {
+			return ""
+		}
+	}
+	return "no healthy follower is known to take leadership"
 }
 
 // isDestructiveEtcdMembership reports whether a kind changes cluster
@@ -630,6 +714,12 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 				err = fmt.Errorf("reset options are not configured")
 			} else {
 				err = controller.Reset(ctx, target, *pending.Reset)
+			}
+		case ActionWipeDevice:
+			if pending.DeviceWipe == nil {
+				err = fmt.Errorf("device wipe options are not configured")
+			} else {
+				err = controller.WipeDevice(ctx, pending.DeviceWipe.Node, pending.DeviceWipe.Device, pending.DeviceWipe.Method)
 			}
 		case ActionUpgrade:
 			err = fmt.Errorf("upgrade action did not use its stream bridge")

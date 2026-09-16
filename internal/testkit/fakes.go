@@ -34,6 +34,7 @@ type FakeNodeController struct {
 	ShutdownFunc            func(ctx context.Context, target string, force bool) error
 	RollbackFunc            func(ctx context.Context, target string) error
 	ResetFunc               func(ctx context.Context, target string, options ports.ResetOptions) error
+	WipeDeviceFunc          func(ctx context.Context, node, device string, method ports.DeviceWipeMethod) error
 	UpgradeFunc             func(ctx context.Context, target, image string) error
 	UpgradeStreamFunc       func(ctx context.Context, target, image string) ports.UpgradeStream
 	CurrentInstallImageFunc func(ctx context.Context, target string) (string, error)
@@ -57,6 +58,13 @@ func (f *FakeNodeController) Reset(ctx context.Context, target string, options p
 		return nil
 	}
 	return f.ResetFunc(ctx, target, options)
+}
+
+func (f *FakeNodeController) WipeDevice(ctx context.Context, node, device string, method ports.DeviceWipeMethod) error {
+	if f.WipeDeviceFunc == nil {
+		return nil
+	}
+	return f.WipeDeviceFunc(ctx, node, device, method)
 }
 
 func (f *FakeNodeController) Upgrade(ctx context.Context, target, image string) error {
@@ -128,11 +136,12 @@ func (f *FakeEtcdReader) List(ctx context.Context, controlPlaneNodes []string) (
 }
 
 type FakeEtcdOperations struct {
-	SnapshotFunc         func(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error)
-	RemoveMemberByIDFunc func(ctx context.Context, node string, memberID uint64) error
-	LeaveClusterFunc     func(ctx context.Context, node string) error
-	DefragmentFunc       func(ctx context.Context, node string) error
-	DisarmAlarmsFunc     func(ctx context.Context, node string) error
+	SnapshotFunc          func(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error)
+	RemoveMemberByIDFunc  func(ctx context.Context, node string, memberID uint64) error
+	LeaveClusterFunc      func(ctx context.Context, node string) error
+	DefragmentFunc        func(ctx context.Context, node string) error
+	DisarmAlarmsFunc      func(ctx context.Context, node string) error
+	ForfeitLeadershipFunc func(ctx context.Context, node string) error
 }
 
 func (f *FakeEtcdOperations) Snapshot(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
@@ -168,6 +177,13 @@ func (f *FakeEtcdOperations) DisarmAlarms(ctx context.Context, node string) erro
 		return nil
 	}
 	return f.DisarmAlarmsFunc(ctx, node)
+}
+
+func (f *FakeEtcdOperations) ForfeitLeadership(ctx context.Context, node string) error {
+	if f.ForfeitLeadershipFunc == nil {
+		return nil
+	}
+	return f.ForfeitLeadershipFunc(ctx, node)
 }
 
 type FakeProcessReader struct {

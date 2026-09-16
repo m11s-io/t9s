@@ -9,6 +9,7 @@ import (
 
 	"github.com/m11s-io/t9s/internal/ports"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
+	storageapi "github.com/siderolabs/talos/pkg/machinery/api/storage"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,11 +162,18 @@ type fakeNodeControlClient struct {
 	currentImageErr error
 	resetReq        *machineapi.ResetRequest
 	resetErr        error
+	wipeDeviceReq   *storageapi.BlockDeviceWipeRequest
+	wipeDeviceErr   error
 }
 
 func (c *fakeNodeControlClient) ResetGeneric(ctx context.Context, req *machineapi.ResetRequest) error {
 	c.resetReq = req
 	return c.resetErr
+}
+
+func (c *fakeNodeControlClient) BlockDeviceWipe(ctx context.Context, req *storageapi.BlockDeviceWipeRequest) error {
+	c.wipeDeviceReq = req
+	return c.wipeDeviceErr
 }
 
 func (c *fakeNodeControlClient) Reboot(ctx context.Context, opts ...talosclient.RebootMode) error {

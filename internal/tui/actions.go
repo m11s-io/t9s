@@ -64,6 +64,7 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 				actionHint{Key: "L", Label: "Leave"},
 				actionHint{Key: "d", Label: "Defragment"},
 				actionHint{Key: "A", Label: "Disarm"},
+				actionHint{Key: "F", Label: "Forfeit"},
 			)
 		}
 		return hints
@@ -83,11 +84,15 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "r", Label: "Refresh"},
 		)
 	case viewDisks:
-		return append(global,
+		hints := append(global,
 			actionHint{Key: "/", Label: "Filter"},
 			actionHint{Key: "d", Label: "Detail"},
 			actionHint{Key: "r", Label: "Refresh"},
 		)
+		if writesEnabled {
+			hints = append(hints, actionHint{Key: "W", Label: "Wipe"})
+		}
+		return hints
 	case viewNetwork:
 		return append(global,
 			actionHint{Key: "/", Label: "Filter"},

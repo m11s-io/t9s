@@ -12,6 +12,7 @@ import (
 
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 type model struct {
@@ -45,6 +46,7 @@ type model struct {
 	upgradePrompt     *upgradePromptModel
 	snapshotPrompt    *snapshotPromptModel
 	resetPrompt       *resetPromptModel
+	diskWipePrompt    *diskWipePromptModel
 	notice            string
 	views             viewStack
 	splash            bool
@@ -217,7 +219,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
 			return m, m.command(effect)
 		}
-		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && m.snapshotPrompt == nil && m.resetPrompt == nil && !m.filtering() {
+		if key == "esc" && !m.contexts.active && !m.palette.active && m.upgradePrompt == nil && m.snapshotPrompt == nil && m.resetPrompt == nil && m.diskWipePrompt == nil && !m.filtering() {
 			wasLogs := m.views.top().Kind == viewServiceLogs
 			wasDmesg := m.views.top().Kind == viewDmesg
 			wasClusterHealth := m.views.top().Kind == viewClusterHealth
@@ -369,6 +371,31 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var command tea.Cmd
 			*m.snapshotPrompt, command = m.snapshotPrompt.update(message)
+			return m, command
+		}
+		if m.diskWipePrompt != nil {
+			switch key {
+			case "esc":
+				m.diskWipePrompt = nil
+				return m, nil
+			case "enter":
+				prompt := *m.diskWipePrompt
+				if err := application.ValidateDeviceWipeConfirmation(prompt.device, prompt.input.Value()); err != nil {
+					m.diskWipePrompt.err = err.Error()
+					return m, nil
+				}
+				m.diskWipePrompt = nil
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RequestAction{
+					Kind:         application.ActionWipeDevice,
+					Targets:      []string{prompt.node},
+					DeviceWipe:   &ports.DeviceWipeOptions{Node: prompt.node, Device: prompt.device, Method: ports.DeviceWipeFast},
+					Confirmation: strings.TrimSpace(prompt.input.Value()),
+				})
+				return m, m.command(effect)
+			}
+			var command tea.Cmd
+			*m.diskWipePrompt, command = m.diskWipePrompt.update(message)
 			return m, command
 		}
 		if m.resetPrompt != nil {
@@ -643,6 +670,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 						return m.requestEtcdAction(application.EtcdActionRemoveMember, member)
 					case "L":
 						return m.requestEtcdAction(application.EtcdActionLeaveCluster, member)
+					case "F":
+						return m.requestEtcdAction(application.EtcdActionForfeitLeadership, member)
 					}
 				}
 			}
@@ -661,6 +690,27 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewDisks {
+			if key == "W" && m.writeActionsEnabled() && !m.disks.filtering {
+				// The reducer re-checks these, but refusing at the key press avoids
+				// opening a prompt that can only ever be blocked. Require a loaded
+				// inventory so a stale row cannot authorize a wipe.
+				if m.application.Disks.Status != application.Ready {
+					return m, nil
+				}
+				if disk, ok := m.disks.selected(); ok {
+					if disk.SystemDisk {
+						m.notice = "refusing: " + disk.DeviceName + " is the system disk"
+						return m, nil
+					}
+					if disk.ReadOnly {
+						m.notice = "refusing: " + disk.DeviceName + " is read-only"
+						return m, nil
+					}
+					prompt := newDiskWipePromptModel(m.application.Disks.Node, disk.DeviceName)
+					m.diskWipePrompt = &prompt
+					return m, prompt.input.Focus()
+				}
+			}
 			if (key == "enter" || key == "d") && !m.disks.filtering {
 				if _, ok := m.disks.selected(); ok {
 					disk := m.disks.selectedValue()
@@ -900,6 +950,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.upgradePrompt = nil
 			m.snapshotPrompt = nil
 			m.resetPrompt = nil
+			m.diskWipePrompt = nil
 			m.healthcheck = newHealthcheckModel(m.application.HealthCheck)
 		}
 		var effect application.Effect
@@ -1164,6 +1215,9 @@ func (m model) activePrompt() string {
 	}
 	if m.snapshotPrompt != nil {
 		return m.snapshotPrompt.view()
+	}
+	if m.diskWipePrompt != nil {
+		return m.diskWipePrompt.view()
 	}
 	if m.resetPrompt != nil {
 		return ""

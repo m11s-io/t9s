@@ -15,6 +15,7 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 	commonapi "github.com/siderolabs/talos/pkg/machinery/api/common"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
+	storageapi "github.com/siderolabs/talos/pkg/machinery/api/storage"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/resources/config"
 	k8sresource "github.com/siderolabs/talos/pkg/machinery/resources/k8s"
@@ -58,6 +59,7 @@ type nodeControlClient interface {
 	Shutdown(ctx context.Context, opts ...talosclient.ShutdownOption) error
 	Rollback(ctx context.Context) error
 	ResetGeneric(ctx context.Context, req *machineapi.ResetRequest) error
+	BlockDeviceWipe(ctx context.Context, req *storageapi.BlockDeviceWipeRequest) error
 	Upgrade(ctx context.Context, opts ...talosclient.UpgradeOption) error
 	CurrentInstallImage(ctx context.Context) (string, error)
 }
@@ -110,6 +112,10 @@ func (c machineryNodeControlClient) Rollback(ctx context.Context) error {
 
 func (c machineryNodeControlClient) ResetGeneric(ctx context.Context, req *machineapi.ResetRequest) error {
 	return c.client.ResetGeneric(ctx, req)
+}
+
+func (c machineryNodeControlClient) BlockDeviceWipe(ctx context.Context, req *storageapi.BlockDeviceWipeRequest) error {
+	return c.client.BlockDeviceWipe(ctx, req)
 }
 
 // resetRequestFor maps the normalized reset options onto the machinery request.
@@ -332,6 +338,24 @@ func (c *nodeController) Rollback(ctx context.Context, target string) error {
 func (c *nodeController) Reset(ctx context.Context, target string, options ports.ResetOptions) error {
 	if err := c.client.ResetGeneric(talosclient.WithNode(ctx, target), resetRequestFor(options)); err != nil {
 		return fmt.Errorf("reset %s: %w", target, err)
+	}
+	return nil
+}
+
+// WipeDevice erases a single block device on node. The Talos storaged handler
+// resolves the descriptor's Device as a block.Device resource ID and then
+// joins it to /dev/<id> (internal/app/storaged/server.go), so the request must
+// carry the bare device ID — the disk inventory's /dev/<id> prefix is stripped
+// here. SkipVolumeCheck is left false so the server refuses a device that is
+// still in use by a volume.
+func (c *nodeController) WipeDevice(ctx context.Context, node, device string, method ports.DeviceWipeMethod) error {
+	desc := &storageapi.BlockDeviceWipeDescriptor{Device: strings.TrimPrefix(device, "/dev/")}
+	if method == ports.DeviceWipeZeroes {
+		desc.Method = storageapi.BlockDeviceWipeDescriptor_ZEROES
+	}
+	request := &storageapi.BlockDeviceWipeRequest{Devices: []*storageapi.BlockDeviceWipeDescriptor{desc}}
+	if err := c.client.BlockDeviceWipe(talosclient.WithNode(ctx, node), request); err != nil {
+		return fmt.Errorf("wipe device %s on %s: %w", device, node, err)
 	}
 	return nil
 }

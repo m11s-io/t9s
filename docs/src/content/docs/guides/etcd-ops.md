@@ -5,7 +5,7 @@ description: Snapshot, defragment, and disarm alarms from the :etcd view.
 
 All actions on this page require `--enable-writes` (or `T9S_ENABLE_WRITES`) and
 run only after their own prompt: a path prompt for `s`, an inline `(y/n)`
-confirmation for `R`/`L`/`d`/`A`. With writes disabled the keys below are inert
+confirmation for `R`/`L`/`d`/`A`/`F`. With writes disabled the keys below are inert
 and the read-only membership view is unchanged.
 
 Open `:etcd` (`:et`) and select a member row.
@@ -17,6 +17,7 @@ Open `:etcd` (`:et`) and select a member row.
 | `L` | **Leave** the cluster gracefully. | Destructive: snapshots first, then hard-gated on quorum. For a live member. |
 | `d` | Defragment the selected member's etcd data directory. | Resource-heavy; acts on one node at a time. |
 | `A` | Disarm the selected member's active etcd alarms. | Does not reclaim disk and does not repair corruption. |
+| `F` | **Forfeit** leadership so another member can take over. | Quorum-neutral: no snapshot and no quorum gate. Warns when no healthy follower is known. |
 
 ## Snapshot (`s`)
 
@@ -99,3 +100,17 @@ corruption; restore from a snapshot instead. After a successful disarm the
 
 See [Health](/guides/health/) for how active alarms surface as
 `etcd-member-alarmed` diagnoses.
+
+## Forfeit leadership (`F`)
+
+`F` asks the selected member's etcd process to give up leadership so a
+preferred member can take over — for example to move leadership off a node
+you are about to restart. It is addressed to the member's own node, runs on
+one member per confirmation, and is quorum-neutral: the member keeps voting
+through the handoff, so there is no snapshot and no quorum hard gate. The
+`:etcd` view refreshes after it completes.
+
+When no other healthy voter is known to be able to take leadership, the
+confirm prompt warns (`no healthy follower is known to take leadership`). The
+warning is advisory — a forfeit cannot drop quorum — so you may still proceed;
+check the membership view first if the cluster looks degraded.

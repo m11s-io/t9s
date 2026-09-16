@@ -13,6 +13,12 @@ Press `p` on a selected node to open its process list: `PID`, `STATE`, `CPU`, `M
 
 Press `k` on a selected node (`d` already opens node detail) to open its disk device list: `DEVICE`, `TYPE`, `SIZE`, `MODEL`, `SYSTEM`. Detail adds `Serial`, `BusPath`, and `ReadOnly`. Only the size, usage, and health facts Talos exposes directly are shown — `t9s` does not infer filesystem or mount information beyond that.
 
+### Wipe a block device
+
+With `--enable-writes`, press `W` on a selected disk row to wipe that single device with Talos `BlockDeviceWipe`. A text prompt asks you to type the device path (for example `/dev/sdb`); `t9s` accepts either `/dev/sdb` or `sdb`. `Enter` then opens the usual `(y/n)` confirm, and `Esc` cancels.
+
+The default wipe method is `FAST` (erase signatures, filesystem, and partition metadata without zeroing); the slower `ZEROES` method is not exposed in this version. The system disk and read-only devices (CD-ROMs, ISOs) are refused — `t9s` reports the refusal instead of opening the prompt. The wipe is verified against the currently loaded disk inventory, so an unknown or not-yet-loaded inventory is also refused. The request is sent without skipping the server's volume checks, so a device still in use by a volume is rejected by the node and the error is shown. On success the disk list refreshes.
+
 ## Network
 
 Press `n` on a selected node to open its network interface list: `LINK`, `TYPE`, `STATE`, `MTU`, `ADDRESSES`. Detail adds every assigned route for the selected link, alongside its full address list.

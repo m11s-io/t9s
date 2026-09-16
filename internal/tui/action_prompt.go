@@ -57,6 +57,11 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 	case application.ActionReset:
 		verb = "Reset"
 		suffix = resetPendingSuffix(pending)
+	case application.ActionWipeDevice:
+		verb = "Wipe device"
+		if pending.DeviceWipe != nil {
+			suffix = " " + pending.DeviceWipe.Device
+		}
 	}
 	if pending.Warning != "" {
 		warning := truncateWarningTail(pending.Warning, pendingActionWarningBudget)
@@ -99,6 +104,8 @@ func renderPendingEtcdActionPrompt(pending application.PendingEtcdAction) string
 		verb = "Remove member"
 	case application.EtcdActionLeaveCluster:
 		verb = "Leave cluster"
+	case application.EtcdActionForfeitLeadership:
+		verb = "Forfeit leadership"
 	}
 	target := pending.MemberHostname
 	if target == "" {

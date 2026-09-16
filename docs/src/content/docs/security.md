@@ -35,6 +35,15 @@ so partition-level selection is not offered. A reset that reboots the node may r
 error after it actually succeeded; the failure text is generic and the action is
 not retried.
 
+Block-device wipe (`W` on `:disks`) is a separate, single-device operation that
+rides the same write gate. It requires typing the exact device path (with or
+without the `/dev/` prefix) before the `(y/n)` confirm, and t9s refuses the
+system disk, read-only devices, and any device it cannot verify against the
+currently loaded disk inventory. The request is sent without skipping the
+server's volume/secondary checks, so Talos itself rejects a device that is
+still in use. `FAST` is the only method exposed in this version; `ZEROES` is
+not offered.
+
 The node-scoped diagnostics views — the kernel log (`e`/dmesg), network
 sockets (`s`/netstat), filesystem mounts (`m`), and memory (`f`) — are read-only
 and inert with respect to writes: they never require `--enable-writes`, and
@@ -43,8 +52,12 @@ See [Node diagnostics](/guides/diagnostics/).
 
 The same gate covers etcd maintenance: `--enable-writes` additionally allows
 etcd snapshot (`s`), member removal (`R`), graceful leave (`L`), defragment
-(`d`), and alarm disarm (`A`) from the `:etcd` screen, each behind its own
-prompt. Etcd snapshot writes a local file atomically — it streams to a `0600`
+(`d`), alarm disarm (`A`), and leadership forfeit (`F`) from the `:etcd`
+screen, each behind its own prompt. Leadership forfeit is quorum-neutral — the
+member keeps voting while it hands off leadership — so it is never
+snapshot-before-destructive and is never hard-gated on quorum. It warns when
+no healthy follower is known to take over, but the warning is advisory and the
+operator may still proceed. Etcd snapshot writes a local file atomically — it streams to a `0600`
 `<path>.part` file, refuses to overwrite an existing final path, verifies the
 trailing sha256 checksum against the payload, and only then commits the staging
 file into place. t9s adds no credential material to the file, but the snapshot
