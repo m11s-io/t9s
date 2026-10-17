@@ -33,6 +33,7 @@ These open from a selected row in `:nodes` rather than through the command palet
 | `s` | Open the node's network sockets (netstat). See [Node diagnostics](/guides/diagnostics/). |
 | `m` | Open the node's filesystem mounts. See [Node diagnostics](/guides/diagnostics/). |
 | `f` | Open the node's memory usage. See [Node diagnostics](/guides/diagnostics/). |
+| `u` | Sample aggregate/per-core CPU utilization and running/blocked process counts. `r` takes a new sample; `/` filters; there is no background polling. See [CPU utilization](/guides/diagnostics/#cpu-utilization-and-process-counts). |
 | `t` | Open time synchronization status and UTC samples. In the view, `r` refreshes normal status, `/` filters, and `c` opens an explicit server check (`Enter` submits, `Esc` cancels). Checks work without writes mode and keep a separate result panel. See [Time](/guides/diagnostics/#time). |
 | `space` | Mark/unmark the selected node for a bulk action. Requires `--enable-writes`. |
 | `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |

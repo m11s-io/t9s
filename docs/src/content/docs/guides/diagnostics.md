@@ -1,6 +1,6 @@
 ---
 title: Node diagnostics
-description: Inspect a node's kernel log, network sockets, mounts, memory, and time.
+description: Inspect a node's kernel log, network sockets, mounts, memory, time, and CPU utilization.
 ---
 
 These read-only views open from a selected node in `:nodes` — none is a standalone top-level command. For a server-side, streaming cluster readiness check (not node-scoped), see [`:healthcheck`](/guides/health/#healthcheck). Each is scoped to the node the view was opened for, and `r` re-fetches that same node rather than whatever is currently selected back in `:nodes`. Press `Esc` or `q` to return to `:nodes`.
@@ -71,9 +71,43 @@ Opening and canceling the context picker keeps the current view. Superseded
 responses cannot replace newer status or check results. Requests have a
 10-second deadline.
 
+## CPU utilization and process counts
+
+Press `u` on a selected node to sample its aggregate and per-core CPU busy and
+I/O-wait percentages. Each request reads the node's system counters twice,
+with a cancellable one-second wait between reads. The view shows the observed
+UTC sample time, measured interval, and latest valid running/blocked process
+counts. The timestamp comes from the client's observation of the sample;
+RPC latency can make the measured interval longer than one second.
+
+The total counter is `User + Nice + System + Idle + Iowait + Irq + SoftIrq + Steal`.
+Guest and GuestNice are already included in User/Nice, so they are not added
+again. Busy excludes both idle and I/O wait. For example, a total delta of 100,
+idle delta of 60, and I/O-wait delta of 10 produces **30% busy** and **10% I/O wait**.
+These percentages describe the sampled interval, not lifetime process CPU time.
+
+Missing, reset, decreasing, zero-delta, or nonfinite CPU counters display
+`unknown`. A changed boot time, changed CPU topology, or a nonpositive sample
+interval invalidates utilization for that request. Sparse CPU indices keep their
+original IDs and show unknown for missing cores. Partial failures retain valid
+process counts from the latest successful read with that read's timestamp;
+they do not report a complete utilization measurement.
+
+| Key | Result |
+| --- | --- |
+| `r` | Take a new two-read sample of the same node. |
+| `/` | Filter CPU rows, counts, sample information, and problems. |
+| `j` / `k`, `g` / `G` | Scroll by a row or go to the top/bottom. |
+| `q` / `Esc` | Return to Nodes; Esc first cancels active filter entry. |
+
+There is no background CPU polling. Refreshing supersedes and cancels an older
+sample; leaving the view, changing context, or quitting cancels pending reads
+and the wait. Help preserves the underlying CPU view and request. A request has
+a 10-second deadline. CPU sampling works without `--enable-writes`.
+
 ## Read-only guarantee
 
-All five views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.
+All six views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.
 
 ## Live machine events
 

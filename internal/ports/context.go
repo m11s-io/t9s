@@ -31,6 +31,7 @@ type Session interface {
 	Mounts() MountReader
 	Memory() MemoryReader
 	Time() TimeReader
+	CPU() CPUReader
 	ClusterHealth() ClusterHealthReader
 	ResourceKinds() ResourceKindReader
 	Resources() ResourceInstanceReader

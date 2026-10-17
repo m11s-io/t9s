@@ -25,6 +25,7 @@ const (
 	viewMounts
 	viewMemory
 	viewTime
+	viewCPU
 	viewOverview
 	viewProblems
 	viewResourceKinds

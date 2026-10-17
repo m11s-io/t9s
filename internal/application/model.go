@@ -42,6 +42,7 @@ type Model struct {
 	Netstat                SocketState
 	Mounts                 MountState
 	Time                   TimeState
+	CPU                    CPUState
 	Memory                 MemoryState
 	ResourceBrowser        ResourceBrowserState
 	Kubernetes             KubernetesState
@@ -66,6 +67,9 @@ type Model struct {
 	mountReader            ports.MountReader
 	memoryReader           ports.MemoryReader
 	timeReader             ports.TimeReader
+	cpuReader              ports.CPUReader
+	cpuRequestID           uint64
+	cpuCancel              context.CancelFunc
 	timeReadID             uint64
 	timeCheckID            uint64
 	timeReadCancel         context.CancelFunc
@@ -589,6 +593,7 @@ type SessionOpened struct {
 	Netstat           ports.NetstatReader
 	Mounts            ports.MountReader
 	Time              ports.TimeReader
+	CPU               ports.CPUReader
 	Memory            ports.MemoryReader
 	ClusterHealth     ports.ClusterHealthReader
 	ResourceKinds     ports.ResourceKindReader

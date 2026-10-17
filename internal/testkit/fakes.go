@@ -354,6 +354,7 @@ type FakeSession struct {
 	MountReader            ports.MountReader
 	MemoryReader           ports.MemoryReader
 	TimeReader             ports.TimeReader
+	CPUReader              ports.CPUReader
 	ClusterHealthReader    ports.ClusterHealthReader
 	ResourceKindReader     ports.ResourceKindReader
 	ResourceInstanceReader ports.ResourceInstanceReader
@@ -394,6 +395,8 @@ func (f *FakeSession) Mounts() ports.MountReader { return f.MountReader }
 func (f *FakeSession) Memory() ports.MemoryReader { return f.MemoryReader }
 
 func (f *FakeSession) Time() ports.TimeReader { return f.TimeReader }
+
+func (f *FakeSession) CPU() ports.CPUReader { return f.CPUReader }
 
 func (f *FakeSession) ClusterHealth() ports.ClusterHealthReader { return f.ClusterHealthReader }
 
@@ -482,4 +485,15 @@ func (f *FakeTimeReader) Check(ctx context.Context, node, server string) (domain
 		return domain.TimeCheckResult{}, nil
 	}
 	return f.CheckFunc(ctx, node, server)
+}
+
+type FakeCPUReader struct {
+	SampleFunc func(context.Context, string) (domain.CPUSnapshot, error)
+}
+
+func (f *FakeCPUReader) Sample(ctx context.Context, node string) (domain.CPUSnapshot, error) {
+	if f.SampleFunc == nil {
+		return domain.CPUSnapshot{}, nil
+	}
+	return f.SampleFunc(ctx, node)
 }

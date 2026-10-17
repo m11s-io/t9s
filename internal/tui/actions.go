@@ -35,6 +35,7 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 				actionHint{Key: "m", Label: "Mounts"},
 				actionHint{Key: "f", Label: "Memory"},
 				actionHint{Key: "t", Label: "Time"},
+				actionHint{Key: "u", Label: "CPU"},
 			)
 			if writesEnabled {
 				hints = append(hints,
@@ -127,6 +128,8 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "/", Label: "Filter"},
 			actionHint{Key: "r", Label: "Refresh"},
 		)
+	case viewCPU:
+		return append(global, actionHint{Key: "/", Label: "Filter"}, actionHint{Key: "r", Label: "Sample CPU"})
 	case viewTime:
 		return append(global, actionHint{Key: "/", Label: "Filter"}, actionHint{Key: "r", Label: "Refresh"}, actionHint{Key: "c", Label: "Check server"})
 	case viewMemory:

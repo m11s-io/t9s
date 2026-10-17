@@ -26,6 +26,9 @@ func NewModel(contextOverride string) (Model, Effect) {
 }
 
 func Update(model Model, message Message) (Model, Effect) {
+	if next, effect, handled := updateCPU(model, message); handled {
+		return next, effect
+	}
 	if next, effect, handled := updateTime(model, message); handled {
 		return next, effect
 	}
@@ -53,6 +56,8 @@ func Update(model Model, message Message) (Model, Effect) {
 		cancelActiveUpgrade(&model)
 		closeTimeRequests(&model)
 		model.Time = TimeState{}
+		closeCPURequest(&model)
+		model.CPU = CPUState{}
 		model.ContextName = message.Name
 		model.Generation++
 		model.Nodes = NodeState{Status: Loading}
@@ -121,6 +126,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.mountReader = message.Mounts
 		model.memoryReader = message.Memory
 		model.timeReader = message.Time
+		model.cpuReader = message.CPU
 		model.resourceKindReader = message.ResourceKinds
 		model.resourceInstanceReader = message.Resources
 		model.kubernetesReader = message.KubernetesNodes

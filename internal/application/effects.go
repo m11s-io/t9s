@@ -94,7 +94,7 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), Mounts: session.Mounts(), Memory: session.Memory(), Time: session.Time(), ClusterHealth: session.ClusterHealth(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), Mounts: session.Mounts(), Memory: session.Memory(), Time: session.Time(), CPU: session.CPU(), ClusterHealth: session.ClusterHealth(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
 	}
 }
 
@@ -209,7 +209,7 @@ func (r *Runner) replaceSession(effectCtx context.Context, contextName string, g
 		return nil, fmt.Errorf("load nodes: node reader is not configured")
 	}
 
-	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), dmesg: session.Dmesg(), clusterHealth: session.ClusterHealth(), time: session.Time(), ctx: sessionCtx}
+	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), dmesg: session.Dmesg(), clusterHealth: session.ClusterHealth(), time: session.Time(), cpu: session.CPU(), ctx: sessionCtx}
 	r.mu.Lock()
 	if generation != r.generation || !r.active {
 		r.mu.Unlock()
@@ -244,6 +244,7 @@ type managedSession struct {
 	dmesg          ports.DmesgReader
 	clusterHealth  ports.ClusterHealthReader
 	time           ports.TimeReader
+	cpu            ports.CPUReader
 	ctx            context.Context
 }
 

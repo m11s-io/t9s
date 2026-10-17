@@ -63,6 +63,7 @@ func (sessionStub) Netstat() NetstatReader             { return nil }
 func (sessionStub) Mounts() MountReader                { return nil }
 func (sessionStub) Memory() MemoryReader               { return nil }
 func (sessionStub) Time() TimeReader                   { return nil }
+func (sessionStub) CPU() CPUReader                     { return nil }
 func (sessionStub) ClusterHealth() ClusterHealthReader { return nil }
 func (sessionStub) ResourceKinds() ResourceKindReader  { return nil }
 func (sessionStub) Resources() ResourceInstanceReader  { return nil }

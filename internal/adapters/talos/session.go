@@ -56,6 +56,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		mounts:            newMountReader(machineryMountClient{client: client}),
 		memory:            newMemoryReader(machineryMemoryClient{client: client}),
 		time:              newTimeReader(machineryTimeClient{client: client}),
+		cpu:               newCPUReader(machineryCPUClient{client: client}, waitCPUSample, time.Now),
 		clusterHealth:     newClusterHealthReader(machineryClusterHealthClient{client: client}),
 		resourceKinds:     newResourceKindReader(machineryResourceKindClient{client: client}),
 		resourceInstances: newResourceInstanceReader(machineryResourceInstanceClient{client: client}),
@@ -80,6 +81,7 @@ type session struct {
 	mounts            ports.MountReader
 	memory            ports.MemoryReader
 	time              ports.TimeReader
+	cpu               ports.CPUReader
 	clusterHealth     ports.ClusterHealthReader
 	resourceKinds     ports.ResourceKindReader
 	resourceInstances ports.ResourceInstanceReader
@@ -118,6 +120,8 @@ func (s *session) Mounts() ports.MountReader { return s.mounts }
 func (s *session) Memory() ports.MemoryReader { return s.memory }
 
 func (s *session) Time() ports.TimeReader { return s.time }
+
+func (s *session) CPU() ports.CPUReader { return s.cpu }
 
 func (s *session) ClusterHealth() ports.ClusterHealthReader { return s.clusterHealth }
 

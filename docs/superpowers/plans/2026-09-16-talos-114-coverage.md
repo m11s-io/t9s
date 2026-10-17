@@ -163,7 +163,10 @@ These apply to every new capability (from report 05):
   - [x] Time / TimeCheck: node-scoped status and UTC samples, explicit checks,
     independent result panels and request cancellation. Fake-driven tests pass;
     disposable-cluster smoke checks remain pending.
-  - [ ] CPU metrics and directory DiskUsage.
+  - [x] CPU utilization and process counts: two cancellable node-scoped samples,
+    aggregate/per-core busy and I/O wait, explicit refresh without polling.
+    Fake-driven tests pass; disposable-cluster smoke checks remain pending.
+  - [ ] Directory DiskUsage.
 - [ ] **13. Containers, ImageList, Stats:** namespace-aware inspection, followed by
   richer ServiceInfo; existing service detail is already available.
 - [ ] **14. Force reboot/shutdown:** expose the port options in prompts; current

@@ -37,6 +37,7 @@ type model struct {
 	mounts            mountsModel
 	memory            memoryModel
 	time              timeModel
+	cpu               cpuModel
 	timePrompt        *timePromptModel
 	problems          problemsModel
 	resourceKinds     resourceKindsModel
@@ -121,6 +122,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		mounts:            newMountsModel(applicationModel.Mounts),
 		memory:            newMemoryModel(applicationModel.Memory),
 		time:              newTimeModel(applicationModel.Time),
+		cpu:               newCPUModel(applicationModel.CPU),
 		problems:          newProblemsModel(application.EvaluateHealth(applicationModel)),
 		resourceKinds:     newResourceKindsModel(applicationModel.ResourceBrowser),
 		resourceInstances: newResourceInstancesModel(applicationModel.ResourceBrowser),
@@ -150,6 +152,18 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	updated, command := m.update(message)
 	next := updated.(model)
+	isCPUView := func(frame viewFrame) bool { return frame.Kind == viewCPU }
+	if slices.ContainsFunc(m.views, isCPUView) && (!slices.ContainsFunc(next.views, isCPUView) || next.application.Generation != m.application.Generation) {
+		var effect application.Effect
+		next.application, effect = application.Update(next.application, application.CloseCPU{})
+		next.cpu = next.cpu.setState(next.application.CPU)
+		command = tea.Batch(command, next.command(effect))
+	}
+	if slices.ContainsFunc(next.views, isCPUView) {
+		layout := layoutShell(next.width, next.height, next.activePrompt() != "")
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "")
+		next.cpu = next.cpu.clampOffset(frame.InnerHeight)
+	}
 	isTimeView := func(frame viewFrame) bool { return frame.Kind == viewTime }
 	if slices.ContainsFunc(m.views, isTimeView) && (!slices.ContainsFunc(next.views, isTimeView) || next.application.Generation != m.application.Generation) {
 		var effect application.Effect
@@ -592,6 +606,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.mounts = m.mounts.setState(m.application.Mounts)
 				return m, m.command(effect)
 			}
+			if !m.filtering() && m.views.top().Kind == viewCPU {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RefreshCPU{})
+				m.cpu = m.cpu.setState(m.application.CPU)
+				return m, m.command(effect)
+			}
 			if !m.filtering() && m.views.top().Kind == viewTime {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RefreshTime{})
@@ -652,6 +672,10 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewMounts {
 			m.mounts = m.mounts.update(message)
+			return m, nil
+		}
+		if m.views.top().Kind == viewCPU {
+			m.cpu = m.cpu.update(message)
 			return m, nil
 		}
 		if m.views.top().Kind == viewTime {
@@ -934,6 +958,15 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if key == "u" && !m.nodes.filtering && m.views.top().Kind == viewNodes {
+			if node, ok := m.nodes.selected(); ok {
+				m.views = m.views.push(viewFrame{Kind: viewCPU, Label: fallback(node.DisplayName()) + " > CPU"})
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.OpenCPU{Node: node.Target()})
+				m.cpu = newCPUModel(m.application.CPU)
+				return m, m.command(effect)
+			}
+		}
 		if key == "t" && !m.nodes.filtering && m.views.top().Kind == viewNodes {
 			if node, ok := m.nodes.selected(); ok {
 				m.views = m.views.push(viewFrame{Kind: viewTime, Label: fallback(node.DisplayName()) + " > time"})
@@ -1052,6 +1085,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mounts = m.mounts.setState(m.application.Mounts)
 		m.memory = m.memory.setState(m.application.Memory)
 		m.time = m.time.setState(m.application.Time)
+		m.cpu = m.cpu.setState(m.application.CPU)
 		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 		m.resourceKinds = m.resourceKinds.setState(m.application.ResourceBrowser)
 		m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
@@ -1198,6 +1232,8 @@ func (m model) activeContent(size contentSize) string {
 		view.WriteString(m.netstat.viewSized(innerSize))
 	case viewMounts:
 		view.WriteString(m.mounts.viewSized(innerSize))
+	case viewCPU:
+		view.WriteString(m.cpu.viewSized(innerSize))
 	case viewTime:
 		view.WriteString(m.time.viewSized(innerSize))
 	case viewMemory:
@@ -1260,6 +1296,9 @@ func (m model) filtering() bool {
 	}
 	if m.views.top().Kind == viewMounts {
 		return m.mounts.filtering
+	}
+	if m.views.top().Kind == viewCPU {
+		return m.cpu.filtering
 	}
 	if m.views.top().Kind == viewTime {
 		return m.time.filtering
@@ -1342,6 +1381,9 @@ func (m model) activePrompt() string {
 	}
 	if m.views.top().Kind == viewMounts && (m.mounts.filtering || m.mounts.filter != "") {
 		return "/" + m.mounts.filter
+	}
+	if m.views.top().Kind == viewCPU && (m.cpu.filtering || m.cpu.filter != "") {
+		return "/" + m.cpu.filter
 	}
 	if m.views.top().Kind == viewTime && (m.time.filtering || m.time.filter != "") {
 		return "/" + m.time.filter
