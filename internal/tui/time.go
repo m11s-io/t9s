@@ -108,7 +108,7 @@ func formatTimeSample(value time.Time, valid bool) string {
 	}
 	return value.UTC().Format(time.RFC3339Nano)
 }
-func (m timeModel) viewSized(size contentSize) string {
+func (m timeModel) visibleRows() []string {
 	rows := m.rows()
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query != "" {
@@ -120,10 +120,20 @@ func (m timeModel) viewSized(size contentSize) string {
 		}
 		rows = filtered
 	}
+	return rows
+}
+
+func (m timeModel) clampOffset(height int) timeModel {
+	m.offset = min(max(0, m.offset), max(0, len(m.visibleRows())-max(1, height)))
+	return m
+}
+
+func (m timeModel) viewSized(size contentSize) string {
+	rows := m.visibleRows()
 	if len(rows) == 0 {
 		return "No matching time data"
 	}
-	offset := min(m.offset, max(0, len(rows)-max(1, size.Height)))
-	end := min(len(rows), offset+max(0, size.Height))
-	return strings.Join(rows[offset:end], "\n")
+	m = m.clampOffset(size.Height)
+	end := min(len(rows), m.offset+max(0, size.Height))
+	return strings.Join(rows[m.offset:end], "\n")
 }

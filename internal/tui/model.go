@@ -150,12 +150,18 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	updated, command := m.update(message)
 	next := updated.(model)
-	if m.views.top().Kind == viewTime && (next.views.top().Kind != viewTime || next.application.Generation != m.application.Generation) {
+	isTimeView := func(frame viewFrame) bool { return frame.Kind == viewTime }
+	if slices.ContainsFunc(m.views, isTimeView) && (!slices.ContainsFunc(next.views, isTimeView) || next.application.Generation != m.application.Generation) {
 		var effect application.Effect
 		next.application, effect = application.Update(next.application, application.CloseTime{})
 		next.time = next.time.setState(next.application.Time)
 		next.timePrompt = nil
 		command = tea.Batch(command, next.command(effect))
+	}
+	if slices.ContainsFunc(next.views, isTimeView) {
+		layout := layoutShell(next.width, next.height, next.activePrompt() != "")
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "")
+		next.time = next.time.clampOffset(frame.InnerHeight)
 	}
 	if m.views.top().Kind == viewEvents && next.views.top().Kind != viewEvents && next.application.Events.Following {
 		var effect application.Effect

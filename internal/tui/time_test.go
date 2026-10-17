@@ -91,3 +91,67 @@ func TestTimeFilterAppliesToProblemsAndCheckPanel(t *testing.T) {
 	rendered = m.viewSized(contentSize{Width: 100, Height: 15})
 	assert.Contains(t, rendered, "configured server measurement unavailable")
 }
+
+func TestTimeHelpOverlayPreservesResultsUntilTimeIsRemoved(t *testing.T) {
+	for _, exit := range []string{"back", "command", "context"} {
+		t.Run(exit, func(t *testing.T) {
+			root := readyRootModel()
+			root.splash = false
+			root, _ = updateRoot(root, keyPress('t'))
+			prior := application.TimeState{Node: "cp-1", Status: application.Ready, Value: domain.TimeSnapshot{SyncKnown: true, Synced: true}, CheckStatus: application.Ready, Check: domain.TimeCheckResult{TimeSample: domain.TimeSample{Server: "ntp.example.org", DifferenceValid: true, Difference: 250 * time.Millisecond}}}
+			root.application.Time = prior
+			root.time = root.time.setState(prior)
+			root, _ = updateRoot(root, keyPress('?'))
+			require.Equal(t, viewHelp, root.views.top().Kind)
+			assert.Equal(t, prior, root.application.Time, "Help must keep the underlying Time state alive")
+			if exit == "context" {
+				root, _ = updateRoot(root, applicationMessage{message: application.SelectContext{Name: "other"}})
+			} else if exit == "command" {
+				root, _ = updateRoot(root, keyPress(':'))
+				root.palette.input.SetValue("nodes")
+				root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
+			} else {
+				root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEsc})
+				require.Equal(t, viewTime, root.views.top().Kind)
+				assert.Equal(t, prior, root.application.Time)
+				assert.Contains(t, root.View().Content, "+250ms")
+				root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEsc})
+			}
+			assert.Equal(t, application.TimeState{}, root.application.Time, "Removing Time or switching context must clear its state")
+		})
+	}
+}
+
+func TestTimeBottomScrollMovesUpImmediatelyAndClampsFilteredRows(t *testing.T) {
+	root := readyRootModel()
+	root.splash = false
+	root, _ = updateRoot(root, keyPress('t'))
+	state := application.TimeState{Status: application.Ready, Node: "cp-1", Value: domain.TimeSnapshot{TimeSample: domain.TimeSample{Problems: []string{"first problem", "second problem", "third problem", "fourth problem", "fifth problem", "sixth problem", "seventh problem", "eighth problem"}}}, CheckStatus: application.Failed, CheckErr: "denied"}
+	root.application.Time = state
+	root.time = root.time.setState(state)
+	root, _ = updateRoot(root, tea.WindowSizeMsg{Width: 80, Height: 16})
+	root, _ = updateRoot(root, keyPress('G'))
+	bottom := root.View().Content
+	root, _ = updateRoot(root, keyPress('k'))
+	assert.NotEqual(t, bottom, root.View().Content, "k after G must move immediately")
+	for range 30 {
+		root, _ = updateRoot(root, keyPress('j'))
+	}
+	bottom = root.View().Content
+	root, _ = updateRoot(root, keyPress('k'))
+	assert.NotEqual(t, bottom, root.View().Content, "repeated j must not accumulate an invisible offset")
+	root, _ = updateRoot(root, keyPress('/'))
+	for _, r := range "problem" {
+		root, _ = updateRoot(root, keyPress(r))
+	}
+	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
+	root, _ = updateRoot(root, keyPress('G'))
+	bottom = root.View().Content
+	root, _ = updateRoot(root, keyPress('k'))
+	assert.NotEqual(t, bottom, root.View().Content, "G must clamp against filtered rows")
+	// A larger viewport makes every filtered row visible, so both scroll keys
+	// must keep the stored position at the start instead of hiding future moves.
+	root, _ = updateRoot(root, tea.WindowSizeMsg{Width: 80, Height: 40})
+	root, _ = updateRoot(root, keyPress('G'))
+	assert.Zero(t, root.time.offset)
+}
