@@ -1,12 +1,13 @@
 # Talos 1.14 coverage plan for t9s
 
-Status: Phases 0 and 1 implemented; Phase 2 partially implemented; Phases 3 and 4 pending.
+Status: Phases 0 and 1 implemented; Phase 2 partially implemented; Phases 3 and 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
 Last reconciled with source: 2026-10-17
 Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
 Live v1.14.4 cluster smoke testing is pending; implemented below means present in source, not released or live-verified.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.
 Their original v1.14.1 findings are background; this document records current status.
+Kubernetes upgrades were added to planned scope at user request on 2026-10-17.
 
 ## Progress
 
@@ -26,6 +27,9 @@ Their original v1.14.1 findings are background; this document records current st
   and force reboot/shutdown controls remain.
 - **Phases 3 and 4 pending:** curated Talos networking/storage/system views and
   health rules, configuration editing, disaster recovery, and convenience exports.
+- **New planned scope:** cluster-wide Kubernetes upgrades through Talos, separate
+  from node-level Talos OS upgrades. Requires its own design and implementation
+  plan; no Kubernetes upgrade action exists in t9s yet.
 - The historical Phase 0 review's TUI quorum bypass was fixed in `f101668`;
   the old review is not a current open-blocker list.
 
@@ -67,7 +71,8 @@ any resource kind) and the streaming upgrade lifecycle.
 
 These are curated UI/workflow gaps. Generic COSI resources may already be
 inspectable through `:resources`; that does not imply a dedicated view or rule.
-Priorities below preserve the original roadmap, rather than introduce new scope.
+Priorities preserve the original roadmap except the explicitly requested
+Kubernetes upgrade workflow added on 2026-10-17.
 
 | Area | Remaining work | Priority |
 | --- | --- | --- |
@@ -77,6 +82,7 @@ Priorities below preserve the original roadmap, rather than introduce new scope.
 | Storage | LVM / MD RAID status, volume lifecycle, trim / XFS scrub views and health rules | P1 |
 | System | Workload isolation / `sandboxd` / security profile visibility | P1 |
 | Health | Rules and overview rollup for the new network/storage/system evidence | P1 |
+| Kubernetes upgrades | Cluster version inventory, compatibility checks, dry-run preview, backup, confirmed upgrade and progress | User-requested; Phase 5 |
 | Configuration | ApplyConfiguration with server-side dry-run preview and explicit confirmation | P1 |
 | Recovery | Bootstrap / EtcdRecover workflow with mode-specific existing-cluster guards | P1 |
 | Convenience | Kubeconfig export; curated etcd Spec/Config/PKI detail | P1 |
@@ -178,9 +184,68 @@ These apply to every new capability (from report 05):
 - [ ] **23. Kubeconfig export; curated EtcdSpec/Config/PKI detail.**
 - [ ] **24. taloscontainers namespace selection; etcd port 2383 documentation.**
 
+### Phase 5 — Kubernetes upgrades through Talos: newly planned
+
+This changes the original product scope: Kubernetes upgrades are now planned,
+while the existing node `U` action remains a Talos OS upgrade. This is an
+architectural workflow requiring a separate reviewed spec and implementation
+plan before product code changes. Adding it here authorizes roadmap planning,
+not execution against a cluster.
+
+Version reference checked on 2026-10-17: the [Kubernetes release page](https://kubernetes.io/releases/)
+lists v1.37.1, and the [Talos v1.14.4 release images](https://github.com/siderolabs/talos/releases/tag/v1.14.4)
+include v1.37.1 control-plane components, kube-proxy, and kubelet. These are
+reference targets, not evidence of any user's running Kubernetes version.
+Discover installed versions and validate compatibility again at execution time;
+do not hard-code v1.37.1 as the newest available or universally valid target.
+
+- [ ] **25. Cluster version inventory:** discover every API server and kubelet
+  version, cluster identity, node roles, and Talos versions. Surface mixed or
+  unavailable versions explicitly. Verify that Talos and Kubernetes credentials
+  identify the same cluster before offering a mutation.
+- [ ] **26. Upstream orchestration integration:** evaluate reuse of the pinned
+  Talos implementation behind `talosctl upgrade-k8s`. The inspected upstream
+  orchestration lives in `pkg/cluster/kubernetes`, outside the currently pinned
+  `pkg/machinery` module; establish availability, API shape, provider interfaces,
+  and dependency cost at the chosen release before selecting an integration.
+  Keep it behind a narrow cluster-upgrade port and normalize progress/errors.
+  The design must choose a Go-library integration or a constrained, version-
+  checked talosctl adapter; it must not add arbitrary shell execution.
+- [ ] **27. Upgrade preview and preflight:** require explicit target selection;
+  check Talos compatibility on all participating nodes and Kubernetes version
+  skew. Support patch upgrades and one minor step at a time; reject downgrades,
+  minor-version skips, and unknown/incompatible source versions. Show a dry-run
+  plan, affected control-plane/worker nodes, image references, manifest changes,
+  and permission/health failures before enabling confirmation. Verify that the
+  preview path does not mutate the cluster.
+- [ ] **28. Confirmed cluster operation:** require `--enable-writes`, a verified
+  etcd snapshot before mutation, fresh health/version checks, and typed cluster
+  identity plus target-version confirmation. Prevent concurrent Kubernetes/Talos
+  upgrades and conflicting maintenance operations against the same cluster.
+  Give this a separate cluster-scoped entry point; do not reuse per-node `U`.
+- [ ] **29. Progress and partial failure:** preserve upstream component sequencing
+  and readiness checks for API servers, controller managers, schedulers,
+  kube-proxy, kubelets, and managed manifests. Show image pre-pull, drain/eviction
+  where applicable, per-component progress, and final version/health verification.
+  Cancellation or disconnection must report a potentially partial upgrade and
+  require rediscovery before retry; do not promise automatic rollback or treat
+  reconnecting as evidence of completion.
+- [ ] **30. Validation and documentation:** cover read-only gating, wrong-cluster
+  credentials, unsupported/skipped versions, mixed versions, snapshot failure,
+  concurrent operations, stale confirmation, cancellation, and partial completion.
+  Validate supported upgrade paths on disposable Talos clusters before release.
+  Update the README/security/commands guides when the feature actually ships;
+  current documentation must continue to describe the existing OS-only action.
+
+References for the design: [upstream upgrade-k8s command](https://github.com/siderolabs/talos/blob/v1.14.4/cmd/talosctl/cmd/talos/upgrade-k8s.go),
+[upstream Kubernetes orchestration](https://github.com/siderolabs/talos/tree/v1.14.4/pkg/cluster/kubernetes),
+and [Kubernetes version skew policy](https://kubernetes.io/releases/version-skew-policy/).
+
 ## 5. Explicit non-goals
 
-- Kubernetes control-plane version upgrades (already documented as out of scope).
+- Kubernetes upgrade implementation remains pending Phase 5; the existing Talos
+  OS upgrade action does not upgrade Kubernetes. Kubernetes upgrades are no longer
+  a permanent non-goal.
 - Kubernetes workload/object management (`kubectl` remains the tool).
 - etcd downgrade operations and learner promotion.
 - META partition writes, LVM/MD teardown fan-out, credential generation.
@@ -209,6 +274,8 @@ These are remaining candidates, not newly approved implementation work:
 2. `feat(diagnostics): add CPU metrics and directory disk usage`
 3. `feat(containers): add namespace-aware containers, images, and stats`
 4. `feat(etcd): require typed member confirmation`
+5. Kubernetes upgrade design/integration study (Phase 5 items 25–30; separate
+   reviewed spec and implementation plan before feature development).
 
 ## Appendix — source reports
 
