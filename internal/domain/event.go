@@ -10,5 +10,12 @@ type EventSnapshot struct {
 }
 
 type EventSet struct {
-	Events []EventSnapshot
+	Events   []EventSnapshot
+	Problems []EventProblem
+}
+
+// EventProblem identifies a node whose live event stream ended or failed.
+type EventProblem struct {
+	Node    string
+	Message string
 }

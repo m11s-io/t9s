@@ -409,16 +409,16 @@ func loadServices(reader ports.ServiceReader, generation uint64) Effect {
 	}
 }
 
-func loadEvents(reader ports.EventReader, generation uint64) Effect {
+func loadEvents(reader ports.EventReader, generation, requestGeneration uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {
-			return EventsLoaded{Generation: generation}
+			return EventsLoaded{RequestGeneration: requestGeneration, Generation: generation}
 		}
 		events, err := reader.List(ctx)
 		if err != nil {
-			return EventsFailed{Generation: generation, Err: err}
+			return EventsFailed{RequestGeneration: requestGeneration, Generation: generation, Err: err}
 		}
-		return EventsLoaded{Generation: generation, Events: events}
+		return EventsLoaded{RequestGeneration: requestGeneration, Generation: generation, Events: events}
 	}
 }
 

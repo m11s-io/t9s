@@ -56,3 +56,70 @@ func TestEventsFilterMatchesNodeKindAndMessage(t *testing.T) {
 	assert.Contains(t, rendered, "etcd")
 	assert.NotContains(t, rendered, "boot START")
 }
+
+func TestEventsFollowKeyAndFilterIsolation(t *testing.T) {
+	root := newModel(t.Context(), false, application.Model{Generation: 1, Events: eventsTestState()}, application.NewRunner(application.Dependencies{}))
+	root.splash = false
+	root.views = root.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
+	root, _ = updateRoot(root, keyPress('s'))
+	assert.Contains(t, root.View().Content, "FOLLOW", "s should start read-only event following")
+	root, _ = updateRoot(root, keyPress('/'))
+	root, _ = updateRoot(root, keyPress('s'))
+	assert.Equal(t, "s", root.events.filter)
+	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
+	root, _ = updateRoot(root, keyPress('s'))
+	assert.Contains(t, root.View().Content, "PAUSED")
+}
+
+func TestEventsFollowStopsOnPaletteNavigation(t *testing.T) {
+	root := newModel(t.Context(), false, application.Model{Generation: 1, Events: eventsTestState()}, application.NewRunner(application.Dependencies{}))
+	root.splash = false
+	root.views = root.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
+	root, _ = updateRoot(root, keyPress('s'))
+	root = enterCommand(t, root, "nodes")
+	assert.False(t, root.application.Events.Following)
+	root = enterCommand(t, root, "events")
+	assert.False(t, root.application.Events.Following, "returning to events must not restart a stream")
+}
+
+func TestEventsFollowFailuresAreFilterableRows(t *testing.T) {
+	state := eventsTestState()
+	state.FollowAttempted = true
+	state.Following = true
+	state.Value.Problems = []domain.EventProblem{{Node: "failed-node", Message: "event stream unavailable"}}
+	events := newEventsModel(state).startFilter("failed-node")
+	rendered := events.viewSized(contentSize{Width: 100, Height: 10})
+	assert.Contains(t, rendered, "failed-node")
+	assert.Contains(t, rendered, "StreamError")
+	assert.NotContains(t, rendered, "boot START")
+}
+
+func TestEventsFollowKeepsNewestRowsVisible(t *testing.T) {
+	events := newEventsModel(eventsTestState())
+	state := eventsTestState()
+	state.Following = true
+	state.FollowAttempted = true
+	for range 20 {
+		state.Value.Events = append(state.Value.Events, domain.EventSnapshot{Node: "cp-1", Message: "middle"})
+	}
+	state.Value.Events = append(state.Value.Events, domain.EventSnapshot{Node: "cp-1", Message: "newest"})
+	events = events.setState(state)
+	rendered := events.viewSized(contentSize{Width: 100, Height: 5})
+	assert.Contains(t, rendered, "newest")
+	assert.NotContains(t, rendered, "boot START")
+}
+
+func TestEventsFollowFailuresDoNotHideHealthyTraffic(t *testing.T) {
+	state := eventsTestState()
+	state.Following = true
+	state.FollowAttempted = true
+	state.Value.Events = append(state.Value.Events, domain.EventSnapshot{Node: "healthy", Message: "latest event"})
+	for range 10 {
+		state.Value.Problems = append(state.Value.Problems, domain.EventProblem{Node: "failed", Message: "unavailable"})
+	}
+	events := newEventsModel(eventsTestState()).setState(state)
+	rendered := events.viewSized(contentSize{Width: 100, Height: 5})
+	assert.Contains(t, rendered, "latest event")
+	events = events.startFilter("StreamError")
+	assert.Contains(t, events.viewSized(contentSize{Width: 100, Height: 5}), "failed")
+}

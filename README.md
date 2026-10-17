@@ -13,7 +13,7 @@ This repository implements the full Phase 1 read-only MVP scope. It
 discovers Talos contexts, opens a context-scoped session, renders a compact
 read-only `:nodes` view with node detail, filters nodes with `/`, and
 switches contexts with `:contexts` or `:ctx`. Also implemented: services
-with service detail and streaming logs, machine events (`:events`), etcd
+with service detail and streaming logs, machine events with optional live follow (`:events`, `s`), etcd
 membership and status (`:etcd`), node-scoped process lists (press `p` on a
 selected node), node-scoped disk devices (press `k`), node-scoped network
 interfaces (press `n`), a generic read-only Talos resource browser
@@ -32,7 +32,7 @@ Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
 implemented.
 
-The supported Talos version is **v1.14.1**. Talos upgrades are node-level operations: t9s upgrades the Talos OS on the selected node; it does not perform a Kubernetes control-plane upgrade.
+The Talos SDK and cluster compatibility target is **v1.14.4**. Automated checks verify SDK integration; live cluster compatibility requires the manual smoke test in [CONTRIBUTING.md](CONTRIBUTING.md). Talos upgrades are node-level operations: t9s upgrades the Talos OS on the selected node; it does not perform a Kubernetes control-plane upgrade.
 
 ## Install
 

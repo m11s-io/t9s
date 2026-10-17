@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -25,6 +26,9 @@ func NewModel(contextOverride string) (Model, Effect) {
 }
 
 func Update(model Model, message Message) (Model, Effect) {
+	if next, effect, handled := updateEventFollow(model, message); handled {
+		return next, effect
+	}
 	switch message := message.(type) {
 	case Start:
 		return model, loadContexts(model.ContextName, model.Generation)
@@ -48,6 +52,14 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Generation++
 		model.Nodes = NodeState{Status: Loading}
 		model.Services = ServiceState{}
+		if model.eventCancel != nil {
+			model.eventCancel()
+			model.eventCancel = nil
+		}
+		eventStream := model.eventStream
+		model.eventStream = nil
+		model.eventGeneration++
+		model.eventRequestGeneration++
 		model.Events = EventState{}
 		model.Etcd = EtcdState{}
 		model.Processes = ProcessesState{}
@@ -75,7 +87,13 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.ActionResults = nil
 		model.ActionTotal = 0
 		model.refreshDisksTarget = ""
-		return model, openSession(message.Name, model.Generation)
+		open := openSession(message.Name, model.Generation)
+		return model, func(ctx context.Context, deps Dependencies) Message {
+			if eventStream != nil {
+				_ = eventStream.Close()
+			}
+			return open(ctx, deps)
+		}
 
 	case SessionOpened:
 		if message.Generation != model.Generation {
@@ -122,7 +140,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		if len(message.Services.Problems) > 0 {
 			model.Notice = fmt.Sprintf("services unavailable on %d node(s)", len(message.Services.Problems))
 		}
-		return model, loadEvents(model.eventReader, message.Generation)
+		return model, loadEvents(model.eventReader, message.Generation, model.eventRequestGeneration)
 
 	case ServicesFailed:
 		if message.Generation != model.Generation {
@@ -147,25 +165,31 @@ func Update(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		model.Events = EventState{Status: Ready, Value: message.Events}
-		controlPlaneNodes := controlPlaneHostnames(model.Nodes.Value.Nodes)
-		if len(controlPlaneNodes) == 0 {
-			return model, loadKubernetesNodesIfAvailable(model)
+		if message.RequestGeneration != model.eventRequestGeneration || model.Events.Following {
+			return model, continueAfterEventSnapshot(model)
 		}
-		return model, loadEtcd(model.etcdReader, controlPlaneNodes, message.Generation)
+		model.Events = EventState{Status: Ready, Value: message.Events}
+		return model, continueAfterEventSnapshot(model)
 
 	case EventsFailed:
 		if message.Generation != model.Generation {
 			return model, nil
+		}
+		if message.RequestGeneration != model.eventRequestGeneration || model.Events.Following {
+			return model, continueAfterEventSnapshot(model)
 		}
 		model.Events.Status = Failed
 		model.Events.Err = "events unavailable"
 		return model, nil
 
 	case RefreshEvents:
+		if model.Events.Following {
+			return model, nil
+		}
+		model.eventRequestGeneration++
 		model.Events.Status = Loading
 		model.Events.Err = ""
-		return model, loadEvents(model.eventReader, model.Generation)
+		return model, loadEvents(model.eventReader, model.Generation, model.eventRequestGeneration)
 
 	case EtcdLoaded:
 		if message.Generation != model.Generation {

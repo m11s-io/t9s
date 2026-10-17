@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	"github.com/m11s-io/t9s/internal/domain"
@@ -120,6 +121,7 @@ func (f *FakeServiceReader) List(ctx context.Context) (domain.ServiceSet, error)
 }
 
 type FakeEventReader struct {
+	OpenFunc func(context.Context) (ports.EventStream, error)
 	ListFunc func(context.Context) (domain.EventSet, error)
 }
 
@@ -422,3 +424,41 @@ type FakeSessionFactory struct {
 func (f *FakeSessionFactory) Open(ctx context.Context, contextName string) (ports.Session, error) {
 	return f.OpenFunc(ctx, contextName)
 }
+
+func (f *FakeEventReader) Open(ctx context.Context) (ports.EventStream, error) {
+	if f.OpenFunc != nil {
+		return f.OpenFunc(ctx)
+	}
+	return &FakeEventStream{}, nil
+}
+
+type FakeEventStream struct {
+	Batches []domain.EventSet
+	Err     error
+	mu      sync.Mutex
+	closed  bool
+}
+
+func (s *FakeEventStream) Next(ctx context.Context) (domain.EventSet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return domain.EventSet{}, err
+	}
+	if len(s.Batches) > 0 {
+		b := s.Batches[0]
+		s.Batches = s.Batches[1:]
+		return b, nil
+	}
+	if s.Err != nil {
+		return domain.EventSet{}, s.Err
+	}
+	return domain.EventSet{}, io.EOF
+}
+func (s *FakeEventStream) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
+func (s *FakeEventStream) Closed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.closed }

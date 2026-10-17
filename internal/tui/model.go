@@ -145,6 +145,18 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	updated, command := m.update(message)
+	next := updated.(model)
+	if m.views.top().Kind == viewEvents && next.views.top().Kind != viewEvents && next.application.Events.Following {
+		var effect application.Effect
+		next.application, effect = application.Update(next.application, application.StopEventFollow{})
+		next.events = next.events.setState(next.application.Events)
+		return next, tea.Batch(command, next.command(effect))
+	}
+	return next, command
+}
+
+func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width = message.Width
@@ -646,6 +658,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.views.top().Kind == viewEvents {
+			if key == "s" && !m.events.filtering {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.ToggleEventFollow{})
+				m.events = m.events.setState(m.application.Events)
+				return m, m.command(effect)
+			}
 			m.events = m.events.update(message)
 			return m, nil
 		}

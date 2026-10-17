@@ -49,6 +49,7 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 		return hints
 	case viewEvents:
 		return append(global,
+			actionHint{Key: "s", Label: "Follow"},
 			actionHint{Key: "/", Label: "Filter"},
 			actionHint{Key: "r", Label: "Refresh"},
 		)

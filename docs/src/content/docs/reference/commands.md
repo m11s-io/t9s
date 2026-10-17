@@ -10,7 +10,7 @@ Press `:` to open the command palette.
 | `:nodes` | `:no` | Open the node explorer. |
 | `:services` | `:svc` | Open Talos services. |
 | `:contexts` | `:ctx` | Select another discovered context. |
-| `:events` | `:ev` | Open the machine event view. |
+| `:events` | `:ev` | Open the machine event snapshot; `s` toggles live follow. |
 | `:etcd` | `:et` | Open etcd membership and status; with `--enable-writes`, snapshot/membership maintenance actions live here. See [Etcd operations](/guides/etcd-ops/). |
 | `:overview` | `:ov` | Cluster-wide health summary. See [Health](/guides/health/). |
 | `:problems` | | Drillable list of everything currently unhealthy. See [Health](/guides/health/). |
@@ -81,3 +81,9 @@ These act on the selected row in `:services`:
 | `R` | Restart the selected service, behind a confirm prompt. Requires `--enable-writes`. |
 
 `S`, `T`, and `R` are inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).
+
+## Event keys
+
+In `:events`, `/` filters by node, kind, or message. `s` starts or stops live
+following; no write permission is required. `r` refreshes the snapshot while
+paused and leaves an active follow stream unchanged. See [Live machine events](/guides/diagnostics/#live-machine-events).

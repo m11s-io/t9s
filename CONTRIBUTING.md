@@ -2,8 +2,10 @@
 
 ## Requirements and commands
 
-Use Go 1.27.1 on Linux to match CI. The supported Talos SDK and cluster version
-for this slice is v1.14.1.
+Use Go 1.27.2 on Linux to match CI (Go 1.27.1 is the module minimum).
+The target Talos SDK and cluster version for this slice is v1.14.4.
+Automated checks cover SDK integration; live v1.14.4 compatibility remains
+pending until the manual smoke test below is recorded.
 
 ```bash
 go build ./cmd/t9s
@@ -66,7 +68,12 @@ the owning package plus the full test suite.
 
 ## Optional manual smoke test
 
-When a disposable Talos v1.14.1 cluster is available, verify that the first
+On a disposable v1.14.4 cluster, check `:nodes`, `:services` and service
+logs, `:events`, `:etcd`, and `:resources` in the default read-only mode.
+Record the t9s commit, Talos version, checks performed, and results without
+including endpoints or credentials.
+
+When a disposable Talos v1.14.4 cluster is available, verify that the first
 frame appears before node results, unreachable endpoints do not freeze input,
 context switching never displays old-context nodes, partial failures preserve
 reachable rows, `/` filters without changing the snapshot, and no key or

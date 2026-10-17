@@ -42,3 +42,26 @@ Press `/` to filter across the metric label and value. There is no detail page.
 ## Read-only guarantee
 
 All four views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.
+
+## Live machine events
+
+`:events` (`:ev`) opens a snapshot of recent machine events. Press `s` to start
+following new events from the current cluster members, and press `s` again to
+stop. `EVENTS FOLLOW` / `EVENTS PAUSED` shows the mode. Live following works in
+the default read-only mode.
+
+The snapshot stays visible when following starts. New events are appended in
+receive order, and the view scrolls to the newest row. Only the most recent
+2,000 event rows are retained while following. `/` still filters by node, kind,
+or message; typing `s` in a filter does not change the follow mode.
+
+A failed or ended node stream appears as a filterable `StreamError` row, and
+other members continue streaming. Failures are summarized in the mode line.
+Stop and restart follow with `s` to retry connections and rediscover membership.
+There is no automatic reconnect or historical replay: events produced while
+paused or disconnected may be missed. Use `r` while paused for a fresh recent
+event snapshot; `r` has no effect during live following.
+
+Leaving the events view, selecting another context, or quitting cancels its
+streams. Returning to `:events` starts in snapshot mode again. A membership
+change is picked up the next time following starts.

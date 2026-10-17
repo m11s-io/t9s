@@ -50,6 +50,10 @@ type Model struct {
 	serviceController      ports.ServiceController
 	logReader              ports.ServiceLogReader
 	eventReader            ports.EventReader
+	eventStream            ports.EventStream
+	eventCancel            context.CancelFunc
+	eventGeneration        uint64
+	eventRequestGeneration uint64
 	etcdReader             ports.EtcdReader
 	etcdOperations         ports.EtcdOperations
 	processReader          ports.ProcessReader
@@ -106,9 +110,11 @@ type ServiceState struct {
 }
 
 type EventState struct {
-	Status LoadStatus
-	Value  domain.EventSet
-	Err    string
+	Following       bool
+	FollowAttempted bool
+	Status          LoadStatus
+	Value           domain.EventSet
+	Err             string
 }
 
 type EtcdState struct {
@@ -609,15 +615,17 @@ type RefreshEvents struct{}
 func (RefreshEvents) applicationMessage() {}
 
 type EventsLoaded struct {
-	Generation uint64
-	Events     domain.EventSet
+	RequestGeneration uint64
+	Generation        uint64
+	Events            domain.EventSet
 }
 
 func (EventsLoaded) applicationMessage() {}
 
 type EventsFailed struct {
-	Generation uint64
-	Err        error
+	RequestGeneration uint64
+	Generation        uint64
+	Err               error
 }
 
 func (EventsFailed) applicationMessage() {}

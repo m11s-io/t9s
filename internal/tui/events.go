@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,6 +26,9 @@ func newEventsModel(state application.EventState) eventsModel {
 func (m eventsModel) setState(state application.EventState) eventsModel {
 	previousIndex := m.table.Cursor()
 	m.state = state
+	if state.Following {
+		previousIndex = len(m.visibleEvents()) - 1
+	}
 	return m.normalizeSelection(previousIndex)
 }
 
@@ -91,12 +95,20 @@ func (m eventsModel) selected() (domain.EventSnapshot, bool) {
 }
 
 func (m eventsModel) visibleEvents() []domain.EventSnapshot {
+	events := m.state.Value.Events
+	if len(m.state.Value.Problems) > 0 {
+		events = make([]domain.EventSnapshot, 0, len(m.state.Value.Problems)+len(m.state.Value.Events))
+		for _, problem := range m.state.Value.Problems {
+			events = append(events, domain.EventSnapshot{Node: problem.Node, Kind: "StreamError", Message: problem.Message})
+		}
+		events = append(events, m.state.Value.Events...)
+	}
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Events
+		return events
 	}
-	filtered := make([]domain.EventSnapshot, 0, len(m.state.Value.Events))
-	for _, event := range m.state.Value.Events {
+	filtered := make([]domain.EventSnapshot, 0, len(events))
+	for _, event := range events {
 		values := []string{event.Node, event.Kind, event.Message}
 		for _, value := range values {
 			if strings.Contains(strings.ToLower(value), query) {
@@ -117,6 +129,35 @@ func (m eventsModel) view(width int) string {
 }
 
 func (m eventsModel) viewSized(size contentSize) string {
+	status := m.followStatus()
+	if status != "" {
+		if size.Height <= 1 {
+			return status
+		}
+		size.Height--
+		return status + "\n" + m.tableViewSized(size)
+	}
+	return m.tableViewSized(size)
+}
+
+func (m eventsModel) followStatus() string {
+	if !m.state.FollowAttempted {
+		return ""
+	}
+	status := "EVENTS PAUSED"
+	if m.state.Following {
+		status = "EVENTS FOLLOW"
+	}
+	if m.state.Err != "" {
+		status += " — " + m.state.Err
+	}
+	if len(m.state.Value.Problems) > 0 {
+		status += " — failed nodes: " + fmt.Sprint(len(m.state.Value.Problems))
+	}
+	return status
+}
+
+func (m eventsModel) tableViewSized(size contentSize) string {
 	if m.state.Status == application.Failed {
 		return fallback(m.state.Err)
 	}
