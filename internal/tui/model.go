@@ -36,6 +36,8 @@ type model struct {
 	netstat           netstatModel
 	mounts            mountsModel
 	memory            memoryModel
+	time              timeModel
+	timePrompt        *timePromptModel
 	problems          problemsModel
 	resourceKinds     resourceKindsModel
 	resourceInstances resourceInstancesModel
@@ -118,6 +120,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		netstat:           newNetstatModel(applicationModel.Netstat),
 		mounts:            newMountsModel(applicationModel.Mounts),
 		memory:            newMemoryModel(applicationModel.Memory),
+		time:              newTimeModel(applicationModel.Time),
 		problems:          newProblemsModel(application.EvaluateHealth(applicationModel)),
 		resourceKinds:     newResourceKindsModel(applicationModel.ResourceBrowser),
 		resourceInstances: newResourceInstancesModel(applicationModel.ResourceBrowser),
@@ -147,6 +150,13 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	updated, command := m.update(message)
 	next := updated.(model)
+	if m.views.top().Kind == viewTime && (next.views.top().Kind != viewTime || next.application.Generation != m.application.Generation) {
+		var effect application.Effect
+		next.application, effect = application.Update(next.application, application.CloseTime{})
+		next.time = next.time.setState(next.application.Time)
+		next.timePrompt = nil
+		command = tea.Batch(command, next.command(effect))
+	}
 	if m.views.top().Kind == viewEvents && next.views.top().Kind != viewEvents && next.application.Events.Following {
 		var effect application.Effect
 		next.application, effect = application.Update(next.application, application.StopEventFollow{})
@@ -169,6 +179,27 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		key := message.String()
 		if key == "ctrl+c" {
 			return m, m.shutdown()
+		}
+		if m.timePrompt != nil {
+			switch key {
+			case "esc":
+				m.timePrompt = nil
+				return m, nil
+			case "enter":
+				server, err := application.ValidateTimeServer(m.timePrompt.input.Value())
+				if err != nil {
+					m.timePrompt.err = err.Error()
+					return m, nil
+				}
+				m.timePrompt = nil
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.CheckTime{Server: server})
+				m.time = m.time.setState(m.application.Time)
+				return m, m.command(effect)
+			}
+			var command tea.Cmd
+			*m.timePrompt, command = m.timePrompt.update(message)
+			return m, command
 		}
 		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil || m.application.PendingEtcdAction != nil {
 			if key == "y" {
@@ -555,6 +586,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.mounts = m.mounts.setState(m.application.Mounts)
 				return m, m.command(effect)
 			}
+			if !m.filtering() && m.views.top().Kind == viewTime {
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.RefreshTime{})
+				m.time = m.time.setState(m.application.Time)
+				return m, m.command(effect)
+			}
 			if !m.filtering() && m.views.top().Kind == viewMemory {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RefreshMemory{})
@@ -609,6 +646,15 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewMounts {
 			m.mounts = m.mounts.update(message)
+			return m, nil
+		}
+		if m.views.top().Kind == viewTime {
+			if key == "c" && !m.time.filtering {
+				prompt := newTimePromptModel()
+				m.timePrompt = &prompt
+				return m, prompt.input.Focus()
+			}
+			m.time = m.time.update(message)
 			return m, nil
 		}
 		if m.views.top().Kind == viewMemory {
@@ -882,6 +928,15 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.command(effect)
 			}
 		}
+		if key == "t" && !m.nodes.filtering && m.views.top().Kind == viewNodes {
+			if node, ok := m.nodes.selected(); ok {
+				m.views = m.views.push(viewFrame{Kind: viewTime, Label: fallback(node.DisplayName()) + " > time"})
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, application.OpenTime{Node: node.Target()})
+				m.time = newTimeModel(m.application.Time)
+				return m, m.command(effect)
+			}
+		}
 		if key == "f" && !m.nodes.filtering {
 			if _, ok := m.nodes.selected(); ok {
 				node := m.nodes.selectedValue()
@@ -990,6 +1045,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.netstat = m.netstat.setState(m.application.Netstat)
 		m.mounts = m.mounts.setState(m.application.Mounts)
 		m.memory = m.memory.setState(m.application.Memory)
+		m.time = m.time.setState(m.application.Time)
 		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 		m.resourceKinds = m.resourceKinds.setState(m.application.ResourceBrowser)
 		m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
@@ -1136,6 +1192,8 @@ func (m model) activeContent(size contentSize) string {
 		view.WriteString(m.netstat.viewSized(innerSize))
 	case viewMounts:
 		view.WriteString(m.mounts.viewSized(innerSize))
+	case viewTime:
+		view.WriteString(m.time.viewSized(innerSize))
 	case viewMemory:
 		view.WriteString(m.memory.viewSized(innerSize))
 	case viewOverview:
@@ -1197,6 +1255,9 @@ func (m model) filtering() bool {
 	if m.views.top().Kind == viewMounts {
 		return m.mounts.filtering
 	}
+	if m.views.top().Kind == viewTime {
+		return m.time.filtering
+	}
 	if m.views.top().Kind == viewMemory {
 		return m.memory.filtering
 	}
@@ -1213,6 +1274,9 @@ func (m model) filtering() bool {
 }
 
 func (m model) activePrompt() string {
+	if m.timePrompt != nil {
+		return m.timePrompt.view()
+	}
 	if m.application.PendingAction != nil {
 		return renderPendingActionPrompt(*m.application.PendingAction)
 	}
@@ -1272,6 +1336,9 @@ func (m model) activePrompt() string {
 	}
 	if m.views.top().Kind == viewMounts && (m.mounts.filtering || m.mounts.filter != "") {
 		return "/" + m.mounts.filter
+	}
+	if m.views.top().Kind == viewTime && (m.time.filtering || m.time.filter != "") {
+		return "/" + m.time.filter
 	}
 	if m.views.top().Kind == viewMemory && (m.memory.filtering || m.memory.filter != "") {
 		return "/" + m.memory.filter

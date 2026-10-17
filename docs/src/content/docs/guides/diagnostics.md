@@ -1,6 +1,6 @@
 ---
 title: Node diagnostics
-description: Inspect a node's kernel log, network sockets, mounts, and memory.
+description: Inspect a node's kernel log, network sockets, mounts, memory, and time.
 ---
 
 These read-only views open from a selected node in `:nodes` — none is a standalone top-level command. For a server-side, streaming cluster readiness check (not node-scoped), see [`:healthcheck`](/guides/health/#healthcheck). Each is scoped to the node the view was opened for, and `r` re-fetches that same node rather than whatever is currently selected back in `:nodes`. Press `Esc` or `q` to return to `:nodes`.
@@ -39,9 +39,41 @@ Press `f` on a selected node to show a curated subset of its `/proc/meminfo` as 
 
 Press `/` to filter across the metric label and value. There is no detail page.
 
+## Time
+
+Press `t` on a selected node to show its synchronization status, configured
+server, node/server UTC samples, and **sampled difference (server - node)**.
+For example, a server sample 250 ms later than the node sample is `+250ms`.
+This sampled difference is not an authoritative NTP offset or a health verdict;
+the synchronization status comes separately from the node's time status resource.
+Missing or invalid timestamps show `unknown`. A failed configured-server
+measurement leaves the synchronization status visible with a problem message.
+
+| Key | Result |
+| --- | --- |
+| `r` | Refresh normal status and configured-server measurements. |
+| `/` | Filter status, samples, problems, and check results. |
+| `c` | Open the explicit server-check prompt. |
+| `Enter` | Check the entered server. |
+| `Esc` | Cancel the prompt, cancel filter entry, or leave the view. |
+| `j` / `k` | Scroll when the result exceeds the available height. |
+
+The prompt accepts a trimmed hostname or bare IP address, including IPv6.
+It rejects empty values, whitespace/control characters within a target, URL
+schemes, paths, and ports. A check appears in its own **SERVER CHECK** panel;
+it never replaces normal node status. Refreshing normal status does not repeat
+an explicit server check. Talos enforces permissions for `TimeCheck`: a denied
+check displays `time check permission denied`, without retrying another server.
+No arbitrary-server checks happen automatically.
+
+Leaving the view, changing context, or quitting cancels pending time RPCs.
+Opening and canceling the context picker keeps the current view. Superseded
+responses cannot replace newer status or check results. Requests have a
+10-second deadline.
+
 ## Read-only guarantee
 
-All four views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.
+All five views are read-only. They never require `--enable-writes`, and enabling writes does not add any mutation to them.
 
 ## Live machine events
 

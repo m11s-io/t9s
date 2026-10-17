@@ -353,6 +353,7 @@ type FakeSession struct {
 	NetstatReader          ports.NetstatReader
 	MountReader            ports.MountReader
 	MemoryReader           ports.MemoryReader
+	TimeReader             ports.TimeReader
 	ClusterHealthReader    ports.ClusterHealthReader
 	ResourceKindReader     ports.ResourceKindReader
 	ResourceInstanceReader ports.ResourceInstanceReader
@@ -391,6 +392,8 @@ func (f *FakeSession) Netstat() ports.NetstatReader { return f.NetstatReader }
 func (f *FakeSession) Mounts() ports.MountReader { return f.MountReader }
 
 func (f *FakeSession) Memory() ports.MemoryReader { return f.MemoryReader }
+
+func (f *FakeSession) Time() ports.TimeReader { return f.TimeReader }
 
 func (f *FakeSession) ClusterHealth() ports.ClusterHealthReader { return f.ClusterHealthReader }
 
@@ -462,3 +465,21 @@ func (s *FakeEventStream) Close() error {
 	return nil
 }
 func (s *FakeEventStream) Closed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.closed }
+
+type FakeTimeReader struct {
+	ReadFunc  func(context.Context, string) (domain.TimeSnapshot, error)
+	CheckFunc func(context.Context, string, string) (domain.TimeCheckResult, error)
+}
+
+func (f *FakeTimeReader) Read(ctx context.Context, node string) (domain.TimeSnapshot, error) {
+	if f.ReadFunc == nil {
+		return domain.TimeSnapshot{}, nil
+	}
+	return f.ReadFunc(ctx, node)
+}
+func (f *FakeTimeReader) Check(ctx context.Context, node, server string) (domain.TimeCheckResult, error) {
+	if f.CheckFunc == nil {
+		return domain.TimeCheckResult{}, nil
+	}
+	return f.CheckFunc(ctx, node, server)
+}

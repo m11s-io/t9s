@@ -90,6 +90,8 @@ func resourceTitle(kind viewKind, model application.Model) string {
 		return fmt.Sprintf("netstat(%s)[%d]", model.Netstat.Node, len(model.Netstat.Value.Sockets))
 	case viewMounts:
 		return fmt.Sprintf("mounts(%s)[%d]", model.Mounts.Node, len(model.Mounts.Value.Mounts))
+	case viewTime:
+		return fmt.Sprintf("time(%s)", model.Time.Node)
 	case viewMemory:
 		return fmt.Sprintf("memory(%s)", model.Memory.Node)
 	case viewOverview:

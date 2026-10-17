@@ -45,9 +45,12 @@ still in use. `FAST` is the only method exposed in this version; `ZEROES` is
 not offered.
 
 The node-scoped diagnostics views — the kernel log (`e`/dmesg), network
-sockets (`s`/netstat), filesystem mounts (`m`), and memory (`f`) — are read-only
+sockets (`s`/netstat), filesystem mounts (`m`), memory (`f`), and time (`t`) — are read-only
 and inert with respect to writes: they never require `--enable-writes`, and
 enabling writes adds no mutation to them.
+The explicit time server check (`c` in the time view) also works without writes
+mode. Talos enforces its RPC permissions; a denied check does not trigger a
+fallback server check or alter synchronization status.
 See [Node diagnostics](/guides/diagnostics/).
 
 The same gate covers etcd maintenance: `--enable-writes` additionally allows

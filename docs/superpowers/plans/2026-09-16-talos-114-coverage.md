@@ -160,6 +160,10 @@ These apply to every new capability (from report 05):
 - [x] **12a. Mounts/filesystem usage:** capacity and usage per mounted filesystem.
 - [x] **12b. Memory:** memory and swap statistics; does not provide CPU metrics.
 - [ ] **12c. CPU metrics, directory DiskUsage, Time / TimeCheck.**
+  - [x] Time / TimeCheck: node-scoped status and UTC samples, explicit checks,
+    independent result panels and request cancellation. Fake-driven tests pass;
+    disposable-cluster smoke checks remain pending.
+  - [ ] CPU metrics and directory DiskUsage.
 - [ ] **13. Containers, ImageList, Stats:** namespace-aware inspection, followed by
   richer ServiceInfo; existing service detail is already available.
 - [ ] **14. Force reboot/shutdown:** expose the port options in prompts; current

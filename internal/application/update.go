@@ -26,6 +26,9 @@ func NewModel(contextOverride string) (Model, Effect) {
 }
 
 func Update(model Model, message Message) (Model, Effect) {
+	if next, effect, handled := updateTime(model, message); handled {
+		return next, effect
+	}
 	if next, effect, handled := updateEventFollow(model, message); handled {
 		return next, effect
 	}
@@ -48,6 +51,8 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		cancelActiveUpgrade(&model)
+		closeTimeRequests(&model)
+		model.Time = TimeState{}
 		model.ContextName = message.Name
 		model.Generation++
 		model.Nodes = NodeState{Status: Loading}
@@ -115,6 +120,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.netstatReader = message.Netstat
 		model.mountReader = message.Mounts
 		model.memoryReader = message.Memory
+		model.timeReader = message.Time
 		model.resourceKindReader = message.ResourceKinds
 		model.resourceInstanceReader = message.Resources
 		model.kubernetesReader = message.KubernetesNodes

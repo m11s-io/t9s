@@ -12,7 +12,7 @@ func TestK9sCompatibilityActionMatrix(t *testing.T) {
 		view viewKind
 		keys []string
 	}{
-		{name: "root resources", view: viewNodes, keys: []string{"?", ":", "/", "d", "r", "p", "k", "n", "e", "s", "m", "f"}},
+		{name: "root resources", view: viewNodes, keys: []string{"?", ":", "/", "d", "r", "p", "k", "n", "e", "s", "m", "f", "t"}},
 		{name: "services add Talos logs", view: viewServices, keys: []string{"?", ":", "/", "d", "r", "l"}},
 		{name: "detail uses read-only back navigation", view: viewServiceDetail, keys: []string{"?", ":", "q/Esc"}},
 		{name: "help is a child view", view: viewHelp, keys: []string{"q/Esc"}},
@@ -22,6 +22,7 @@ func TestK9sCompatibilityActionMatrix(t *testing.T) {
 		{name: "netstat is a read-only list", view: viewNetstat, keys: []string{"?", ":", "/", "r"}},
 		{name: "mounts is a read-only list", view: viewMounts, keys: []string{"?", ":", "/", "r"}},
 		{name: "memory is a read-only list", view: viewMemory, keys: []string{"?", ":", "/", "r"}},
+		{name: "time status and checks are read-only", view: viewTime, keys: []string{"?", ":", "/", "r", "c"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

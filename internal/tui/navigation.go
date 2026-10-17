@@ -24,6 +24,7 @@ const (
 	viewNetstat
 	viewMounts
 	viewMemory
+	viewTime
 	viewOverview
 	viewProblems
 	viewResourceKinds

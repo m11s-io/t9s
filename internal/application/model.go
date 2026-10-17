@@ -41,6 +41,7 @@ type Model struct {
 	HealthCheck            ClusterHealthState
 	Netstat                SocketState
 	Mounts                 MountState
+	Time                   TimeState
 	Memory                 MemoryState
 	ResourceBrowser        ResourceBrowserState
 	Kubernetes             KubernetesState
@@ -64,6 +65,11 @@ type Model struct {
 	netstatReader          ports.NetstatReader
 	mountReader            ports.MountReader
 	memoryReader           ports.MemoryReader
+	timeReader             ports.TimeReader
+	timeReadID             uint64
+	timeCheckID            uint64
+	timeReadCancel         context.CancelFunc
+	timeCheckCancel        context.CancelFunc
 	resourceKindReader     ports.ResourceKindReader
 	resourceInstanceReader ports.ResourceInstanceReader
 	kubernetesReader       ports.KubernetesNodeReader
@@ -582,6 +588,7 @@ type SessionOpened struct {
 	Dmesg             ports.DmesgReader
 	Netstat           ports.NetstatReader
 	Mounts            ports.MountReader
+	Time              ports.TimeReader
 	Memory            ports.MemoryReader
 	ClusterHealth     ports.ClusterHealthReader
 	ResourceKinds     ports.ResourceKindReader

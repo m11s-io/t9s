@@ -30,6 +30,7 @@ type Session interface {
 	Netstat() NetstatReader
 	Mounts() MountReader
 	Memory() MemoryReader
+	Time() TimeReader
 	ClusterHealth() ClusterHealthReader
 	ResourceKinds() ResourceKindReader
 	Resources() ResourceInstanceReader
