@@ -320,3 +320,12 @@ func boundedServiceEvent(event string) string {
 func serviceKey(service domain.ServiceSnapshot) string {
 	return service.Node + "\x00" + service.Name
 }
+
+func findServiceByKey(services []domain.ServiceSnapshot, key string) (domain.ServiceSnapshot, bool) {
+	for _, service := range services {
+		if serviceKey(service) == key {
+			return service, true
+		}
+	}
+	return domain.ServiceSnapshot{}, false
+}

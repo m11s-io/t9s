@@ -35,8 +35,9 @@ const (
 )
 
 type viewFrame struct {
-	Kind  viewKind
-	Label string
+	Kind       viewKind
+	Label      string
+	ServiceKey string
 }
 
 type viewStack []viewFrame

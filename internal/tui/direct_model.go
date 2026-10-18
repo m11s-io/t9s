@@ -295,7 +295,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if (message.String() == "enter" || message.String() == "d") && !m.services.filtering {
 				if service, ok := m.services.selected(m.cluster.services.Value.Services); ok {
 					label := fallback(service.Name) + "@" + fallback(service.Node)
-					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: label})
+					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: label, ServiceKey: serviceKey(service)})
 				}
 				return m, nil
 			}
@@ -398,7 +398,11 @@ func (m directModel) View() tea.View {
 		if m.views.top().Kind == viewNodeDetail {
 			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
 		} else if m.views.top().Kind == viewServiceDetail {
-			content = renderServiceDetail(m.services.selectedValue(m.cluster.services.Value.Services))
+			if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
+				content = renderServiceDetail(service)
+			} else {
+				content = "SERVICE DETAIL\nService unavailable"
+			}
 		} else if m.views.top().Kind == viewServices {
 			content = m.services.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.services.Value,
 				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)

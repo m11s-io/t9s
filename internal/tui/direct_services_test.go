@@ -86,3 +86,43 @@ func TestDirectServicesRefreshUsesSharedReadWithoutLegacyReducer(t *testing.T) {
 	assert.NotNil(t, command)
 	assert.Contains(t, model.requests.slots, "cluster-nodes-services")
 }
+
+func TestDirectServiceDetailKeepsOpenedIdentityAcrossFilteredRefreshReorder(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	services := []domain.ServiceSnapshot{
+		{Node: "node-a", Name: "alpha", State: "Running"},
+		{Node: "node-b", Name: "beta-one", State: "Running"},
+		{Node: "node-c", Name: "beta-two", State: "Running"},
+	}
+	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: services}}
+	model.services = newServicesModel().normalizeSelection(services, 0)
+	model.services = model.services.startFilter("beta", services)
+	model.services.filtering = false
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Contains(t, model.View().Content, "SERVICE    beta-one")
+
+	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
+	reordered := domain.ServiceSet{Services: []domain.ServiceSnapshot{services[0], services[2], services[1]}}
+	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, services: reordered})
+	assert.Contains(t, model.View().Content, "SERVICE    beta-one")
+	assert.NotContains(t, model.View().Content, "SERVICE    beta-two")
+	assert.Contains(t, model.views.breadcrumb(model.cluster.contextName), "beta-one@node-b")
+}
+
+func TestDirectServiceDetailShowsUnavailableWhenOpenedServiceDisappears(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	services := []domain.ServiceSnapshot{{Node: "node-b", Name: "beta-one", State: "Running"}, {Node: "node-c", Name: "beta-two", State: "Running"}}
+	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: services}}
+	model.services = newServicesModel().normalizeSelection(services, 0)
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
+	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, services: domain.ServiceSet{Services: []domain.ServiceSnapshot{services[1]}}})
+	assert.Contains(t, model.View().Content, "Service unavailable")
+	assert.NotContains(t, model.View().Content, "SERVICE    beta-two")
+}
