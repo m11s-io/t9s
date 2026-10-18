@@ -70,32 +70,29 @@ func (c *Client) Open(ctx context.Context, contextName string, options Options) 
 		return nil, errors.New("session factory returned no session")
 	}
 
-	var kubernetesNodes ports.KubernetesNodeReader
+	session := &Session{
+		sdkSession:     adapter,
+		lifetimeCtx:    lifetimeCtx,
+		lifetimeCancel: lifetimeCancel,
+		writesEnabled:  options.WritesEnabled,
+	}
+	context.AfterFunc(lifetimeCtx, func() { _ = session.Close() })
+
 	if c.kubernetesResolver != nil {
-		kubernetesNodes, err = c.kubernetesResolver.Resolve(lifetimeCtx, contextName)
+		kubernetesNodes, resolveErr := c.kubernetesResolver.Resolve(lifetimeCtx, contextName)
 		if ctx.Err() != nil {
-			closeAdapter(adapter)
-			lifetimeCancel()
+			_ = session.Close()
 			return nil, ctx.Err()
 		}
-		if err != nil {
-			kubernetesNodes = nil
+		if resolveErr == nil {
+			session.kubernetesNodes = kubernetesNodes
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		closeAdapter(adapter)
-		lifetimeCancel()
+		_ = session.Close()
 		return nil, err
 	}
 
-	session := &Session{
-		sdkSession:      adapter,
-		kubernetesNodes: kubernetesNodes,
-		lifetimeCtx:     lifetimeCtx,
-		lifetimeCancel:  lifetimeCancel,
-		writesEnabled:   options.WritesEnabled,
-	}
-	context.AfterFunc(lifetimeCtx, func() { _ = session.Close() })
 	return session, nil
 }
 

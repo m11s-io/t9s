@@ -128,7 +128,6 @@ func TestSessionConcurrentCloseClosesAdapterOnce(t *testing.T) {
 	}
 	wg.Wait()
 	waitFor(t, func() bool { return adapter.CloseCount() == 1 })
-	waitFor(t, func() bool { return adapter.CloseCount() == 1 })
 	if got := adapter.CloseCount(); got != 1 {
 		t.Fatalf("adapter close count = %d, want 1", got)
 	}
@@ -186,6 +185,100 @@ func TestKubernetesResolutionCancellationClosesSession(t *testing.T) {
 	waitFor(t, func() bool { return adapter.CloseCount() == 1 })
 	if got := adapter.CloseCount(); got != 1 {
 		t.Fatalf("adapter close count = %d, want 1", got)
+	}
+}
+
+func TestKubernetesResolutionCancellationClosesAdapterWhileResolverIsBlocked(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	adapter := &testkit.FakeSession{}
+	resolverStarted := make(chan struct{})
+	resolverRelease := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-resolverRelease:
+		default:
+			close(resolverRelease)
+		}
+	})
+	resolver := lifecycleResolver{resolve: func(context.Context, string) (ports.KubernetesNodeReader, error) {
+		close(resolverStarted)
+		<-resolverRelease
+		return nil, errors.New("resolution interrupted")
+	}}
+	client := newLifecycleClient(func(context.Context, string) (ports.Session, error) { return adapter, nil }, resolver)
+	openResult := make(chan error, 1)
+	go func() {
+		_, err := client.Open(parent, "alpha", Options{})
+		openResult <- err
+	}()
+	select {
+	case <-resolverStarted:
+	case <-time.After(time.Second):
+		t.Fatal("resolver was not entered")
+	}
+	cancel()
+	waitFor(t, func() bool { return adapter.CloseCount() == 1 })
+	close(resolverRelease)
+	select {
+	case err := <-openResult:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Open error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Open did not return after blocked resolver was released")
+	}
+}
+
+func TestKubernetesResolutionErrorDegradesCorrelation(t *testing.T) {
+	adapter := &testkit.FakeSession{}
+	resolver := lifecycleResolver{resolve: func(context.Context, string) (ports.KubernetesNodeReader, error) {
+		return nil, errors.New("optional Kubernetes config is unavailable")
+	}}
+	client := newLifecycleClient(func(context.Context, string) (ports.Session, error) { return adapter, nil }, resolver)
+	session, err := client.Open(context.Background(), "alpha", Options{})
+	if err != nil {
+		t.Fatalf("Open returned an error for optional Kubernetes resolution failure: %v", err)
+	}
+	if session.kubernetesNodes != nil {
+		t.Fatal("session retained a Kubernetes reader after resolution failed")
+	}
+}
+
+func TestSessionCloseReturnsWhileAdapterCloseBlocks(t *testing.T) {
+	closeStarted := make(chan struct{})
+	closeRelease := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-closeRelease:
+		default:
+			close(closeRelease)
+		}
+	})
+	adapter := &testkit.FakeSession{CloseFunc: func() error {
+		close(closeStarted)
+		<-closeRelease
+		return nil
+	}}
+	client := newLifecycleClient(func(context.Context, string) (ports.Session, error) { return adapter, nil }, nil)
+	session, err := client.Open(context.Background(), "alpha", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- session.Close() }()
+	select {
+	case err := <-closeResult:
+		if err != nil {
+			t.Fatalf("Close returned an error: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Close waited for a blocked adapter Close")
+	}
+	select {
+	case <-closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("adapter Close was not started")
 	}
 }
 
