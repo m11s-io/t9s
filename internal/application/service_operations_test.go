@@ -224,6 +224,7 @@ func TestServiceExecutionDoesNotDispatchAfterCanceledFreshEtcdRead(t *testing.T)
 	var reads atomic.Int32
 	started := make(chan struct{})
 	var calls atomic.Int32
+	readErr := errors.New("fresh etcd response lost during cancellation")
 	controller := &testkit.FakeServiceController{RestartFunc: func(context.Context, string, string) error { calls.Add(1); return nil }}
 	adapter := serviceOperationAdapter(controller)
 	adapter.EtcdReader = &testkit.FakeEtcdReader{ListFunc: func(ctx context.Context, _ []string) (domain.EtcdSet, error) {
@@ -232,7 +233,7 @@ func TestServiceExecutionDoesNotDispatchAfterCanceledFreshEtcdRead(t *testing.T)
 		}
 		close(started)
 		<-ctx.Done()
-		return domain.EtcdSet{}, nil
+		return domain.EtcdSet{}, readErr
 	}}
 	session := serviceOperationSession(true, adapter)
 	defer session.Close()
@@ -248,8 +249,8 @@ func TestServiceExecutionDoesNotDispatchAfterCanceledFreshEtcdRead(t *testing.T)
 	}()
 	<-started
 	cancel()
-	if err := <-finished; !errors.Is(err, context.Canceled) {
-		t.Fatalf("execution after canceled fresh etcd read = %v, want context.Canceled", err)
+	if err := <-finished; !errors.Is(err, context.Canceled) || !errors.Is(err, readErr) {
+		t.Fatalf("execution after canceled fresh etcd read = %v, want cancellation and the read error", err)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("controller calls = %d, want 0", calls.Load())

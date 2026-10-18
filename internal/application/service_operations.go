@@ -113,7 +113,7 @@ func (s *Session) ExecuteServiceAction(ctx context.Context, plan *PreparedServic
 	currentFacts, readErr := s.readServiceActionFacts(readCtx, nodes.Nodes, node, request)
 	if readErr != nil {
 		if err := readCtx.Err(); err != nil {
-			return MutationResult{}, err
+			return MutationResult{}, errors.Join(err, readErr)
 		}
 		return MutationResult{}, errors.Join(ErrAssessmentChanged, readErr)
 	}
