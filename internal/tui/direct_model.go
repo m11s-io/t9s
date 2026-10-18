@@ -99,6 +99,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = message.Width, message.Height
+		m.resizeDirectResourceDetail()
 		return m, nil
 	case directContextsLoaded:
 		if !m.requests.current(message.request) {
@@ -592,6 +593,7 @@ func (m directModel) View() tea.View {
 }
 
 func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
+	m.pendingResourceKind = ""
 	if m.sessionCancel != nil {
 		m.sessionCancel()
 	}

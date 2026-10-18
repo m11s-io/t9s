@@ -115,6 +115,7 @@ func (m *directModel) applyResourceResult(message tea.Msg) tea.Cmd {
 		}
 		sensitive := resourceKindSensitive(m.resourceKinds.values.Kinds, result.kind)
 		m.resourceDetail = m.resourceDetail.setResult(result.value, status, errText, sensitive)
+		m.resizeDirectResourceDetail()
 	}
 	return nil
 }
@@ -162,15 +163,29 @@ func resourceKindSensitive(values []domain.ResourceKindSnapshot, kind string) bo
 }
 
 func (m *directModel) openDirectResources(kind string) tea.Cmd {
+	previous := m.views
 	if m.session == nil {
+		m.pendingResourceKind = ""
 		m.view.notice = "Session unavailable"
 		return nil
 	}
-	m.views = m.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
-	m.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{})
-	if kind != "" {
-		m.pendingResourceKind = kind
+	m.pendingResourceKind = kind
+	resourceKindsIndex := -1
+	for index, frame := range m.views {
+		if frame.Kind == viewResourceKinds {
+			resourceKindsIndex = index
+			break
+		}
 	}
+	if resourceKindsIndex >= 0 {
+		m.views = append(viewStack(nil), m.views[:resourceKindsIndex+1]...)
+	} else {
+		m.views = m.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
+	}
+	m.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{})
+	m.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{})
+	m.resourceDetail = newResourceDetailModel()
+	m.cancelClosedDirectResources(previous)
 	request, _ := m.requests.beginWithContext("resources:kinds", m.generation(), m.sessionCtx)
 	return directResourceKindsCommand(m.session, request)
 }
@@ -207,6 +222,14 @@ func (m *directModel) refreshDirectResources(frame viewFrame) tea.Cmd {
 	return nil
 }
 
+func (m *directModel) resizeDirectResourceDetail() {
+	if m.views.top().Kind != viewResourceDetail || m.resourceDetail.status == directLoading {
+		return
+	}
+	layout := layoutShell(m.width, m.height)
+	m.resourceDetail.setViewport(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+}
+
 func (m *directModel) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	frame, key := m.views.top(), message.String()
 	switch frame.Kind {
@@ -237,7 +260,7 @@ func (m *directModel) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool)
 		if (key == "enter" || key == "d") && !m.resourceInstances.filtering {
 			if item, ok := m.resourceInstances.selected(); ok {
 				m.views = m.views.push(viewFrame{Kind: viewResourceDetail, Label: item.ID, NodeID: frame.NodeID, NodeTarget: frame.NodeTarget, ResourceKind: frame.ResourceKind, ResourceNamespace: item.Namespace, ResourceID: item.ID})
-				m.resourceDetail = newResourceDetailModel()
+				m.resourceDetail = newResourceDetailModel().beginLoading(resourceKindSensitive(m.resourceKinds.values.Kinds, frame.ResourceKind))
 				request, _ := m.requests.beginWithContext(directResourceDetailSlot(frame.NodeID, frame.ResourceKind, item.Namespace, item.ID), m.generation(), m.sessionCtx)
 				return directResourceDetailCommand(m.session, request, frame.NodeID, frame.NodeTarget, frame.ResourceKind, item.Namespace, item.ID), true
 			}
@@ -253,7 +276,7 @@ func (m *directModel) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool)
 		if key == "r" {
 			return m.refreshDirectResources(frame), true
 		}
-		m.resourceDetail = m.resourceDetail.update(message)
+		m.resourceDetail.scroll(message)
 		return nil, true
 	}
 	return nil, false
@@ -267,6 +290,7 @@ func (m *directModel) popDirectResourceView() {
 	m.views, _ = m.views.pop()
 	switch frame.Kind {
 	case viewResourceKinds:
+		m.pendingResourceKind = ""
 		m.requests.cancelSlot("resources:kinds")
 	case viewResourceInstances:
 		m.requests.cancelSlot(directResourceInstanceSlot(frame.NodeID, frame.ResourceKind))
@@ -292,6 +316,7 @@ func (m *directModel) cancelClosedDirectResources(previous viewStack) {
 		}
 		switch frame.Kind {
 		case viewResourceKinds:
+			m.pendingResourceKind = ""
 			m.requests.cancelSlot("resources:kinds")
 		case viewResourceInstances:
 			m.requests.cancelSlot(directResourceInstanceSlot(frame.NodeID, frame.ResourceKind))

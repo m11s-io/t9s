@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -166,4 +168,138 @@ func TestDirectResourcePartialReadKeepsUsefulRows(t *testing.T) {
 	assert.Contains(t, model.View().Content, "available")
 	assert.Contains(t, model.View().Content, "Resource instances are unavailable")
 	assert.NotContains(t, model.View().Content, "raw rpc error")
+}
+
+func TestDirectResourceKindKeyboardSelectionSurvivesRefreshReorder(t *testing.T) {
+	reads := 0
+	model := directResourceModel(t, &testkit.FakeResourceKindReader{ListFunc: func(context.Context) (domain.ResourceKindSet, error) {
+		reads++
+		return domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{{Type: "kind-b", DisplayType: "B"}, {Type: "kind-a", DisplayType: "A"}}}, nil
+	}}, &testkit.FakeResourceInstanceReader{})
+	model.views = model.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
+	model.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{}).setKinds(domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{{Type: "kind-a", DisplayType: "A"}, {Type: "kind-b", DisplayType: "B"}}}, directReady, "")
+	model, _ = updateDirect(model, keyPress('j'))
+	assert.Equal(t, "kind-b", model.resourceKinds.selectedValue().Type)
+	model, command := updateDirect(model, keyPress('r'))
+	require.NotNil(t, command)
+	model, _ = updateDirect(model, command())
+	assert.Equal(t, 1, reads)
+	assert.Equal(t, "kind-b", model.resourceKinds.selectedValue().Type, "refresh should retain the row chosen with j even after reorder")
+}
+
+func TestDirectResourceInstanceKeyboardSelectionSurvivesRefreshReorder(t *testing.T) {
+	reads := 0
+	model := directResourceModel(t, &testkit.FakeResourceKindReader{}, &testkit.FakeResourceInstanceReader{ListFunc: func(context.Context, string, string) (domain.ResourceInstanceSet, error) {
+		reads++
+		values := []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "b"}, {Namespace: "ns", ID: "a"}}
+		if reads == 1 {
+			values = []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "a"}, {Namespace: "ns", ID: "b"}}
+		}
+		return domain.ResourceInstanceSet{Instances: values}, nil
+	}})
+	frame := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind"}
+	model.views = model.views.push(frame)
+	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "a"}, {Namespace: "ns", ID: "b"}}}, directReady, "")
+	model, _ = updateDirect(model, keyPress('j'))
+	assert.Equal(t, "b", model.resourceInstances.selectedValue().ID)
+	model, command := updateDirect(model, keyPress('r'))
+	require.NotNil(t, command)
+	model, _ = updateDirect(model, command())
+	assert.Equal(t, 1, reads)
+	assert.Equal(t, "b", model.resourceInstances.selectedValue().ID, "refresh should retain the row chosen with j even after reorder")
+}
+
+func TestDirectResourceCommandReentryReplacesExistingBrowserBranch(t *testing.T) {
+	kinds := []domain.ResourceKindSnapshot{{Type: "kind-a", DisplayType: "A"}, {Type: "kind-b", DisplayType: "B"}}
+	model := directResourceModel(t, &testkit.FakeResourceKindReader{ListFunc: func(context.Context) (domain.ResourceKindSet, error) {
+		return domain.ResourceKindSet{Kinds: kinds}, nil
+	}}, &testkit.FakeResourceInstanceReader{ListFunc: func(context.Context, string, string) (domain.ResourceInstanceSet, error) {
+		return domain.ResourceInstanceSet{}, nil
+	}})
+	model.views = model.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
+	frameA := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind-a"}
+	model.views = model.views.push(frameA)
+	model.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{}).setKinds(domain.ResourceKindSet{Kinds: kinds}, directReady, "")
+	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{ID: "A-only"}}}, directReady, "")
+	model = runDirectPaletteThroughCommands(t, model, "res kind-b")
+	assert.Equal(t, "kind-b", model.views.top().ResourceKind)
+	resourceFrames := 0
+	for _, frame := range model.views {
+		if frame.Kind == viewResourceKinds {
+			resourceFrames++
+		}
+	}
+	assert.Equal(t, 1, resourceFrames, "reopening resources should reuse its browser branch")
+	model, _ = updateDirect(model, keyPress('q'))
+	assert.Equal(t, viewResourceKinds, model.views.top().Kind)
+	assert.NotContains(t, model.View().Content, "A-only", "back should show the new browser scope, not stale kind A rows")
+	model, _ = updateDirect(model, keyPress('q'))
+	assert.Equal(t, viewNodes, model.views.top().Kind)
+}
+
+func runDirectPaletteThroughCommands(t *testing.T, model directModel, value string) directModel {
+	t.Helper()
+	model, _ = updateDirect(model, keyPress(':'))
+	for _, character := range value {
+		model, _ = updateDirect(model, keyPress(character))
+	}
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	for steps := 0; command != nil && steps < 6; steps++ {
+		model, command = updateDirect(model, command())
+	}
+	return model
+}
+
+func TestDirectResourceCanceledKindAliasDoesNotLeakIntoPlainOpen(t *testing.T) {
+	kind := domain.ResourceKindSnapshot{Type: "kind-a", DisplayType: "A"}
+	model := directResourceModel(t, &testkit.FakeResourceKindReader{ListFunc: func(context.Context) (domain.ResourceKindSet, error) {
+		return domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{kind}}, nil
+	}}, &testkit.FakeResourceInstanceReader{ListFunc: func(context.Context, string, string) (domain.ResourceInstanceSet, error) {
+		return domain.ResourceInstanceSet{}, nil
+	}})
+	command := model.runClusterCommand("resources kind-a")
+	require.NotNil(t, command)
+	model, _ = updateDirect(model, keyPress('q'))
+	assert.Empty(t, model.pendingResourceKind)
+	command = model.runClusterCommand("resources")
+	model, command = updateDirect(model, command())
+	assert.Equal(t, viewResourceKinds, model.views.top().Kind, "plain resource open must remain on the kinds list")
+	assert.Empty(t, model.pendingResourceKind)
+	if command != nil {
+		model, _ = updateDirect(model, command())
+	}
+	assert.Equal(t, viewResourceKinds, model.views.top().Kind)
+}
+
+func TestDirectResourceDetailShowsLoadingAndRetainsYAMLScrollAcrossResize(t *testing.T) {
+	var yaml strings.Builder
+	for index := 0; index < 70; index++ {
+		fmt.Fprintf(&yaml, "line-%02d: value\n", index)
+	}
+	model := directResourceModel(t, &testkit.FakeResourceKindReader{}, &testkit.FakeResourceInstanceReader{GetFunc: func(_ context.Context, node, kind, id string) (domain.ResourceInstanceSnapshot, error) {
+		return domain.ResourceInstanceSnapshot{Namespace: "ns", Type: kind, ID: id, YAML: yaml.String()}, nil
+	}})
+	model.width, model.height = 100, 16
+	frame := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind"}
+	model.views = model.views.push(frame)
+	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "selected"}}}, directReady, "")
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	assert.Contains(t, model.View().Content, "Loading resource…")
+	model, _ = updateDirect(model, command())
+	initial := model.View().Content
+	assert.Contains(t, initial, "line-00: value")
+	model, _ = updateDirect(model, keyPress('j'))
+	model, _ = updateDirect(model, keyPress('j'))
+	model, _ = updateDirect(model, keyPress('j'))
+	model, _ = updateDirect(model, keyPress('j'))
+	model, _ = updateDirect(model, keyPress('j'))
+	afterScroll := model.View().Content
+	assert.NotEqual(t, initial, afterScroll, "j should scroll the displayed YAML")
+	assert.Contains(t, afterScroll, "line-05: value")
+	model, _ = updateDirect(model, keyPress('G'))
+	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 100, Height: 13})
+	afterResize := model.View().Content
+	assert.Contains(t, afterResize, "line-69: value", "G should reach the end and resizing should retain the scrolled position")
+	assert.NotContains(t, afterResize, "line-00: value")
 }

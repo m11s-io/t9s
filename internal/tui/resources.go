@@ -114,7 +114,7 @@ func (m resourceKindsModel) update(message tea.KeyPressMsg) resourceKindsModel {
 	case "G":
 		m.control.GotoBottom()
 	}
-	return m
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m resourceKindsModel) normalizeSelection(closest int) resourceKindsModel {
@@ -316,7 +316,7 @@ func (m resourceInstancesModel) update(message tea.KeyPressMsg) resourceInstance
 	case "G":
 		m.control.GotoBottom()
 	}
-	return m
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m resourceInstancesModel) normalizeSelection(closest int) resourceInstancesModel {
@@ -441,11 +441,12 @@ func resourceInstanceRowValues(instance domain.ResourceInstanceSnapshot) []strin
 }
 
 type resourceDetailModel struct {
-	viewport  viewport.Model
-	status    directLoadStatus
-	value     domain.ResourceInstanceSnapshot
-	err       string
-	sensitive bool
+	viewport   viewport.Model
+	bodyHeight int
+	status     directLoadStatus
+	value      domain.ResourceInstanceSnapshot
+	err        string
+	sensitive  bool
 }
 
 func newResourceDetailModel() resourceDetailModel {
@@ -465,6 +466,32 @@ func (m resourceDetailModel) update(message tea.KeyPressMsg) resourceDetailModel
 		m.viewport.GotoBottom()
 	}
 	return m
+}
+
+func (m *resourceDetailModel) scroll(message tea.KeyPressMsg) {
+	key := message.String()
+	switch key {
+	case "up", "k":
+		m.viewport.ScrollUp(1)
+	case "down", "j":
+		m.viewport.ScrollDown(1)
+	case "g":
+		m.viewport.GotoTop()
+	case "G":
+		m.viewport.GotoBottom()
+	}
+}
+
+func (m resourceDetailModel) beginLoading(sensitive bool) resourceDetailModel {
+	return resourceDetailModel{viewport: viewport.New(), status: directLoading, sensitive: sensitive}
+}
+
+func (m *resourceDetailModel) setViewport(size contentSize) {
+	header := renderResourceDetailHeader(m.value, m.sensitive)
+	headerLines := strings.Split(header, "\n")
+	m.bodyHeight = max(0, size.Height-len(headerLines)-1)
+	m.viewport.SetHeight(m.bodyHeight)
+	m.viewport.SetContentLines(strings.Split(m.value.YAML, "\n"))
 }
 
 func (m resourceDetailModel) setResult(value domain.ResourceInstanceSnapshot, status directLoadStatus, err string, sensitive bool) resourceDetailModel {
@@ -500,7 +527,7 @@ func (m resourceDetailModel) viewSized(size contentSize, instance domain.Resourc
 	return strings.Join(lines, "\n")
 }
 
-func (m resourceDetailModel) directViewSized(size contentSize) string {
+func (m resourceDetailModel) directViewSized(_ contentSize) string {
 	switch m.status {
 	case directLoading:
 		return "Loading resource…"
@@ -509,7 +536,15 @@ func (m resourceDetailModel) directViewSized(size contentSize) string {
 			return firstNonEmpty(m.err, "Resource unavailable")
 		}
 	}
-	content := m.viewSized(size, m.value, m.sensitive)
+	header := renderResourceDetailHeader(m.value, m.sensitive)
+	headerLines := strings.Split(header, "\n")
+	body := strings.Split(m.value.YAML, "\n")
+	start := min(m.viewport.YOffset(), len(body))
+	end := min(start+m.bodyHeight, len(body))
+	lines := append([]string(nil), headerLines...)
+	lines = append(lines, "")
+	lines = append(lines, body[start:end]...)
+	content := strings.Join(lines, "\n")
 	if m.status == directPartial || m.err != "" {
 		content += "\n" + m.err
 	}
