@@ -9,6 +9,9 @@ import (
 // Update applies one input or operation result. Request lifetime belongs to the
 // session owner; screen data and current request identities stay in Model.
 func Update(model Model, message Message) (Model, Effect) {
+	if model.MutationActive() && changesMutationPrompt(message) {
+		return model, nil
+	}
 	_, operationID := identifyOperation(message, 0)
 	if operationID != 0 && operationID != model.operationID {
 		if started, ok := message.(UpgradeStarted); ok && started.cancel != nil {
@@ -42,7 +45,24 @@ func Update(model Model, message Message) (Model, Effect) {
 		message = request
 	}
 	next, effect := updateModel(model, message)
+	if next.operationID != model.operationID && !next.Upgrade.Active {
+		// A previous terminal upgrade notice must not mask a newer action.
+		next.Upgrade = UpgradeState{}
+	}
+	if startsOperation(message) && effect != nil {
+		next.operationTargets = acceptedOperationTargets(model, message)
+		// Async prompt lookups no longer belong to this accepted operation.
+		next = closeRead(next, "node-prompt")
+		next = closeRead(next, "snapshot-prompt")
+		next.PendingAction = nil
+		next.PendingServiceAction = nil
+		if _, membership := message.(ConfirmEtcdAction); !membership {
+			next.PendingEtcdAction = nil
+		}
+	}
+	next = finishOperationTarget(next, message)
 	if next.Generation != model.Generation {
+		next.operationTargets = nil
 		if model.requests != nil {
 			model.requests.close()
 		}

@@ -98,6 +98,7 @@ type UpgradeEvent struct {
 type UpgradeOutcome string
 
 const (
+	UpgradeOutcomeAccepted                   UpgradeOutcome = "accepted"
 	UpgradeOutcomeApplied                    UpgradeOutcome = "applied"
 	UpgradeOutcomeAppliedWithRecoveryWarning UpgradeOutcome = "applied-with-recovery-warning"
 )

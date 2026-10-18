@@ -285,7 +285,9 @@ func (e *upgradeRecoveryError) Unwrap() error { return e.err }
 type nodeController struct{ client nodeControlClient }
 
 const (
-	upgradeDrainTimeout = 5 * time.Minute
+	upgradeControlTimeout = 30 * time.Second
+	upgradeInstallTimeout = 20 * time.Minute
+	upgradeDrainTimeout   = 5 * time.Minute
 	// Control-plane recovery (etcd rejoin, cert rotation) routinely runs
 	// longer than a worker's kubelet restart, so this deadline is sized for
 	// the slower case rather than the median.
@@ -395,12 +397,14 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 			return
 		}
 		if !lifecycleSupported {
-			err := c.Upgrade(streamCtx, target, image)
+			requestCtx, requestCancel := context.WithTimeout(streamCtx, upgradeControlTimeout)
+			err := c.Upgrade(requestCtx, target, image)
+			requestCancel()
 			if err == nil && streamCtx.Err() != nil {
 				err = streamCtx.Err()
 			}
 			if err == nil {
-				emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Done: true})
+				emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeComplete, Message: "legacy upgrade accepted"}, Outcome: ports.UpgradeOutcomeAccepted, Done: true})
 			} else {
 				emit(ports.UpgradeResult{Err: err, Done: true})
 			}
@@ -586,6 +590,8 @@ type machineryUpgradeMaintenance struct {
 }
 
 func (c machineryNodeControlClient) prepareUpgradeMaintenance(ctx context.Context, target string) (upgradeMaintenance, error) {
+	ctx, cancel := context.WithTimeout(ctx, upgradeControlTimeout)
+	defer cancel()
 	clientset, err := kubernetesClientFromTalos(ctx, c.client)
 	if err != nil {
 		return nil, fmt.Errorf("fetch Kubernetes client from Talos: %w", err)
@@ -631,6 +637,8 @@ func kubernetesClientFromTalos(ctx context.Context, client *talosclient.Client) 
 }
 
 func (m machineryUpgradeMaintenance) Cordon(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, upgradeControlTimeout)
+	defer cancel()
 	node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
 	if err != nil {
 		return false, fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
@@ -670,6 +678,8 @@ func newDrainHelper(ctx context.Context, clientset kubernetes.Interface, timeout
 }
 
 func (m machineryUpgradeMaintenance) Reboot(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, upgradeControlTimeout)
+	defer cancel()
 	return m.client.Reboot(talosclient.WithNode(ctx, m.target))
 }
 
@@ -736,6 +746,8 @@ func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
 	}
 }
 func (c machineryNodeControlClient) lifecycleUpgrade(ctx context.Context, image string, progress func(ports.UpgradeEvent)) error {
+	ctx, cancel := context.WithTimeout(ctx, upgradeInstallTimeout)
+	defer cancel()
 	lifecycle := c.lifecycle
 	if lifecycle == nil {
 		lifecycle = machineryLifecycleOperations{client: c.client}

@@ -135,7 +135,7 @@ func TestUpgradeBridgeFailsWhenStreamClosesWithoutTerminalResult(t *testing.T) {
 	assert.ErrorContains(t, failed.(application.UpgradeFailed).Err, "closed without a terminal result")
 	model, _ = application.Update(model, failed)
 	assert.False(t, model.Upgrade.Active)
-	assert.Equal(t, "upgrade failed", model.ActionResults[0].Err)
+	assert.Equal(t, "request failed; remote outcome unconfirmed — check state before retrying", model.ActionResults[0].Err)
 }
 
 func TestUpgradeBridgeIgnoresStaleProgressMessages(t *testing.T) {
@@ -260,8 +260,8 @@ func TestUpgradeBridgeDoesNotPersistUntrustedErrorText(t *testing.T) {
 	model.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
 	model, _ = application.Update(model, application.UpgradeFailed{Generation: model.Generation, Target: "cp-1", Err: errors.New("request failed\n\x1b[31mBearer super-secret-token\x1b[0m")})
 
-	assert.Equal(t, "upgrade failed", model.Upgrade.Err)
-	assert.Equal(t, "upgrade failed", model.ActionResults[0].Err)
+	assert.Equal(t, "request failed; remote outcome unconfirmed — check state before retrying", model.Upgrade.Err)
+	assert.Equal(t, "request failed; remote outcome unconfirmed — check state before retrying", model.ActionResults[0].Err)
 	assert.NotContains(t, model.Upgrade.Err, "super-secret-token")
 	assert.NotContains(t, model.Upgrade.Err, "\n")
 	assert.False(t, strings.Contains(model.Upgrade.Err, "\x1b"))

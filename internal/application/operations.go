@@ -1,6 +1,86 @@
 package application
 
-import "context"
+import (
+	"context"
+	"maps"
+)
+
+// MutationActive reports accepted work, independently of any confirmation UI.
+// Read-only navigation remains available while that work is running.
+func (m Model) MutationActive() bool {
+	return len(m.operationTargets) != 0 || m.Upgrade.Active
+}
+
+func changesMutationPrompt(message Message) bool {
+	switch message.(type) {
+	case RequestAction, RequestServiceAction, RequestEtcdAction,
+		RequestEtcdSnapshotPrompt, RequestUpgradePrompt, RequestResetPrompt,
+		ConfirmPendingAction, ConfirmEtcdAction, ConfirmEtcdSnapshotPrompt,
+		CancelPendingAction, CancelEtcdSnapshotPrompt:
+		return true
+	}
+	return false
+}
+
+func acceptedOperationTargets(model Model, message Message) map[string]int {
+	targets := make(map[string]int)
+	if _, action := message.(ConfirmPendingAction); action {
+		if model.PendingAction != nil {
+			for _, target := range model.PendingAction.Targets {
+				targets[target]++
+			}
+		} else if pending := model.PendingServiceAction; pending != nil {
+			targets[pending.Service+"@"+pending.Node] = 1
+		}
+	} else {
+		// Etcd and snapshot operations have one terminal outcome. The backup
+		// stage of membership surgery is intermediate, not a completed target.
+		targets[""] = 1
+	}
+	return targets
+}
+
+func finishOperationTarget(model Model, message Message) Model {
+	if len(model.operationTargets) == 0 {
+		return model
+	}
+	var generation uint64
+	var target string
+	switch m := message.(type) {
+	case ActionSucceeded:
+		generation, target = m.Generation, m.Target
+	case ActionFailed:
+		generation, target = m.Generation, m.Target
+	case EtcdSnapshotSucceeded:
+		if model.PendingEtcdAction != nil && model.PendingEtcdAction.Stage == EtcdStageOperation {
+			return model
+		}
+		generation = m.Generation
+	case EtcdSnapshotFailed:
+		generation = m.Generation
+	case EtcdActionSucceeded:
+		generation = m.Generation
+	case EtcdActionFailed:
+		generation = m.Generation
+	case UpgradeSucceeded:
+		generation, target = m.Generation, m.Target
+	case UpgradeFailed:
+		generation, target = m.Generation, m.Target
+	case UpgradeAppliedWithRecoveryWarning:
+		generation, target = m.Generation, m.Target
+	default:
+		return model
+	}
+	if generation == model.Generation {
+		model.operationTargets = maps.Clone(model.operationTargets)
+		if model.operationTargets[target] > 1 {
+			model.operationTargets[target]--
+		} else {
+			delete(model.operationTargets, target)
+		}
+	}
+	return model
+}
 
 func startsOperation(message Message) bool {
 	switch message.(type) {
@@ -10,8 +90,8 @@ func startsOperation(message Message) bool {
 	return false
 }
 
-// Every accepted mutation owns its result identity and session context. A new
-// prompt can replace its display, but cannot misattribute a late completion.
+// Every accepted mutation owns its result identity and session context.
+// Conflicting prompts are blocked until its terminal results have arrived.
 func operationEffect(model Model, effect Effect) Effect {
 	if effect == nil {
 		return nil

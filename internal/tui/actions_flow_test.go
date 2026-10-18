@@ -285,7 +285,7 @@ func TestConfirmingRebootRunsControllerAndReportsSuccess(t *testing.T) {
 	rootModel = updated.(model)
 
 	assert.Nil(t, rootModel.application.PendingAction)
-	assert.Contains(t, rootModel.notice, "1/1 succeeded")
+	assert.Contains(t, rootModel.notice, "1/1 accepted")
 }
 
 func TestConfirmingRebootReportsFailureWithTargetAndError(t *testing.T) {
@@ -344,13 +344,13 @@ func TestActionResultsFooterDenominatorIsConfirmedTargetCountNotResultsSoFar(t *
 
 	// Only the first of three results has arrived; the footer must still
 	// report against the full confirmed target count (3), not len(results)
-	// (which would misleadingly read "1/1 succeeded" as if fully complete).
+	// (which would misleadingly read "1/1 accepted" as if fully complete).
 	firstResult := batch[0]()
 	updated, _ = rootModel.Update(firstResult)
 	rootModel = updated.(model)
 
-	assert.Contains(t, rootModel.notice, "1/3 succeeded")
-	assert.NotContains(t, rootModel.notice, "1/1 succeeded")
+	assert.Contains(t, rootModel.notice, "1/3 accepted")
+	assert.NotContains(t, rootModel.notice, "1/1 accepted")
 }
 
 func TestRollbackKeyWithWritesDisabledIsInert(t *testing.T) {
@@ -410,7 +410,7 @@ func TestUpgradeFailureKeepsPhaseAndNormalizedErrorInNotice(t *testing.T) {
 		Err:        context.Canceled,
 	}})
 
-	assert.Equal(t, "Upgrade cp-1 failed during waiting: upgrade failed", updated.(model).notice)
+	assert.Equal(t, "Upgrade cp-1 unconfirmed during waiting: request failed; remote outcome unconfirmed — check state before retrying", updated.(model).notice)
 }
 
 func TestActiveUpgradeBlocksWritesButAllowsReadOnlyNavigation(t *testing.T) {

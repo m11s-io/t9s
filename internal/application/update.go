@@ -296,7 +296,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 			return model, runEtcdMembership(model.etcdOperations, pending, model.Generation)
 		}
 		model.EtcdSnapshot = EtcdSnapshotState{Status: Ready, Result: message.Result, MemberNode: message.Result.Node}
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Result.Node})
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Result.Node, Outcome: domain.OperationCompleted})
 		model.ActionTotal = 1
 		return model, nil
 
@@ -304,10 +304,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		errText := "snapshot failed"
-		if message.Err != nil {
-			errText = message.Err.Error()
-		}
+		errText := snapshotErrorText(message.Err)
 		// Mandatory abort: a failed snapshot must cancel the destructive
 		// membership action outright — the membership RPC is never scheduled.
 		if model.PendingEtcdAction != nil && model.PendingEtcdAction.Stage == EtcdStageSnapshot {
@@ -321,6 +318,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		model.EtcdSnapshot.Status = Failed
+		model.EtcdSnapshot.InFlight = false
 		model.EtcdSnapshot.Err = errText
 		model.ActionResults = append(model.ActionResults, ActionResult{Target: model.EtcdSnapshot.MemberNode, Err: errText})
 		model.ActionTotal = 1
@@ -411,7 +409,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		model.PendingEtcdAction = nil
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.MemberHostname})
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.MemberHostname, Outcome: message.Outcome})
 		// Remove stale membership/alarm state: a successful disarm changes the
 		// etct view's ALARMS column, so refresh rather than trust the cached
 		// snapshot.
@@ -427,12 +425,9 @@ func updateModel(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		errText := "action failed"
-		if message.Err != nil {
-			errText = message.Err.Error()
-		}
+		errText := mutationErrorText(message.Err, message.Outcome)
 		model.PendingEtcdAction = nil
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.MemberHostname, Err: errText})
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.MemberHostname, Err: errText, Outcome: message.Outcome})
 		return model, nil
 
 	case KubernetesNodesLoaded:
@@ -943,7 +938,8 @@ func updateModel(model Model, message Message) (Model, Effect) {
 		}
 		finishUpgrade(&model)
 		model.Upgrade.Warning = message.Warning
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Warning: message.Warning})
+		model.Upgrade.Outcome = domain.OperationRecoveryIncomplete
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Warning: message.Warning, Outcome: domain.OperationRecoveryIncomplete})
 		return model, nil
 
 	case UpgradeSucceeded:
@@ -951,7 +947,8 @@ func updateModel(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		finishUpgrade(&model)
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target})
+		model.Upgrade.Outcome = message.Outcome
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Outcome: message.Outcome})
 		if model.nodeReader == nil {
 			return model, nil
 		}
@@ -966,14 +963,15 @@ func updateModel(model Model, message Message) (Model, Effect) {
 		errText := safeUpgradeError(message.Err)
 		finishUpgrade(&model)
 		model.Upgrade.Err = errText
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText})
+		model.Upgrade.Outcome = domain.OperationUnconfirmed
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText, Outcome: domain.OperationUnconfirmed})
 		return model, nil
 
 	case ActionSucceeded:
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target})
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Outcome: message.Outcome})
 		if model.refreshDisksTarget != "" && model.refreshDisksTarget == message.Target {
 			model.refreshDisksTarget = ""
 			model.Disks.Status = Loading
@@ -986,11 +984,8 @@ func updateModel(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		errText := "action failed"
-		if message.Err != nil {
-			errText = message.Err.Error()
-		}
-		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText})
+		errText := mutationErrorText(message.Err, message.Outcome)
+		model.ActionResults = append(model.ActionResults, ActionResult{Target: message.Target, Err: errText, Outcome: message.Outcome})
 		if model.refreshDisksTarget == message.Target {
 			model.refreshDisksTarget = ""
 		}
@@ -1259,8 +1254,8 @@ func appendNodeIP(target []string, node domain.NodeSnapshot) []string {
 	return target
 }
 
-func safeUpgradeError(_ error) string {
-	return "upgrade failed"
+func safeUpgradeError(err error) string {
+	return mutationErrorText(err, domain.OperationUnconfirmed)
 }
 
 func cancelActiveUpgrade(model *Model) {

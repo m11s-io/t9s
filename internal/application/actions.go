@@ -674,6 +674,12 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 		if controller == nil {
 			return ActionFailed{Generation: generation, Target: target, Err: fmt.Errorf("node controller is not configured")}
 		}
+		timeout := controlOperationTimeout
+		if pending.Kind == ActionReset || pending.Kind == ActionWipeDevice {
+			timeout = destructiveNodeTimeout
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 		var err error
 		switch pending.Kind {
 		case ActionReboot:
@@ -700,9 +706,9 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 			err = fmt.Errorf("unsupported action %q", pending.Kind)
 		}
 		if err != nil {
-			return ActionFailed{Generation: generation, Target: target, Err: err}
+			return ActionFailed{Generation: generation, Target: target, Err: mutationCallError(ctx, err), Outcome: domain.OperationUnconfirmed}
 		}
-		return ActionSucceeded{Generation: generation, Target: target}
+		return ActionSucceeded{Generation: generation, Target: target, Outcome: domain.OperationAccepted}
 	}
 }
 
@@ -844,7 +850,11 @@ func readUpgradeUpdate(updates <-chan upgradeStreamResult, generation uint64, ta
 				if update.Outcome == ports.UpgradeOutcomeAppliedWithRecoveryWarning {
 					return UpgradeAppliedWithRecoveryWarning{Generation: generation, Target: target, Warning: update.Warning}
 				}
-				return UpgradeSucceeded{Generation: generation, Target: target}
+				outcome := domain.OperationCompleted
+				if update.Outcome == ports.UpgradeOutcomeAccepted {
+					outcome = domain.OperationAccepted
+				}
+				return UpgradeSucceeded{Generation: generation, Target: target, Outcome: outcome}
 			}
 			if update.Event == nil {
 				return UpgradeFailed{Generation: generation, Target: target, Err: fmt.Errorf("upgrade stream returned an empty result")}

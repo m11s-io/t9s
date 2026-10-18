@@ -17,6 +17,21 @@ Control-plane actions that would drop etcd below quorum are refused outright —
 the confirmation prompt reports the refusal instead of accepting a `y` — not
 merely warned about.
 
+After confirmation, t9s keeps one mutation active until its terminal result
+arrives. A bulk node action waits for every target, and an etcd membership
+change stays active through both its required snapshot and membership RPC.
+Other write prompts are disabled during that work; read-only navigation remains
+available. Leaving the context cancels local work, but does not undo a request
+already accepted by Talos. Rediscover remote state before retrying.
+
+Client deadlines are 30 seconds for ordinary control requests, 10 minutes for
+etcd snapshots and defragmentation, and 30 minutes for reset/device wipe. Each
+bulk target gets its own budget. Upgrade installation and subsequent maintenance
+stages have separate limits. These initial limits still require disposable-cluster
+validation. A successful control RPC is reported as accepted, not independently
+verified remote completion; a failed submitted RPC reports an unconfirmed
+outcome. t9s does not automatically retry mutations or display raw RPC errors.
+
 Reset/wipe (`W`) is the most destructive node action, so it layers two
 confirmation steps on top of the gate. First the operator types an exact token
 — the single target's node name, or `wipe N nodes` for a bulk reset — in a

@@ -219,7 +219,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			*m.timePrompt, command = m.timePrompt.update(message)
 			return m, command
 		}
-		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil || m.application.PendingEtcdAction != nil {
+		if !m.application.MutationActive() && (m.application.PendingAction != nil || m.application.PendingServiceAction != nil || m.application.PendingEtcdAction != nil) {
 			if key == "y" {
 				message := application.Message(application.ConfirmPendingAction{})
 				if m.application.PendingEtcdAction != nil {
@@ -1270,6 +1270,12 @@ func (m model) activePrompt() string {
 		return renderPendingServiceActionPrompt(*m.application.PendingServiceAction)
 	}
 	if m.application.PendingEtcdAction != nil {
+		if m.application.MutationActive() {
+			if m.application.PendingEtcdAction.Stage == application.EtcdStageSnapshot {
+				return "Saving snapshot before membership change…"
+			}
+			return "Applying etcd membership change…"
+		}
 		return renderPendingEtcdActionPrompt(*m.application.PendingEtcdAction)
 	}
 	if m.upgradePrompt != nil {
@@ -1345,7 +1351,7 @@ func (m model) activePrompt() string {
 }
 
 func (m model) writeActionsEnabled() bool {
-	return m.application.WritesEnabled && !m.application.Upgrade.Active
+	return m.application.WritesEnabled && !m.application.MutationActive()
 }
 
 // requestEtcdAction opens the maintenance confirm prompt for the selected

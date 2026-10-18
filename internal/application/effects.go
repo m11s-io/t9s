@@ -327,9 +327,11 @@ func runEtcdSnapshot(operations ports.EtcdOperations, node, path string, generat
 		if operations == nil {
 			return EtcdSnapshotFailed{Generation: generation, Err: fmt.Errorf("etcd operations are not configured")}
 		}
+		ctx, cancel := context.WithTimeout(ctx, snapshotTimeout)
+		defer cancel()
 		result, err := operations.Snapshot(ctx, node, path)
 		if err != nil {
-			return EtcdSnapshotFailed{Generation: generation, Err: err}
+			return EtcdSnapshotFailed{Generation: generation, Err: mutationCallError(ctx, err)}
 		}
 		return EtcdSnapshotSucceeded{Generation: generation, Result: result}
 	}
@@ -349,6 +351,8 @@ func runEtcdMembership(operations ports.EtcdOperations, pending PendingEtcdActio
 	}
 
 	return func(ctx context.Context, _ Dependencies) Message {
+		ctx, cancel := context.WithTimeout(ctx, controlOperationTimeout)
+		defer cancel()
 		var err error
 		switch pending.Kind {
 		case EtcdActionRemoveMember:
@@ -359,10 +363,10 @@ func runEtcdMembership(operations ports.EtcdOperations, pending PendingEtcdActio
 			err = fmt.Errorf("unsupported etcd membership action %q", pending.Kind)
 		}
 		if err != nil {
-			return fail(err)
+			return EtcdActionFailed{Generation: generation, MemberHostname: pending.MemberHostname, Err: mutationCallError(ctx, err), Outcome: domain.OperationUnconfirmed}
 		}
 
-		return EtcdActionSucceeded{Generation: generation, MemberHostname: pending.MemberHostname}
+		return EtcdActionSucceeded{Generation: generation, MemberHostname: pending.MemberHostname, Outcome: domain.OperationAccepted}
 	}
 }
 
@@ -373,6 +377,12 @@ func runEtcdMaintenance(operations ports.EtcdOperations, pending PendingEtcdActi
 		}
 	}
 	return func(ctx context.Context, _ Dependencies) Message {
+		timeout := controlOperationTimeout
+		if pending.Kind == EtcdActionDefragment {
+			timeout = defragmentTimeout
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 		var err error
 		switch pending.Kind {
 		case EtcdActionDefragment:
@@ -385,9 +395,9 @@ func runEtcdMaintenance(operations ports.EtcdOperations, pending PendingEtcdActi
 			err = fmt.Errorf("unsupported etcd action %q", pending.Kind)
 		}
 		if err != nil {
-			return EtcdActionFailed{Generation: generation, MemberHostname: pending.MemberHostname, Err: err}
+			return EtcdActionFailed{Generation: generation, MemberHostname: pending.MemberHostname, Err: mutationCallError(ctx, err), Outcome: domain.OperationUnconfirmed}
 		}
-		return EtcdActionSucceeded{Generation: generation, MemberHostname: pending.MemberHostname}
+		return EtcdActionSucceeded{Generation: generation, MemberHostname: pending.MemberHostname, Outcome: domain.OperationAccepted}
 	}
 }
 

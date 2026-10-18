@@ -143,7 +143,7 @@ func TestEtcdSnapshotFailedRecordsError(t *testing.T) {
 	model, _ = application.Update(model, application.EtcdSnapshotFailed{Generation: 1, Err: errors.New("disk full")})
 
 	assert.Equal(t, application.Failed, model.EtcdSnapshot.Status)
-	assert.Contains(t, model.EtcdSnapshot.Err, "disk full")
+	assert.Equal(t, "snapshot failed", model.EtcdSnapshot.Err)
 	require.Len(t, model.ActionResults, 1)
 }
 
@@ -300,7 +300,7 @@ func TestEtcdActionFailedRecordsErrorAndClearsPending(t *testing.T) {
 	assert.Nil(t, effect)
 	assert.Nil(t, model.PendingEtcdAction)
 	require.Len(t, model.ActionResults, 1)
-	assert.Contains(t, model.ActionResults[0].Err, "boom")
+	assert.Equal(t, "action failed", model.ActionResults[0].Err)
 }
 
 func TestEtcdActionSucceededRefreshesEtcd(t *testing.T) {

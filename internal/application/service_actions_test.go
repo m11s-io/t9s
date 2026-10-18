@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ func TestBuildServiceActionEffectCallsRestart(t *testing.T) {
 
 	assert.Equal(t, "cp-1", gotNode)
 	assert.Equal(t, "etcd", gotService)
-	assert.Equal(t, application.ActionSucceeded{Generation: model.Generation, Target: "etcd@cp-1"}, result)
+	assert.Equal(t, application.ActionSucceeded{Generation: model.Generation, Target: "etcd@cp-1", Outcome: domain.OperationAccepted}, result)
 }
 
 func TestBuildServiceActionEffectUsesStartAndStop(t *testing.T) {

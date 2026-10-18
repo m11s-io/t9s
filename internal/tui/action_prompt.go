@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
@@ -157,9 +158,14 @@ func truncateWarningTail(warning string, budget int) string {
 
 func renderActionResults(results []application.ActionResult, total int) string {
 	succeeded := 0
+	accepted := 0
 	var failures []string
 	for _, result := range results {
 		if result.Err == "" {
+			if result.Outcome == domain.OperationAccepted {
+				accepted++
+				continue
+			}
 			succeeded++
 			continue
 		}
@@ -169,6 +175,12 @@ func renderActionResults(results []application.ActionResult, total int) string {
 		total = len(results)
 	}
 	summary := fmt.Sprintf("%d/%d succeeded", succeeded, total)
+	if accepted > 0 {
+		summary = fmt.Sprintf("%d/%d accepted; completion not verified", accepted, total)
+		if succeeded > 0 {
+			summary += fmt.Sprintf("; %d completed", succeeded)
+		}
+	}
 	if len(failures) > 0 {
 		summary += " (" + strings.Join(failures, "; ") + ")"
 	}

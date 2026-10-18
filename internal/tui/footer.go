@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
 )
 
 // renderUpgradeNotice creates the compact global upgrade status shown while an
@@ -30,12 +31,18 @@ func renderUpgradeNotice(upgrade application.UpgradeState) string {
 	if upgrade.Warning != "" {
 		return fmt.Sprintf("Upgrade %s Applied — recovery warning: %s", fallback(sanitizeUntrustedText(upgrade.Target)), sanitizeUntrustedText(upgrade.Warning))
 	}
+	if upgrade.Outcome == domain.OperationAccepted {
+		return fmt.Sprintf("Upgrade %s accepted — completion not verified", fallback(sanitizeUntrustedText(upgrade.Target)))
+	}
 	if upgrade.Err == "" {
 		return ""
 	}
 	phase := sanitizeUntrustedText(string(upgrade.Event.Phase))
 	if phase == "" {
 		phase = "upgrade"
+	}
+	if upgrade.Outcome == domain.OperationUnconfirmed {
+		return fmt.Sprintf("Upgrade %s unconfirmed during %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), phase, sanitizeUntrustedText(upgrade.Err))
 	}
 	return fmt.Sprintf("Upgrade %s failed during %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), phase, sanitizeUntrustedText(upgrade.Err))
 }

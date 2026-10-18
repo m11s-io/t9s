@@ -23,7 +23,14 @@ Start t9s with `--enable-writes` (or `T9S_ENABLE_WRITES`) before using the upgra
 
 The suggestion preserves the running node's Image Factory repository details: factory, installer flavor, and schematic ID. It uses the running Talos version as the initial tag so an upgrade prompt cannot silently downgrade a node whose declared image is stale. On Talos v1.14+, live schematic discovery first uses the authoritative `ImageFactorySchematic` resource. If it is unavailable or undecodable, t9s falls back to the installed `ExtensionStatus` resource named `schematic` and platform metadata, then to the declared image. Digest references remain unchanged.
 
-For Talos versions supporting `LifecycleService`, the notice area streams image pull, install, Kubernetes drain, reboot, readiness wait, and uncordon. Byte progress is shown when totals are available. Success requires lifecycle exit code zero and completion of cleanup; interrupted streams and non-zero exits fail. Nodes outside the lifecycle API range use the legacy upgrade RPC.
+For Talos versions supporting `LifecycleService`, the notice area streams image pull, install, Kubernetes drain, reboot, readiness wait, and uncordon. Byte progress is shown when totals are available. Verified completion requires lifecycle exit code zero, readiness checks, and completion of cleanup. Nodes outside the lifecycle API range use the legacy upgrade RPC; its final notice says the request was accepted and completion has not been verified.
+
+Pull and install share a 20-minute client budget. Maintenance preparation,
+cordon, and reboot requests each have a 30-second budget. Drain, readiness, and
+cleanup have separate limits; the entire workflow can take longer than 20
+minutes. An interrupted or failed request reports an unconfirmed remote outcome
+and retains the last observed stage. Check the node before retrying: stopping a
+request does not undo an installation or reboot.
 
 If the image was applied but readiness or scheduling cleanup remains incomplete,
 t9s keeps an `Applied — recovery warning` notice. Check the node's readiness and

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
 	"github.com/m11s-io/t9s/internal/testkit"
 	"github.com/stretchr/testify/assert"
@@ -32,8 +33,8 @@ func TestBuildActionEffectsCallsControllerPerTargetIndependently(t *testing.T) {
 	require.Len(t, effects, 2)
 	firstResult := effects[0](t.Context(), application.Dependencies{})
 	secondResult := effects[1](t.Context(), application.Dependencies{})
-	assert.Equal(t, application.ActionSucceeded{Generation: model.Generation, Target: "cp-1"}, firstResult)
-	assert.Equal(t, application.ActionFailed{Generation: model.Generation, Target: "cp-2", Err: errors.New("unreachable")}, secondResult)
+	assert.Equal(t, application.ActionSucceeded{Generation: model.Generation, Target: "cp-1", Outcome: domain.OperationAccepted}, firstResult)
+	assert.Equal(t, application.ActionFailed{Generation: model.Generation, Target: "cp-2", Err: errors.New("unreachable"), Outcome: domain.OperationUnconfirmed}, secondResult)
 	assert.ElementsMatch(t, []string{"cp-1", "cp-2"}, calls)
 }
 

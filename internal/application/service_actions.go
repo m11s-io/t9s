@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 	"fmt"
+
+	"github.com/m11s-io/t9s/internal/domain"
 )
 
 func buildServiceActionEffect(model Model, pending PendingServiceAction) Effect {
@@ -16,6 +18,8 @@ func buildServiceActionEffect(model Model, pending PendingServiceAction) Effect 
 		if controller == nil {
 			return ActionFailed{Generation: generation, Target: target, Err: fmt.Errorf("service controller is not configured")}
 		}
+		ctx, cancel := context.WithTimeout(ctx, controlOperationTimeout)
+		defer cancel()
 		var err error
 		switch pending.Kind {
 		case ServiceActionStart:
@@ -28,8 +32,8 @@ func buildServiceActionEffect(model Model, pending PendingServiceAction) Effect 
 			err = fmt.Errorf("unsupported service action %q", pending.Kind)
 		}
 		if err != nil {
-			return ActionFailed{Generation: generation, Target: target, Err: err}
+			return ActionFailed{Generation: generation, Target: target, Err: mutationCallError(ctx, err), Outcome: domain.OperationUnconfirmed}
 		}
-		return ActionSucceeded{Generation: generation, Target: target}
+		return ActionSucceeded{Generation: generation, Target: target, Outcome: domain.OperationAccepted}
 	}
 }

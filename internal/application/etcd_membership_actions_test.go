@@ -123,7 +123,7 @@ func TestEtcdSnapshotFailedAbortsMembershipAction(t *testing.T) {
 	assert.Nil(t, effect, "a failed snapshot must not schedule the membership change")
 	assert.Nil(t, model.PendingEtcdAction, "the aborted action must be cleared")
 	require.Len(t, model.ActionResults, 1)
-	assert.Contains(t, model.ActionResults[0].Err, "disk full")
+	assert.Equal(t, "snapshot failed", model.ActionResults[0].Err)
 	assert.False(t, removeCalled)
 }
 

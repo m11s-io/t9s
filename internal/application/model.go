@@ -22,6 +22,7 @@ type Model struct {
 	sessionRuntime
 	requestIDs           map[string]uint64
 	operationID          uint64
+	operationTargets     map[string]int
 	ContextName          string
 	NodeFocus            string
 	OpenContextPicker    bool
@@ -388,6 +389,7 @@ type ActionResult struct {
 	Target  string
 	Err     string
 	Warning string
+	Outcome domain.OperationOutcome
 }
 
 type UpgradeState struct {
@@ -396,6 +398,7 @@ type UpgradeState struct {
 	Event   ports.UpgradeEvent
 	Err     string
 	Warning string
+	Outcome domain.OperationOutcome
 }
 
 // upgradeStreamResult is private so stream mechanics stay inside application effects.
@@ -499,6 +502,7 @@ type UpgradeSucceeded struct {
 	OperationID uint64
 	Generation  uint64
 	Target      string
+	Outcome     domain.OperationOutcome
 }
 
 func (UpgradeSucceeded) applicationMessage() {}
@@ -525,6 +529,7 @@ type ActionSucceeded struct {
 	OperationID uint64
 	Generation  uint64
 	Target      string
+	Outcome     domain.OperationOutcome
 }
 
 func (ActionSucceeded) applicationMessage() {}
@@ -534,6 +539,7 @@ type ActionFailed struct {
 	Generation  uint64
 	Target      string
 	Err         error
+	Outcome     domain.OperationOutcome
 }
 
 func (ActionFailed) applicationMessage() {}
@@ -703,6 +709,7 @@ type EtcdActionSucceeded struct {
 	OperationID    uint64
 	Generation     uint64
 	MemberHostname string
+	Outcome        domain.OperationOutcome
 }
 
 func (EtcdActionSucceeded) applicationMessage() {}
@@ -712,6 +719,7 @@ type EtcdActionFailed struct {
 	Generation     uint64
 	MemberHostname string
 	Err            error
+	Outcome        domain.OperationOutcome
 }
 
 func (EtcdActionFailed) applicationMessage() {}

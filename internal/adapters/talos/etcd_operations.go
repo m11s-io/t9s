@@ -172,9 +172,9 @@ func (o *etcdOperations) ForfeitLeadership(ctx context.Context, node string) err
 	return nil
 }
 
-// contextReader aborts an in-flight copy the moment ctx is canceled, so a
-// session teardown cancels a multi-gigabyte snapshot promptly and the defer
-// above removes the .part file.
+// contextReader checks cancellation between reads. An already blocked read
+// relies on the SDK stream's RPC context for cancellation; this wrapper cannot
+// interrupt an arbitrary io.Reader. Snapshot removes uncommitted staging files.
 type contextReader struct {
 	ctx    context.Context
 	reader io.Reader

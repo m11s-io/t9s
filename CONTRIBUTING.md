@@ -60,9 +60,22 @@ one uncapped service observation per refresh; only the detailed table is capped.
 
 Confirmation messages produce execution effects after application policy checks.
 Operation identities isolate mutation results from older operations. The TUI
+disables new write prompts while an accepted mutation is active. Application
+dispatch enforces the same rule independently of the frontend, retaining activity
+through every bulk target and the snapshot-to-membership pipeline. Prompt
+cancellation cannot discard an accepted operation. Context exit still cancels
+session-owned work and does not promise remote rollback. The TUI
 owns prompts, navigation, filters, and selection; it does not construct backend
 actions from display text. Port operations and SDK adapters can be reused by a
 future API frontend. This application does not add a web server.
+
+Mutation leaf effects own their client deadlines; bulk targets do not share a
+deadline. The initial budgets live in `application/operation_policy.go`, with
+upgrade stage budgets in the Talos adapter. Normalized operation outcomes
+distinguish acceptance, observed completion, an unconfirmed remote result, and
+incomplete recovery. Keep raw RPC errors out of presentation state. Cancellation
+does not establish that remote work was undone; never retry a mutation solely
+because its response was lost.
 
 Normal tests use `internal/testkit` fakes at port boundaries. A test that needs
 a live Talos endpoint is a manual smoke test and must be explicitly separated

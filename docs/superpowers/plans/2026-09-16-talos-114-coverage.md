@@ -2,7 +2,7 @@
 
 Status: Phases 0 and 1 implemented; Phase 2 partially implemented; Phases 3 and 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
-Last reconciled with source: 2026-10-17
+Last reconciled with source: 2026-10-18 (`5e4640e`)
 Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
 Live v1.14.4 cluster smoke testing is pending; implemented below means present in source, not released or live-verified.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.
@@ -22,9 +22,9 @@ Kubernetes upgrades were added to planned scope at user request on 2026-10-17.
   transfer, defragmentation, and alarm disarm. Membership confirmation remains
   `(y/n)`; typed member confirmation is a follow-up.
 - **Phase 2 partially implemented:** streaming dmesg, netstat, mounts/filesystem
-  usage, memory views, and live event following. CPU metrics,
-  directory disk usage, time checks, container inspection, richer service details,
-  and force reboot/shutdown controls remain.
+  usage, memory views, live event following, sampled CPU utilization, and
+  permission-aware Time / TimeCheck. Directory disk usage, container inspection,
+  richer service details, and force reboot/shutdown controls remain.
 - **Phases 3 and 4 pending:** curated Talos networking/storage/system views and
   health rules, configuration editing, disaster recovery, and convenience exports.
 - **New planned scope:** cluster-wide Kubernetes upgrades through Talos, separate
@@ -51,7 +51,8 @@ A capability only reaches the operator by passing through all layers:
 - **adapters/talos** (`internal/adapters/talos/*.go`) — converts RPC/COSI responses
   into domain structs; `session.go` wires each subsystem.
 - **application** (`internal/application/*.go`) — generation-stamped messages,
-  effects, reducer (`update.go`), write gating and warning logic (`actions.go`).
+  request identities, session-owned cancellation, effects, state transitions
+  (`update.go`), dispatch (`dispatch.go`), write gating and warning logic (`actions.go`).
 - **tui** (`internal/tui/*.go`) — `viewKind` + per-view models + key routing +
   `actionHints`. Reads are resource-first; writes are gated by
   `WritesEnabled` and a confirm prompt.
@@ -63,7 +64,7 @@ any resource kind) and the streaming upgrade lifecycle.
 
 | Area | Exposed |
 | --- | --- |
-| Read | nodes + detail, services/detail + streaming logs, snapshot/live events, etcd membership/status/alarms, processes, disks, network links/addresses/multipath routes, streaming dmesg, netstat, mounts/filesystem usage, memory, generic COSI browser, health overview/problems, explicit streaming `:healthcheck` |
+| Read | nodes + detail, services/detail + streaming logs, snapshot/live events, etcd membership/status/alarms, processes, disks, network links/addresses/multipath routes, streaming dmesg, netstat, mounts/filesystem usage, memory, sampled CPU, Time / TimeCheck, generic COSI browser, health overview/problems, explicit streaming `:healthcheck` |
 | Write (`--enable-writes`) | node reboot/shutdown/rollback/reset/upgrade; disk wipe; service start/stop/restart; etcd snapshot/remove/leave/defragment/disarm/forfeit leadership; Kubernetes cordon/drain/uncordon during upgrade |
 | Health rules | `node-readiness`, `node-services-degraded`, `etcd-member-unhealthy`, `etcd-member-alarmed` |
 
@@ -76,7 +77,7 @@ Kubernetes upgrade workflow added on 2026-10-17.
 
 | Area | Remaining work | Priority |
 | --- | --- | --- |
-| Diagnostics | CPU metrics; directory `DiskUsage`; Time / TimeCheck; richer `ServiceInfo` | P1 |
+| Diagnostics | Directory `DiskUsage`; richer `ServiceInfo` | P1 |
 | Containers | Namespace-aware containers, image list and stats; `taloscontainers` selection | P1 / P2 |
 | Networking | BGP peer view and health rules | P1 |
 | Storage | LVM / MD RAID status, volume lifecycle, trim / XFS scrub views and health rules | P1 |
@@ -90,9 +91,9 @@ Kubernetes upgrade workflow added on 2026-10-17.
 | Operational context | Dedicated system-volume note in node detail; document etcd port 2383 | P2 |
 | Optional diagnostics | KubeSpan and curated hardware/security/performance views; file Read/LS | P2 / defer; generic resources remain available |
 
-Time / TimeCheck must distinguish the configured-server query from arbitrary
-server checks: Talos v1.14.3+ restricts TimeCheck for `os:reader`. A future UI must
-handle permission denial without breaking the ordinary time-status view.
+Time / TimeCheck distinguishes ordinary status from explicit server checks.
+Permission failures have independent result panels; live verification with
+`os:reader` remains pending.
 
 ## 3. Cross-cutting design rules
 
@@ -123,6 +124,30 @@ These apply to every new capability (from report 05):
   and `docs/tests/content.test.ts` if a required page is added.
 
 ## 4. Prioritized roadmap
+
+### Delivery order after architecture simplification
+
+The phase numbers below retain historical scope; they are not a requirement to
+finish every feature in one phase before addressing another. Use this order:
+
+1. Resolve the operation-lifecycle findings in
+   [the current audit](../reviews/2026-10-18-operation-lifecycle.md), add typed
+   member confirmation, and record disposable-cluster compatibility checks.
+   Confirm hosted CI and reconcile the user-facing feature inventory before release.
+2. Finish directory disk usage, then namespace-aware containers/images/stats and
+   richer service detail. Force reboot/shutdown remains lower priority.
+3. Select Phase 3 views by operational need. Add a health rule only when evidence
+   can distinguish healthy, unhealthy, unknown, and unsupported states. Keep
+   occasional inspection in the generic resource browser.
+4. Complete the Phase 5 upstream integration study before implementing cluster
+   upgrades. Establish supported versions and operation ownership first.
+5. Design configuration apply and disaster recovery separately. Bootstrap and
+   etcd recovery need distinct preconditions and disposable-cluster validation;
+   they must not be bundled with convenience exports.
+
+Keep Go request/result values and policies reusable. Extract frontend-independent
+operations when a second frontend needs them; avoid an HTTP contract for the
+whole application model, a feature registry, or a general screen framework.
 
 ### Phase 0 — correctness and safety net: implemented
 
@@ -277,11 +302,13 @@ and [Kubernetes version skew policy](https://kubernetes.io/releases/version-skew
 
 These are remaining candidates, not newly approved implementation work:
 
-1. `feat(diagnostics): add time status and permission-aware time checks`
-2. `feat(diagnostics): add CPU metrics and directory disk usage`
-3. `feat(containers): add namespace-aware containers, images, and stats`
-4. `feat(etcd): require typed member confirmation`
-5. Kubernetes upgrade design/integration study (Phase 5 items 25–30; separate
+1. Operation ownership/deadlines/outcomes follow-ups from the lifecycle audit,
+   followed by disposable-cluster validation. CPU and time are already implemented.
+2. `feat(etcd): require typed member confirmation`
+3. `feat(diagnostics): add bounded directory disk usage`
+4. `feat(containers): add namespace-aware containers, images, and stats`
+5. Selected network/storage health evidence based on operator need.
+6. Kubernetes upgrade design/integration study (Phase 5 items 25–30; separate
    reviewed spec and implementation plan before feature development).
 
 ## Appendix — source reports

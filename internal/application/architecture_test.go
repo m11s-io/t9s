@@ -49,7 +49,7 @@ func TestSnapshotConfirmationRequiresWritePermissionAndPendingTarget(t *testing.
 	}
 }
 
-func TestNewActionRejectsEarlierActionResult(t *testing.T) {
+func TestNewPromptCannotReplaceExecutingAction(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{RebootFunc: func(context.Context, string, ports.RebootMode) error { return nil }}}})
@@ -58,8 +58,11 @@ func TestNewActionRejectsEarlierActionResult(t *testing.T) {
 	require.NotNil(t, older)
 	oldResult := older(t.Context(), application.Dependencies{})
 	model, _ = application.Update(model, application.RequestAction{Kind: application.ActionReboot, Targets: []string{"new"}})
+	assert.Nil(t, model.PendingAction, "a new prompt must not replace an executing action")
 	model, _ = application.Update(model, oldResult)
-	assert.Empty(t, model.ActionResults, "the earlier result must not appear in the new action")
+	require.Len(t, model.ActionResults, 1)
+	assert.Equal(t, "old", model.ActionResults[0].Target)
+	assert.False(t, model.MutationActive())
 }
 
 func TestCloseReadPreventsUnstartedRPCAndRejectsItsResult(t *testing.T) {
