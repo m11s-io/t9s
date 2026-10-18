@@ -32,7 +32,7 @@ func etcdTestModel(t *testing.T, writesEnabled bool, operations *testkit.FakeEtc
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
-	root.etcd = root.etcd.setState(root.application.Etcd)
+	root.etcd = root.etcd.normalizeSelection(root.application.Etcd.Value.Members, root.etcd.control.Cursor())
 	return root
 }
 
@@ -160,7 +160,7 @@ func TestEtcdDefragTargetsSelectedMemberNotFirstControlPlane(t *testing.T) {
 	root := etcdTestModel(t, true, operations)
 	// Move the :etcd selection from cp-1 to cp-2; a handler that always took
 	// the first control-plane node would still pass against cp-1.
-	root.etcd = root.etcd.update(keyPress('j'))
+	root.etcd = root.etcd.update(keyPress('j'), root.application.Etcd.Value.Members)
 
 	updated, _ := root.Update(keyPress('d'))
 	rootModel := updated.(model)

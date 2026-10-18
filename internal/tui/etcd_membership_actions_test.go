@@ -28,7 +28,7 @@ func etcdMembershipTestModel(t *testing.T, writesEnabled bool, operations *testk
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
-	root.etcd = root.etcd.setState(root.application.Etcd)
+	root.etcd = root.etcd.normalizeSelection(root.application.Etcd.Value.Members, root.etcd.control.Cursor())
 	return root
 }
 

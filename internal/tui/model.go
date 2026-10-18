@@ -112,7 +112,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		nodes:             newNodesModel().normalizeSelection(applicationModel.Nodes.Value.Nodes, 0),
 		services:          newServicesModel().normalizeSelection(applicationModel.Services.Value.Services, 0),
 		events:            newEventsModel().syncLegacySelection(applicationModel.Events),
-		etcd:              newEtcdModel(applicationModel.Etcd),
+		etcd:              newEtcdModel().normalizeSelection(applicationModel.Etcd.Value.Members, 0),
 		processes:         newProcessesModel(applicationModel.Processes),
 		disks:             newDisksModel(applicationModel.Disks),
 		network:           newNetworkModel(applicationModel.Network),
@@ -302,7 +302,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RefreshEtcd{})
-					m.etcd = m.etcd.setState(m.application.Etcd)
+					m.etcd = m.etcd.normalizeSelection(m.application.Etcd.Value.Members, m.etcd.control.Cursor())
 					return m, m.command(effect)
 				case commandOverview:
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewOverview, Label: "overview"})
@@ -512,7 +512,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.filtering() && m.views.top().Kind == viewEtcd {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RefreshEtcd{})
-				m.etcd = m.etcd.setState(m.application.Etcd)
+				m.etcd = m.etcd.normalizeSelection(m.application.Etcd.Value.Members, m.etcd.control.Cursor())
 				return m, m.command(effect)
 			}
 			if !m.filtering() && m.views.top().Kind == viewProcesses {
@@ -583,7 +583,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.application, servicesEffect = application.Update(m.application, application.RefreshServices{})
 				m.application, etcdEffect = application.Update(m.application, application.RefreshEtcd{})
 				m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
-				m.etcd = m.etcd.setState(m.application.Etcd)
+				m.etcd = m.etcd.normalizeSelection(m.application.Etcd.Value.Members, m.etcd.control.Cursor())
 				return m, tea.Batch(m.command(servicesEffect), m.command(etcdEffect))
 			}
 		}
@@ -702,7 +702,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// application messages, so the write keys are handled here before
 			// delegating the remaining keys (filter, navigation) to it.
 			if m.writeActionsEnabled() && !m.etcd.filtering {
-				if member, ok := m.etcd.selected(); ok {
+				if member, ok := m.etcd.selected(m.application.Etcd.Value.Members); ok {
 					switch key {
 					case "s":
 						if member.MemberID != 0 && member.Hostname != "" {
@@ -723,7 +723,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-			m.etcd = m.etcd.update(message)
+			m.etcd = m.etcd.update(message, m.application.Etcd.Value.Members)
 			return m, nil
 		}
 		if m.views.top().Kind == viewProcesses {
@@ -1152,7 +1152,7 @@ func (m model) activeContent(size contentSize) string {
 	case viewEvents:
 		view.WriteString(m.events.legacyViewSized(innerSize, m.application.Events))
 	case viewEtcd:
-		view.WriteString(m.etcd.viewSized(innerSize))
+		view.WriteString(m.etcd.legacyViewSized(innerSize, m.application.Etcd))
 	case viewProcesses:
 		view.WriteString(m.processes.viewSized(innerSize))
 	case viewProcessDetail:

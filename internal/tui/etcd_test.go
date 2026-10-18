@@ -52,21 +52,22 @@ func TestEtcdRenderShowsAlarms(t *testing.T) {
 }
 
 func TestEtcdRenderEmptyState(t *testing.T) {
-	model := newEtcdModel(application.EtcdState{Status: application.Ready})
-	rendered := model.viewSized(contentSize{Width: 80, Height: 10})
+	model := newEtcdModel()
+	rendered := model.legacyViewSized(contentSize{Width: 80, Height: 10}, application.EtcdState{Status: application.Ready})
 	assert.Equal(t, "No etcd members", rendered)
 }
 
 func TestEtcdFilterMatchesHostname(t *testing.T) {
-	etcd := newEtcdModel(etcdTestState())
+	state := etcdTestState()
+	etcd := newEtcdModel().normalizeSelection(state.Value.Members, 0)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('c'), keyPress('p'), keyPress('-'), keyPress('2'),
 		{Code: tea.KeyEnter},
 	} {
-		etcd = etcd.update(message)
+		etcd = etcd.update(message, state.Value.Members)
 	}
 
-	rendered := etcd.view(120)
+	rendered := etcd.view(120, state.Value.Members)
 
 	assert.Contains(t, rendered, "cp-2")
 	assert.NotContains(t, rendered, "cp-1")

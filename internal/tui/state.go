@@ -53,6 +53,15 @@ type directEtcdState struct {
 	Err    string
 }
 
+func directEtcdLoadStatus(etcd domain.EtcdSet) directLoadStatus {
+	for _, member := range etcd.Members {
+		if !member.StatusKnown || len(member.Errors) > 0 {
+			return directPartial
+		}
+	}
+	return directReady
+}
+
 type directKubernetesState struct {
 	Status directLoadStatus
 	Nodes  map[string]domain.KubernetesNodeSnapshot

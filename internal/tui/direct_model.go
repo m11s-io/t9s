@@ -29,6 +29,7 @@ type directModel struct {
 	nodes    nodesModel
 	services servicesModel
 	events   eventsModel
+	etcd     etcdModel
 	contexts contextsModel
 	palette  commandModel
 	views    viewStack
@@ -58,6 +59,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		nodes:    newNodesModel(),
 		services: newServicesModel(),
 		events:   newEventsModel(),
+		etcd:     newEtcdModel(),
 		palette:  newCommandModel(),
 		views:    newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:   defaultStyles(), width: 120, height: 40, splash: true,
@@ -201,16 +203,20 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.requests.cancelSlot("cluster-etcd")
-		state := directEtcdState{Value: message.etcd, Status: directReady}
+		state := directEtcdState{Value: message.etcd, Status: directEtcdLoadStatus(message.etcd)}
+		if state.Status == directPartial {
+			state.Err = "Some etcd members are unavailable"
+		}
 		if message.err != nil {
 			state.Status = directFailed
 			state.Err = "Etcd data is unavailable"
-			if len(message.etcd.Members) > 0 {
+			if len(message.etcd.Members) > 0 || state.Status == directPartial {
 				state.Status = directPartial
 				state.Err = "Some etcd data is unavailable"
 			}
 		}
 		m.cluster.etcd = state
+		m.etcd = m.etcd.normalizeSelection(state.Value.Members, m.etcd.control.Cursor())
 		return m, nil
 	case directKubernetesNodesLoaded:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
@@ -267,7 +273,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
@@ -319,6 +325,15 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, directEventsCommand(m.session, request)
 			}
 			m.events = m.events.update(message, eventRows(m.cluster.events.Value))
+		} else if m.views.top().Kind == viewEtcd {
+			if message.String() == "q" && !m.etcd.filtering {
+				return m, m.cleanup(tea.Quit())
+			}
+			if message.String() == "r" && !m.etcd.filtering && m.session != nil {
+				request, _ := m.requests.beginWithContext("cluster-etcd", m.generation(), m.sessionCtx)
+				return m, directEtcdCommand(m.session, request)
+			}
+			m.etcd = m.etcd.update(message, m.cluster.etcd.Value.Members)
 		}
 	}
 	return m, nil
@@ -424,6 +439,8 @@ func (m directModel) View() tea.View {
 				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)
 		} else if m.views.top().Kind == viewEvents {
 			content = m.events.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.events)
+		} else if m.views.top().Kind == viewEtcd {
+			content = m.etcd.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.etcd)
 		} else {
 			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
 		}
@@ -456,6 +473,8 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.services.filter
 	} else if !m.palette.active && m.views.top().Kind == viewEvents && (m.events.filtering || m.events.filter != "") {
 		prompt = "/" + m.events.filter
+	} else if !m.palette.active && m.views.top().Kind == viewEtcd && (m.etcd.filtering || m.etcd.filter != "") {
+		prompt = "/" + m.etcd.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
@@ -490,6 +509,10 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.events.filtering = false
 	m.events.selectedKey = ""
 	m.events.control.SetCursor(0)
+	m.etcd.filter = ""
+	m.etcd.filtering = false
+	m.etcd.selectedKey = ""
+	m.etcd.control.SetCursor(0)
 	m.session = nil
 	m.view.notice = ""
 	m.palette = m.palette.close()
@@ -505,6 +528,9 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 }
 
 func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
+	if kind == viewEtcd {
+		return actionHints(kind, false)
+	}
 	hints := actionHints(kind, writesEnabled)
 	if kind != viewEvents {
 		return hints
