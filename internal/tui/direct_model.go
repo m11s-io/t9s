@@ -28,6 +28,7 @@ type directModel struct {
 	view     directViewState
 	nodes    nodesModel
 	services servicesModel
+	events   eventsModel
 	contexts contextsModel
 	palette  commandModel
 	views    viewStack
@@ -56,6 +57,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		},
 		nodes:    newNodesModel(),
 		services: newServicesModel(),
+		events:   newEventsModel(),
 		palette:  newCommandModel(),
 		views:    newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:   defaultStyles(), width: 120, height: 40, splash: true,
@@ -179,6 +181,10 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.requests.cancelSlot("cluster-events")
 		state := directEventState{Value: message.events, Status: directReady}
+		if len(message.events.Problems) > 0 {
+			state.Status = directPartial
+			state.Err = "Some event streams are unavailable"
+		}
 		if message.err != nil {
 			state.Status = directFailed
 			state.Err = "Event data is unavailable"
@@ -188,6 +194,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.cluster.events = state
+		m.events = m.events.normalizeSelection(eventRows(state.Value), m.events.control.Cursor())
 		return m, nil
 	case directEtcdLoaded:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
@@ -260,7 +267,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
@@ -303,6 +310,15 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.refreshDirectNodes()
 			}
 			m.services = m.services.update(message, m.cluster.services.Value.Services)
+		} else if m.views.top().Kind == viewEvents {
+			if message.String() == "q" && !m.events.filtering {
+				return m, m.cleanup(tea.Quit())
+			}
+			if message.String() == "r" && !m.events.filtering && m.session != nil {
+				request, _ := m.requests.beginWithContext("cluster-events", m.generation(), m.sessionCtx)
+				return m, directEventsCommand(m.session, request)
+			}
+			m.events = m.events.update(message, eventRows(m.cluster.events.Value))
 		}
 	}
 	return m, nil
@@ -406,6 +422,8 @@ func (m directModel) View() tea.View {
 		} else if m.views.top().Kind == viewServices {
 			content = m.services.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.services.Value,
 				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)
+		} else if m.views.top().Kind == viewEvents {
+			content = m.events.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.events)
 		} else {
 			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
 		}
@@ -426,7 +444,7 @@ func (m directModel) View() tea.View {
 			}
 		}
 	}
-	header := renderK9sHeader(layoutK9sHeader(layout.Width), metadata, actionHints(headerKind, m.options.WritesEnabled), m.styles.k9s)
+	header := renderK9sHeader(layoutK9sHeader(layout.Width), metadata, directActionHints(headerKind, m.options.WritesEnabled), m.styles.k9s)
 	breadcrumb := m.views.breadcrumb(m.cluster.contextName)
 	if m.contexts.active {
 		breadcrumb = m.cluster.contextName + " > contexts"
@@ -436,6 +454,8 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.nodes.filter
 	} else if !m.palette.active && m.views.top().Kind == viewServices && (m.services.filtering || m.services.filter != "") {
 		prompt = "/" + m.services.filter
+	} else if !m.palette.active && m.views.top().Kind == viewEvents && (m.events.filtering || m.events.filter != "") {
+		prompt = "/" + m.events.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
@@ -466,6 +486,10 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.services.filtering = false
 	m.services.selectedKey = ""
 	m.services.control.SetCursor(0)
+	m.events.filter = ""
+	m.events.filtering = false
+	m.events.selectedKey = ""
+	m.events.control.SetCursor(0)
 	m.session = nil
 	m.view.notice = ""
 	m.palette = m.palette.close()
@@ -478,6 +502,20 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	// context becomes the persistent lifetime of the returned Session.
 	m.sessionRequestCancel = requestCancel
 	return directOpenSessionCommand(m.client, request, contextName, application.Options{WritesEnabled: m.options.WritesEnabled})
+}
+
+func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
+	hints := actionHints(kind, writesEnabled)
+	if kind != viewEvents {
+		return hints
+	}
+	filtered := hints[:0]
+	for _, hint := range hints {
+		if hint.Key != "s" || hint.Label != "Follow" {
+			filtered = append(filtered, hint)
+		}
+	}
+	return filtered
 }
 
 func (m directModel) fallbackCleanup() {

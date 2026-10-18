@@ -18,7 +18,7 @@ func (m model) syncScreens(message application.Message) model {
 		m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
 		return m
 	case "events":
-		m.events = m.events.setState(m.application.Events)
+		m.events = m.events.syncLegacySelection(m.application.Events)
 		return m
 	case "node-services":
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
@@ -39,7 +39,7 @@ func (m model) syncScreens(message application.Message) model {
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 	case application.EventsLoaded, application.EventsFailed, application.RefreshEvents,
 		application.ToggleEventFollow, application.StopEventFollow:
-		m.events = m.events.setState(m.application.Events)
+		m.events = m.events.syncLegacySelection(m.application.Events)
 	case application.EtcdLoaded, application.EtcdFailed, application.RefreshEtcd,
 		application.EtcdActionSucceeded:
 		m.etcd = m.etcd.setState(m.application.Etcd)
@@ -90,7 +90,7 @@ func (m model) syncScreens(message application.Message) model {
 func (m model) syncAllScreens() model {
 	m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 	m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
-	m.events = m.events.setState(m.application.Events)
+	m.events = m.events.syncLegacySelection(m.application.Events)
 	m.etcd = m.etcd.setState(m.application.Etcd)
 	m.processes = m.processes.setState(m.application.Processes)
 	m.disks = m.disks.setState(m.application.Disks)

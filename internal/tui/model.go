@@ -111,7 +111,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		styles:            defaultStyles(),
 		nodes:             newNodesModel().normalizeSelection(applicationModel.Nodes.Value.Nodes, 0),
 		services:          newServicesModel().normalizeSelection(applicationModel.Services.Value.Services, 0),
-		events:            newEventsModel(applicationModel.Events),
+		events:            newEventsModel().syncLegacySelection(applicationModel.Events),
 		etcd:              newEtcdModel(applicationModel.Etcd),
 		processes:         newProcessesModel(applicationModel.Processes),
 		disks:             newDisksModel(applicationModel.Disks),
@@ -296,7 +296,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RefreshEvents{})
-					m.events = m.events.setState(m.application.Events)
+					m.events = m.events.syncLegacySelection(m.application.Events)
 					return m, m.command(effect)
 				case commandEtcd:
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
@@ -506,7 +506,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.filtering() && m.views.top().Kind == viewEvents {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RefreshEvents{})
-				m.events = m.events.setState(m.application.Events)
+				m.events = m.events.syncLegacySelection(m.application.Events)
 				return m, m.command(effect)
 			}
 			if !m.filtering() && m.views.top().Kind == viewEtcd {
@@ -691,10 +691,10 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if key == "s" && !m.events.filtering {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.ToggleEventFollow{})
-				m.events = m.events.setState(m.application.Events)
+				m.events = m.events.syncLegacySelection(m.application.Events)
 				return m, m.command(effect)
 			}
-			m.events = m.events.update(message)
+			m.events = m.events.update(message, eventRows(m.application.Events.Value))
 			return m, nil
 		}
 		if m.views.top().Kind == viewEtcd {
@@ -1150,7 +1150,7 @@ func (m model) activeContent(size contentSize) string {
 	case viewServiceLogs:
 		view.WriteString(m.logs.viewSized(innerSize))
 	case viewEvents:
-		view.WriteString(m.events.viewSized(innerSize))
+		view.WriteString(m.events.legacyViewSized(innerSize, m.application.Events))
 	case viewEtcd:
 		view.WriteString(m.etcd.viewSized(innerSize))
 	case viewProcesses:
