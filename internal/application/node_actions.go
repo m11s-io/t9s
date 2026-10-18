@@ -117,6 +117,9 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 		if !ok {
 			return MutationResult{}, ErrAssessmentChanged
 		}
+		if !knownNodeActionRole(node.Role) {
+			return MutationResult{}, ErrAssessmentChanged
+		}
 		resolved = append(resolved, node)
 	}
 	currentFacts, readErr := s.readNodeActionFacts(readCtx, nodes.Nodes, resolved, request)
@@ -210,6 +213,9 @@ func resolveNodeActionTargets(nodes []domain.NodeSnapshot, requested []string) (
 		if !ok {
 			return nil, nil, fmt.Errorf("node target %q does not resolve to one canonical node", identity)
 		}
+		if !knownNodeActionRole(node.Role) {
+			return nil, nil, fmt.Errorf("node target %q has an unknown role; refusing node action", identity)
+		}
 		target := node.Target()
 		if _, exists := seen[target]; exists {
 			continue
@@ -222,6 +228,10 @@ func resolveNodeActionTargets(nodes []domain.NodeSnapshot, requested []string) (
 		return nil, nil, errors.New("node action requires at least one target")
 	}
 	return targets, resolved, nil
+}
+
+func knownNodeActionRole(role domain.NodeRole) bool {
+	return role == domain.NodeRoleControl || role == domain.NodeRoleWorker
 }
 
 func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []domain.NodeSnapshot, request NodeActionRequest) (nodeActionFacts, error) {

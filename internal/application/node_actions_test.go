@@ -60,7 +60,7 @@ func TestNodeActionsRecheckCurrentQuorum(t *testing.T) {
 
 func TestNodeActionCanonicalizesAndDeduplicatesTargets(t *testing.T) {
 	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-id", Name: "worker-1", Addresses: []string{"10.0.0.1"}}}}, nil
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-id", Name: "worker-1", Addresses: []string{"10.0.0.1"}, Role: domain.NodeRoleWorker}}}, nil
 	}}, nil, &testkit.FakeNodeController{})
 	session := nodeOperationSession(adapter)
 	defer session.Close()
@@ -73,11 +73,69 @@ func TestNodeActionCanonicalizesAndDeduplicatesTargets(t *testing.T) {
 	}
 }
 
+func TestNodePreparationRejectsUnknownDiscoveredRoles(t *testing.T) {
+	actions := []NodeActionRequest{
+		{Kind: ActionReboot, Targets: []string{"worker-unknown"}},
+		{Kind: ActionShutdown, Targets: []string{"worker-unknown"}},
+		{Kind: ActionRollback, Targets: []string{"worker-unknown"}},
+		{Kind: ActionUpgrade, Targets: []string{"worker-unknown"}, Image: "installer:v1.15.0"},
+	}
+	for _, request := range actions {
+		t.Run(string(request.Kind), func(t *testing.T) {
+			adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				// Mirrors partial discovery fallback: a resolvable node survives an
+				// aggregate discovery error with no classified role.
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "unknown-id", Name: "worker-unknown", Role: domain.NodeRoleUnknown, Problem: "role unavailable"}}}, nil
+			}}, nil, &testkit.FakeNodeController{})
+			session := nodeOperationSession(adapter)
+			defer session.Close()
+			plan, err := session.PrepareNodeAction(context.Background(), request)
+			if err == nil && plan.Assessment().Blocked == "" {
+				t.Fatalf("unknown-role target authorized for %s", request.Kind)
+			}
+		})
+	}
+}
+
+func TestNodeExecutionRejectsKnownRoleBecomingUnknown(t *testing.T) {
+	actions := []ActionKind{ActionReboot, ActionShutdown, ActionRollback}
+	for _, kind := range actions {
+		t.Run(string(kind), func(t *testing.T) {
+			var reads atomic.Int32
+			var calls atomic.Int32
+			controller := &testkit.FakeNodeController{
+				RebootFunc:   func(context.Context, string, ports.RebootMode) error { calls.Add(1); return nil },
+				ShutdownFunc: func(context.Context, string, bool) error { calls.Add(1); return nil },
+				RollbackFunc: func(context.Context, string) error { calls.Add(1); return nil },
+			}
+			adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				role := domain.NodeRoleWorker
+				if reads.Add(1) > 1 {
+					role = domain.NodeRoleUnknown
+				}
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1", Role: role, Problem: "role unavailable"}}}, nil
+			}}, nil, controller)
+			session := nodeOperationSession(adapter)
+			defer session.Close()
+			plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: kind, Targets: []string{"worker-1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true}, nil); !errors.Is(err, ErrAssessmentChanged) {
+				t.Fatalf("execute error = %v, want ErrAssessmentChanged", err)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("controller calls = %d, want 0 after role becomes unknown", calls.Load())
+			}
+		})
+	}
+}
+
 func TestNodeExecutionRejectsChangedCanonicalIdentity(t *testing.T) {
 	var nodeID atomic.Value
 	nodeID.Store("before")
 	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: nodeID.Load().(string), Name: "worker-1"}}}, nil
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: nodeID.Load().(string), Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
 	}}, nil, &testkit.FakeNodeController{})
 	session := nodeOperationSession(adapter)
 	defer session.Close()
@@ -107,7 +165,7 @@ func TestBulkActionHoldsLeaseUntilAllTargetsFinish(t *testing.T) {
 		return nil
 	}}
 	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}, {Name: "cp-2"}}}, nil
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleWorker}, {Name: "cp-2", Role: domain.NodeRoleWorker}}}, nil
 	}}, nil, controller)
 	session := nodeOperationSession(adapter)
 	defer session.Close()
@@ -149,7 +207,7 @@ func TestBulkNodeActionPreservesResultsWithoutObserver(t *testing.T) {
 		return nil
 	}}
 	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}, {Name: "cp-2"}}}, nil
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleWorker}, {Name: "cp-2", Role: domain.NodeRoleWorker}}}, nil
 	}}, nil, controller)
 	session := nodeOperationSession(adapter)
 	defer session.Close()
@@ -245,7 +303,7 @@ func TestNodeCanceledAfterDispatchPreservesControllerError(t *testing.T) {
 func TestBulkNodeObserverCallsAreSerializedOncePerTarget(t *testing.T) {
 	controller := &testkit.FakeNodeController{RebootFunc: func(context.Context, string, ports.RebootMode) error { return nil }}
 	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}, {Name: "cp-2"}, {Name: "cp-3"}}}, nil
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleWorker}, {Name: "cp-2", Role: domain.NodeRoleWorker}, {Name: "cp-3", Role: domain.NodeRoleWorker}}}, nil
 	}}, nil, controller)
 	session := nodeOperationSession(adapter)
 	defer session.Close()
@@ -282,7 +340,7 @@ func TestBulkNodeObserverCallsAreSerializedOncePerTarget(t *testing.T) {
 
 func TestUpgradePreparationRequiresSingleTargetAndImage(t *testing.T) {
 	adapter := &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "n1", Name: "cp-1", Role: domain.NodeRoleControl, Version: "v1.13.3"}, {ID: "n2", Name: "cp-2"}}}, nil
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "n1", Name: "cp-1", Role: domain.NodeRoleControl, Version: "v1.13.3"}, {ID: "n2", Name: "cp-2", Role: domain.NodeRoleWorker}}}, nil
 	}}, NodeController: &testkit.FakeNodeController{}}
 	session := nodeOperationSession(adapter)
 	defer session.Close()
