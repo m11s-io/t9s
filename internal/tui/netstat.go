@@ -11,19 +11,46 @@ import (
 )
 
 type netstatModel struct {
-	state     application.SocketState
+	status    directLoadStatus
+	values    domain.SocketSet
+	node      string
+	err       string
 	filter    string
 	filtering bool
 	control   listControl
 }
 
 func newNetstatModel(state application.SocketState) netstatModel {
-	return (netstatModel{state: state}).normalizeSelection(0)
+	return (netstatModel{status: directLoading}).setState(state)
 }
+
+func newDirectNetstatModel() netstatModel { return netstatModel{status: directLoading} }
 
 func (m netstatModel) setState(state application.SocketState) netstatModel {
 	previousIndex := m.control.Cursor()
-	m.state = state
+	m.values, m.err, m.node = state.Value, state.Err, state.Node
+	switch state.Status {
+	case application.Loading, application.Idle:
+		m.status = directLoading
+	case application.Partial:
+		m.status = directPartial
+	case application.Failed:
+		m.status = directFailed
+	default:
+		m.status = directReady
+	}
+	return m.normalizeSelection(previousIndex)
+}
+
+func (m netstatModel) setResult(node string, values domain.SocketSet, err error) netstatModel {
+	previousIndex := m.control.Cursor()
+	m.values, m.node, m.err, m.status = values, node, "", directReady
+	if err != nil {
+		m.status, m.err = directFailed, "Socket data is unavailable"
+		if len(values.Sockets) > 0 {
+			m.status, m.err = directPartial, "Some socket data is unavailable"
+		}
+	}
 	return m.normalizeSelection(previousIndex)
 }
 
@@ -77,10 +104,10 @@ func (m netstatModel) normalizeSelection(closest int) netstatModel {
 func (m netstatModel) visibleSockets() []domain.SocketSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Sockets
+		return m.values.Sockets
 	}
-	filtered := make([]domain.SocketSnapshot, 0, len(m.state.Value.Sockets))
-	for _, socket := range m.state.Value.Sockets {
+	filtered := make([]domain.SocketSnapshot, 0, len(m.values.Sockets))
+	for _, socket := range m.values.Sockets {
 		if socketMatches(socket, query) {
 			filtered = append(filtered, socket)
 		}
@@ -106,19 +133,30 @@ func (m netstatModel) view(width int) string {
 }
 
 func (m netstatModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+	if m.status == directFailed {
+		return fallback(m.err)
 	}
 	sockets := m.visibleSockets()
 	if len(sockets) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+		if m.status == directLoading || m.status == directLoadStatus("") {
 			return "Loading sockets…"
+		}
+		if m.status == directPartial {
+			return fallback(m.err)
 		}
 		return "No sockets"
 	}
-	rowCapacity := max(0, size.Height-1)
+	warningRows := 0
+	if m.status == directPartial {
+		warningRows = 1
+	}
+	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(sockets), m.control.Cursor(), rowCapacity)
-	return renderNetstatTable(size.Width, sockets[start:end], m.control.Cursor()-start)
+	content := renderNetstatTable(size.Width, sockets[start:end], m.control.Cursor()-start)
+	if warningRows > 0 {
+		content = "SOCKETS PARTIAL: " + fallback(m.err) + "\n" + content
+	}
+	return content
 }
 
 const defaultNetstatWidth = 120

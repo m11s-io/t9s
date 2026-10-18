@@ -11,19 +11,46 @@ import (
 )
 
 type mountsModel struct {
-	state     application.MountState
+	status    directLoadStatus
+	values    domain.MountSet
+	node      string
+	err       string
 	filter    string
 	filtering bool
 	control   listControl
 }
 
 func newMountsModel(state application.MountState) mountsModel {
-	return (mountsModel{state: state}).normalizeSelection(0)
+	return (mountsModel{status: directLoading}).setState(state)
 }
+
+func newDirectMountsModel() mountsModel { return mountsModel{status: directLoading} }
 
 func (m mountsModel) setState(state application.MountState) mountsModel {
 	previousIndex := m.control.Cursor()
-	m.state = state
+	m.values, m.err, m.node = state.Value, state.Err, state.Node
+	switch state.Status {
+	case application.Loading, application.Idle:
+		m.status = directLoading
+	case application.Partial:
+		m.status = directPartial
+	case application.Failed:
+		m.status = directFailed
+	default:
+		m.status = directReady
+	}
+	return m.normalizeSelection(previousIndex)
+}
+
+func (m mountsModel) setResult(node string, values domain.MountSet, err error) mountsModel {
+	previousIndex := m.control.Cursor()
+	m.values, m.node, m.err, m.status = values, node, "", directReady
+	if err != nil {
+		m.status, m.err = directFailed, "Mount data is unavailable"
+		if len(values.Mounts) > 0 {
+			m.status, m.err = directPartial, "Some mount data is unavailable"
+		}
+	}
 	return m.normalizeSelection(previousIndex)
 }
 
@@ -77,10 +104,10 @@ func (m mountsModel) normalizeSelection(closest int) mountsModel {
 func (m mountsModel) visibleMounts() []domain.MountSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Mounts
+		return m.values.Mounts
 	}
-	filtered := make([]domain.MountSnapshot, 0, len(m.state.Value.Mounts))
-	for _, mount := range m.state.Value.Mounts {
+	filtered := make([]domain.MountSnapshot, 0, len(m.values.Mounts))
+	for _, mount := range m.values.Mounts {
 		if mountMatches(mount, query) {
 			filtered = append(filtered, mount)
 		}
@@ -106,19 +133,30 @@ func (m mountsModel) view(width int) string {
 }
 
 func (m mountsModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+	if m.status == directFailed {
+		return fallback(m.err)
 	}
 	mounts := m.visibleMounts()
 	if len(mounts) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+		if m.status == directLoading || m.status == directLoadStatus("") {
 			return "Loading mounts…"
+		}
+		if m.status == directPartial {
+			return fallback(m.err)
 		}
 		return "No mounts"
 	}
-	rowCapacity := max(0, size.Height-1)
+	warningRows := 0
+	if m.status == directPartial {
+		warningRows = 1
+	}
+	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(mounts), m.control.Cursor(), rowCapacity)
-	return renderMountsTable(size.Width, mounts[start:end], m.control.Cursor()-start)
+	content := renderMountsTable(size.Width, mounts[start:end], m.control.Cursor()-start)
+	if warningRows > 0 {
+		content = "MOUNTS PARTIAL: " + fallback(m.err) + "\n" + content
+	}
+	return content
 }
 
 const defaultMountsWidth = 120

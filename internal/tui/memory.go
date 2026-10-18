@@ -16,19 +16,46 @@ type memoryMetric struct {
 }
 
 type memoryModel struct {
-	state     application.MemoryState
+	status    directLoadStatus
+	values    domain.MemorySnapshot
+	node      string
+	err       string
 	filter    string
 	filtering bool
 	control   listControl
 }
 
 func newMemoryModel(state application.MemoryState) memoryModel {
-	return (memoryModel{state: state}).normalizeSelection(0)
+	return (memoryModel{status: directLoading}).setState(state)
 }
+
+func newDirectMemoryModel() memoryModel { return memoryModel{status: directLoading} }
 
 func (m memoryModel) setState(state application.MemoryState) memoryModel {
 	previousIndex := m.control.Cursor()
-	m.state = state
+	m.values, m.err, m.node = state.Value, state.Err, state.Node
+	switch state.Status {
+	case application.Loading, application.Idle:
+		m.status = directLoading
+	case application.Partial:
+		m.status = directPartial
+	case application.Failed:
+		m.status = directFailed
+	default:
+		m.status = directReady
+	}
+	return m.normalizeSelection(previousIndex)
+}
+
+func (m memoryModel) setResult(node string, values domain.MemorySnapshot, err error) memoryModel {
+	previousIndex := m.control.Cursor()
+	m.values, m.node, m.err, m.status = values, node, "", directReady
+	if err != nil {
+		m.status, m.err = directFailed, "Memory data is unavailable"
+		if values.TotalBytes > 0 {
+			m.status, m.err = directPartial, "Some memory data is unavailable"
+		}
+	}
 	return m.normalizeSelection(previousIndex)
 }
 
@@ -80,7 +107,7 @@ func (m memoryModel) normalizeSelection(closest int) memoryModel {
 }
 
 func (m memoryModel) visibleMetrics() []memoryMetric {
-	metrics := memoryRows(m.state.Value)
+	metrics := memoryRows(m.values)
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
 		return metrics
@@ -103,22 +130,36 @@ func (m memoryModel) view(width int) string {
 }
 
 func (m memoryModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+	if m.status == directFailed {
+		return fallback(m.err)
 	}
-	if m.state.Status == application.Loading || m.state.Status == application.Idle {
+	if m.status == directLoading || m.status == directLoadStatus("") {
 		return "Loading memory…"
 	}
-	if m.state.Value.TotalBytes == 0 {
+	if m.values.TotalBytes == 0 {
+		if m.status == directPartial {
+			return fallback(m.err)
+		}
 		return "No memory data"
 	}
 	metrics := m.visibleMetrics()
 	if len(metrics) == 0 {
+		if m.status == directPartial {
+			return "MEMORY PARTIAL: " + fallback(m.err) + "\nNo matching memory metrics"
+		}
 		return "No memory data"
 	}
-	rowCapacity := max(0, size.Height-1)
+	warningRows := 0
+	if m.status == directPartial {
+		warningRows = 1
+	}
+	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(metrics), m.control.Cursor(), rowCapacity)
-	return renderMemoryTable(size.Width, metrics[start:end], m.control.Cursor()-start)
+	content := renderMemoryTable(size.Width, metrics[start:end], m.control.Cursor()-start)
+	if warningRows > 0 {
+		content = "MEMORY PARTIAL: " + fallback(m.err) + "\n" + content
+	}
+	return content
 }
 
 const defaultMemoryWidth = 60

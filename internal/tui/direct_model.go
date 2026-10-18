@@ -34,6 +34,9 @@ type directModel struct {
 	processes processesModel
 	disks     disksModel
 	network   networkModel
+	netstat   netstatModel
+	mounts    mountsModel
+	memory    memoryModel
 	views     viewStack
 	styles    styles
 	width     int
@@ -66,6 +69,9 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		processes: newDirectProcessesModel(),
 		disks:     newDirectDisksModel(),
 		network:   newDirectNetworkModel(),
+		netstat:   newDirectNetstatModel(),
+		mounts:    newDirectMountsModel(),
+		memory:    newDirectMemoryModel(),
 		palette:   newCommandModel(),
 		views:     newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:    defaultStyles(), width: 120, height: 40, splash: true,
@@ -238,7 +244,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.cluster.nodes.Value = application.EnrichNodes(m.cluster.nodes.Value, state.Nodes)
 		m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
 		return m, nil
-	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded:
+	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded, directSocketsLoaded, directMountsLoaded, directMemoryLoaded:
 		m.applyDiagnosticResult(message)
 		return m, nil
 	case directRunCommand:
@@ -282,7 +288,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
@@ -517,6 +523,12 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.disks.filter
 	} else if !m.palette.active && m.views.top().Kind == viewNetwork && (m.network.filtering || m.network.filter != "") {
 		prompt = "/" + m.network.filter
+	} else if !m.palette.active && m.views.top().Kind == viewNetstat && (m.netstat.filtering || m.netstat.filter != "") {
+		prompt = "/" + m.netstat.filter
+	} else if !m.palette.active && m.views.top().Kind == viewMounts && (m.mounts.filtering || m.mounts.filter != "") {
+		prompt = "/" + m.mounts.filter
+	} else if !m.palette.active && m.views.top().Kind == viewMemory && (m.memory.filtering || m.memory.filter != "") {
+		prompt = "/" + m.memory.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
