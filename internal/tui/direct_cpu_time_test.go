@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,6 +56,21 @@ func TestDirectCPUFailureAndCancellationUseSafePresentation(t *testing.T) {
 	model, _ = updateDirect(model, directCPULoaded{request: request.stamp, nodeID: "node-id", node: "node", value: domain.CPUSnapshot{ProcessCountsKnown: true, RunningProcesses: 3}, err: context.Canceled})
 	assert.Contains(t, model.View().Content, "CPU sample canceled")
 	assert.Contains(t, model.View().Content, "Running processes: 3")
+}
+
+func TestDirectCPURetryShowsLoadingAndClearsOldReadError(t *testing.T) {
+	session := openCPUTimeSession(t)
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.session, model.sessionCtx = session, context.Background()
+	model.views = model.views.push(viewFrame{Kind: viewCPU, NodeID: "node-id", NodeTarget: "node"})
+	model.cpu = model.cpu.setResult("node", domain.CPUSnapshot{}, errors.New("old failure"))
+
+	model, command := updateDirect(model, keyPress('r'))
+	require.NotNil(t, command)
+	assert.Equal(t, directLoading, model.cpu.status)
+	assert.Empty(t, model.cpu.err)
+	assert.Contains(t, model.View().Content, "Sampling CPU")
 }
 
 func TestDirectTimeCheckValidatesInputAndUsesSession(t *testing.T) {
@@ -110,6 +126,49 @@ func TestDirectTimePermissionFailureAndPartialValuesAreShownSafely(t *testing.T)
 	model, _ = updateDirect(model, directTimeCheckLoaded{request: check.stamp, nodeID: "node-id", node: "node", server: "ntp.example", err: ports.ErrTimePermissionDenied})
 	assert.Contains(t, model.View().Content, "time check permission denied")
 	assert.NotContains(t, model.View().Content, "permission denied: ")
+}
+
+func TestDirectTimeRetryShowsLoadingAndKeepsExplicitCheckResult(t *testing.T) {
+	session := openCPUTimeSession(t)
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.session, model.sessionCtx = session, context.Background()
+	model.views = model.views.push(viewFrame{Kind: viewTime, NodeID: "node-id", NodeTarget: "node"})
+	model.time = model.time.setReadResult("node", domain.TimeSnapshot{}, errors.New("old failure"))
+	model.time.checkStatus = directReady
+	model.time.check = domain.TimeCheckResult{TimeSample: domain.TimeSample{Server: "ntp.example"}}
+
+	model, command := updateDirect(model, keyPress('r'))
+	require.NotNil(t, command)
+	assert.Equal(t, directLoading, model.time.status)
+	assert.Empty(t, model.time.err)
+	assert.Equal(t, directReady, model.time.checkStatus)
+	assert.Equal(t, "ntp.example", model.time.check.Server)
+	assert.Contains(t, model.View().Content, "Loading time status")
+	assert.Contains(t, model.View().Content, "ntp.example")
+}
+
+func TestDirectTimeReadProblemIsRenderedOnce(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.views = model.views.push(viewFrame{Kind: viewTime, NodeID: "node-id", NodeTarget: "node"})
+	request, _ := model.requests.begin("node:node-id:time", model.generation())
+	model, _ = updateDirect(model, directTimeLoaded{request: request.stamp, nodeID: "node-id", node: "node", value: domain.TimeSnapshot{TimeSample: domain.TimeSample{Problems: []string{"clock sample unavailable"}}}})
+	assert.Equal(t, 1, strings.Count(model.View().Content, "Problem: clock sample unavailable"))
+}
+
+func openCPUTimeSession(t *testing.T) *application.Session {
+	t.Helper()
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{
+			CPUReader:  &testkit.FakeCPUReader{},
+			TimeReader: &testkit.FakeTimeReader{},
+		}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return session
 }
 
 func TestDirectCPUAndTimeRejectStaleResultsAndCancelWhenViewCloses(t *testing.T) {

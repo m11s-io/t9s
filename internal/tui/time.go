@@ -126,9 +126,6 @@ func (m timeModel) rows() []string {
 		if m.err != "" {
 			rows = append(rows, "Problem: "+m.err)
 		}
-		for _, problem := range m.value.Problems {
-			rows = append(rows, "Problem: "+problem)
-		}
 	}
 	rows = append(rows, "", "SERVER CHECK (explicit)")
 	switch m.checkStatus {

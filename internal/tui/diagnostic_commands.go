@@ -455,8 +455,12 @@ func (m *directModel) refreshDirectDiagnostic(frame viewFrame) tea.Cmd {
 	case viewMemory:
 		return directMemoryCommand(m.session, request, frame.NodeID, frame.NodeTarget)
 	case viewCPU:
+		m.cpu.status = directLoading
+		m.cpu.err = ""
 		return directCPUCommand(m.session, request, frame.NodeID, frame.NodeTarget)
 	default:
+		m.time.status = directLoading
+		m.time.err = ""
 		return directTimeCommand(m.session, request, frame.NodeID, frame.NodeTarget)
 	}
 }
