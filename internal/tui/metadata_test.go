@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func deriveLegacyTestMetadata(model application.Model) shellMetadata {
+	return deriveShellMetadata(model.ContextName, model.Contexts, model.WritesEnabled, model.Nodes.Status, legacyHealthInput(model))
+}
+
 func TestDeriveShellMetadataUsesActiveContextAndNodeSnapshot(t *testing.T) {
 	model := application.Model{
 		ContextName: "prod",
@@ -25,13 +29,13 @@ func TestDeriveShellMetadataUsesActiveContextAndNodeSnapshot(t *testing.T) {
 	assert.Equal(t, shellMetadata{
 		Context: "prod", Cluster: "production", EndpointSummary: "2", NodeSummary: "2/3",
 		TalosVersion: "mixed", Health: "Degraded", Mode: "[RO]", AppVersion: "dev",
-	}, deriveShellMetadata(model))
+	}, deriveLegacyTestMetadata(model))
 }
 
 func TestDeriveShellMetadataDoesNotInventUnavailableValues(t *testing.T) {
 	model := application.Model{ContextName: "prod", Nodes: application.NodeState{Status: application.Loading}}
 
-	assert.Equal(t, shellMetadata{Context: "prod", Health: "Loading", Mode: "[RO]", AppVersion: "dev"}, deriveShellMetadata(model))
+	assert.Equal(t, shellMetadata{Context: "prod", Health: "Loading", Mode: "[RO]", AppVersion: "dev"}, deriveLegacyTestMetadata(model))
 }
 
 func TestDeriveShellMetadataReportsUniformTalosVersion(t *testing.T) {
@@ -39,7 +43,7 @@ func TestDeriveShellMetadataReportsUniformTalosVersion(t *testing.T) {
 		{Health: domain.HealthHealthy, Version: "v1.13.6"}, {Health: domain.HealthHealthy, Version: "v1.13.6"},
 	}}}}
 
-	metadata := deriveShellMetadata(model)
+	metadata := deriveLegacyTestMetadata(model)
 	assert.Equal(t, "v1.13.6", metadata.TalosVersion)
 	assert.Equal(t, "Healthy", metadata.Health)
 	assert.Equal(t, "2/2", metadata.NodeSummary)
@@ -48,7 +52,7 @@ func TestDeriveShellMetadataReportsUniformTalosVersion(t *testing.T) {
 func TestDeriveShellMetadataShowsReadWriteWhenWritesEnabled(t *testing.T) {
 	model := application.Model{ContextName: "prod", WritesEnabled: true, Nodes: application.NodeState{Status: application.Loading}}
 
-	metadata := deriveShellMetadata(model)
+	metadata := deriveLegacyTestMetadata(model)
 
 	assert.Equal(t, "[RW]", metadata.Mode)
 }
@@ -56,7 +60,7 @@ func TestDeriveShellMetadataShowsReadWriteWhenWritesEnabled(t *testing.T) {
 func TestDeriveShellMetadataShowsReadOnlyByDefault(t *testing.T) {
 	model := application.Model{ContextName: "prod", Nodes: application.NodeState{Status: application.Loading}}
 
-	metadata := deriveShellMetadata(model)
+	metadata := deriveLegacyTestMetadata(model)
 
 	assert.Equal(t, "[RO]", metadata.Mode)
 }

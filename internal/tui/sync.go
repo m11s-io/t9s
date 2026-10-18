@@ -23,7 +23,6 @@ func (m model) syncScreens(message application.Message) model {
 	case "node-services":
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 		m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
-		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 		return m
 	}
 	switch message.(type) {
@@ -32,7 +31,6 @@ func (m model) syncScreens(message application.Message) model {
 	case application.ContextsLoaded, application.NodesLoaded, application.LoadFailed,
 		application.RefreshNodes, application.UpgradeSucceeded:
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
-		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 	case application.ServicesLoaded, application.ServicesFailed, application.RefreshServices:
 		m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 	case application.KubernetesNodesLoaded, application.KubernetesNodesFailed:
@@ -43,7 +41,6 @@ func (m model) syncScreens(message application.Message) model {
 	case application.EtcdLoaded, application.EtcdFailed, application.RefreshEtcd,
 		application.EtcdActionSucceeded:
 		m.etcd = m.etcd.normalizeSelection(m.application.Etcd.Value.Members, m.etcd.control.Cursor())
-		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 	case application.OpenProcesses, application.RefreshProcesses, application.ProcessesLoaded, application.ProcessesFailed:
 		m.processes = m.processes.setState(m.application.Processes)
 	case application.OpenDisks, application.RefreshDisks, application.DisksLoaded, application.DisksFailed:
@@ -102,7 +99,6 @@ func (m model) syncAllScreens() model {
 	m.memory = m.memory.setState(m.application.Memory)
 	m.time = m.time.setState(m.application.Time)
 	m.cpu = m.cpu.setState(m.application.CPU)
-	m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 	m.resourceKinds = m.resourceKinds.setState(m.application.ResourceBrowser)
 	m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
 	m.logs = m.logs.setState(m.application.Logs)

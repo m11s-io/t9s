@@ -19,14 +19,14 @@ type shellMetadata struct {
 	AppVersion      string
 }
 
-func deriveShellMetadata(model application.Model) shellMetadata {
+func deriveShellMetadata(contextName string, contexts []domain.ClusterContext, writesEnabled bool, nodeStatus application.LoadStatus, healthInput application.HealthInput) shellMetadata {
 	mode := "[RO]"
-	if model.WritesEnabled {
+	if writesEnabled {
 		mode = "[RW]"
 	}
-	metadata := shellMetadata{Context: model.ContextName, Mode: mode, AppVersion: version.Version}
-	for _, clusterContext := range model.Contexts {
-		if clusterContext.Name != model.ContextName {
+	metadata := shellMetadata{Context: contextName, Mode: mode, AppVersion: version.Version}
+	for _, clusterContext := range contexts {
+		if clusterContext.Name != contextName {
 			continue
 		}
 		metadata.Cluster = clusterContext.Cluster
@@ -36,11 +36,10 @@ func deriveShellMetadata(model application.Model) shellMetadata {
 		break
 	}
 
-	nodes := model.Nodes.Value.Nodes
-	if len(nodes) > 0 {
+	if len(healthInput.Nodes.Nodes) > 0 {
 		ready := 0
 		versions := make(map[string]struct{})
-		for _, node := range nodes {
+		for _, node := range healthInput.Nodes.Nodes {
 			if node.Health == domain.HealthHealthy {
 				ready++
 			}
@@ -48,7 +47,7 @@ func deriveShellMetadata(model application.Model) shellMetadata {
 				versions[node.Version] = struct{}{}
 			}
 		}
-		metadata.NodeSummary = strconv.Itoa(ready) + "/" + strconv.Itoa(len(nodes))
+		metadata.NodeSummary = strconv.Itoa(ready) + "/" + strconv.Itoa(len(healthInput.Nodes.Nodes))
 		switch len(versions) {
 		case 1:
 			for version := range versions {
@@ -63,7 +62,7 @@ func deriveShellMetadata(model application.Model) shellMetadata {
 		}
 	}
 
-	switch model.Nodes.Status {
+	switch nodeStatus {
 	case application.Loading, application.Idle:
 		metadata.Health = "Loading"
 	case application.Failed:
@@ -72,10 +71,19 @@ func deriveShellMetadata(model application.Model) shellMetadata {
 		metadata.Health = "Degraded"
 	case application.Ready:
 		metadata.Health = "Healthy"
-		for _, node := range nodes {
+		for _, node := range healthInput.Nodes.Nodes {
 			if node.Health != domain.HealthHealthy {
 				metadata.Health = "Degraded"
 				break
+			}
+		}
+		for _, diagnosis := range application.EvaluateObservations(healthInput) {
+			if diagnosis.Severity == domain.SeverityCritical || diagnosis.Severity == domain.SeverityWarning {
+				metadata.Health = "Degraded"
+				break
+			}
+			if diagnosis.Severity == domain.SeverityUnknown {
+				metadata.Health = "Degraded"
 			}
 		}
 	}

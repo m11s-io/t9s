@@ -19,7 +19,7 @@ func problemsTestDiagnoses() []domain.Diagnosis {
 }
 
 func renderProblems(width int, diagnoses []domain.Diagnosis) string {
-	return newProblemsModel(diagnoses).view(width)
+	return newProblemsModel().view(width, diagnoses)
 }
 
 func TestProblemsRenderSemanticColumns(t *testing.T) {
@@ -37,21 +37,22 @@ func TestProblemsRenderSemanticColumns(t *testing.T) {
 }
 
 func TestProblemsRenderEmptyState(t *testing.T) {
-	model := newProblemsModel(nil)
-	rendered := model.viewSized(contentSize{Width: 80, Height: 10})
+	model := newProblemsModel()
+	rendered := model.viewSized(contentSize{Width: 80, Height: 10}, nil)
 	assert.Equal(t, "No problems", rendered)
 }
 
 func TestProblemsFilterMatchesResourceName(t *testing.T) {
-	problems := newProblemsModel(problemsTestDiagnoses())
+	diagnoses := problemsTestDiagnoses()
+	problems := newProblemsModel()
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('w'), keyPress('o'), keyPress('r'),
 		{Code: tea.KeyEnter},
 	} {
-		problems = problems.update(message)
+		problems = problems.update(message, diagnoses)
 	}
 
-	rendered := problems.view(120)
+	rendered := problems.view(120, diagnoses)
 
 	assert.Contains(t, rendered, "worker-1")
 	assert.NotContains(t, rendered, "cp-2")

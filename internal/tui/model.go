@@ -123,7 +123,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		memory:            newMemoryModel(applicationModel.Memory),
 		time:              newTimeModel(applicationModel.Time),
 		cpu:               newCPUModel(applicationModel.CPU),
-		problems:          newProblemsModel(application.EvaluateHealth(applicationModel)),
+		problems:          newProblemsModel(),
 		resourceKinds:     newResourceKindsModel(applicationModel.ResourceBrowser),
 		resourceInstances: newResourceInstancesModel(applicationModel.ResourceBrowser),
 		resourceDetail:    newResourceDetailModel(),
@@ -309,7 +309,6 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				case commandProblems:
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewProblems, Label: "problems"})
-					m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 					return m, nil
 				case commandResources:
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewResourceKinds, Label: "resources"})
@@ -776,7 +775,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewProblems {
 			if (key == "enter" || key == "d") && !m.problems.filtering {
-				if diagnosis, ok := m.problems.selected(); ok {
+				if diagnosis, ok := m.problems.selected(application.EvaluateObservations(legacyHealthInput(m.application))); ok {
 					switch diagnosis.ResourceKind {
 					case "node":
 						for index, node := range m.nodes.visibleNodes(m.application.Nodes.Value.Nodes) {
@@ -793,7 +792,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-			m.problems = m.problems.update(message)
+			m.problems = m.problems.update(message, application.EvaluateObservations(legacyHealthInput(m.application)))
 			return m, nil
 		}
 		if m.views.top().Kind == viewResourceKinds {
@@ -1087,7 +1086,7 @@ func (m model) View() tea.View {
 	}
 	header := renderK9sHeader(
 		layoutK9sHeader(layout.Width),
-		deriveShellMetadata(m.application),
+		deriveShellMetadata(m.application.ContextName, m.application.Contexts, m.application.WritesEnabled, m.application.Nodes.Status, legacyHealthInput(m.application)),
 		actionHints(headerKind, m.writeActionsEnabled()),
 		m.styles.k9s,
 	)
@@ -1180,9 +1179,9 @@ func (m model) activeContent(size contentSize) string {
 	case viewMemory:
 		view.WriteString(m.memory.viewSized(innerSize))
 	case viewOverview:
-		view.WriteString(renderOverview(m.application))
+		view.WriteString(renderOverview(legacyHealthInput(m.application)))
 	case viewProblems:
-		view.WriteString(m.problems.viewSized(innerSize))
+		view.WriteString(m.problems.viewSized(innerSize, application.EvaluateObservations(legacyHealthInput(m.application))))
 	case viewResourceKinds:
 		view.WriteString(m.resourceKinds.viewSized(innerSize))
 	case viewResourceInstances:

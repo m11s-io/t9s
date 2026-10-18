@@ -18,13 +18,13 @@ func TestSyncLogBatchLeavesUnrelatedScreensUntouched(t *testing.T) {
 		nodes:    nodesModel{selectedID: "node"},
 		logs:     newLogsModel(application.LogState{}),
 		dmesg:    newDmesgModel(application.DmesgState{Lines: []string{"old dmesg"}}),
-		problems: newProblemsModel([]domain.Diagnosis{{Summary: "retained diagnosis"}}),
+		problems: newProblemsModel(),
 	}
 	m = m.syncScreens(application.ServiceLogBatchLoaded{})
 	assert.Equal(t, []string{"new log"}, m.logs.state.Lines)
 	assert.Equal(t, []string{"old dmesg"}, m.dmesg.state.Lines)
 	assert.Equal(t, "node", m.nodes.selectedID)
-	assert.Equal(t, "retained diagnosis", m.problems.diagnoses[0].Summary)
+	assert.Empty(t, m.problems.filter)
 }
 
 func TestSyncNodesUpdatesHealthWithoutSyncingServices(t *testing.T) {
@@ -35,11 +35,11 @@ func TestSyncNodesUpdatesHealthWithoutSyncingServices(t *testing.T) {
 		},
 		nodes:    newNodesModel(),
 		services: newServicesModel(),
-		problems: newProblemsModel(nil),
+		problems: newProblemsModel(),
 	}
 	m = m.syncScreens(application.NodesLoaded{})
 	assert.Equal(t, "node", m.nodes.selectedValue(m.application.Nodes.Value.Nodes).ID)
-	assert.Len(t, m.problems.diagnoses, 1)
+	assert.Len(t, application.EvaluateObservations(legacyHealthInput(m.application)), 1)
 	assert.Empty(t, m.services.selectedKey)
 }
 
@@ -47,9 +47,9 @@ func TestSyncDiskActionSuccessUpdatesDiskLoadingStatusOnly(t *testing.T) {
 	m := model{
 		application: application.Model{Disks: application.DisksState{Status: application.Loading}},
 		disks:       newDisksModel(application.DisksState{Status: application.Ready}),
-		problems:    newProblemsModel([]domain.Diagnosis{{Summary: "retained diagnosis"}}),
+		problems:    newProblemsModel(),
 	}
 	m = m.syncScreens(application.ActionSucceeded{})
 	assert.Equal(t, application.Loading, m.disks.state.Status)
-	assert.Equal(t, "retained diagnosis", m.problems.diagnoses[0].Summary)
+	assert.Empty(t, m.problems.filter)
 }

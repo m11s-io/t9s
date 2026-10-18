@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"image/color"
-	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
-	"github.com/m11s-io/t9s/internal/version"
 )
 
 type directModel struct {
@@ -30,6 +28,7 @@ type directModel struct {
 	services servicesModel
 	events   eventsModel
 	etcd     etcdModel
+	problems problemsModel
 	contexts contextsModel
 	palette  commandModel
 	views    viewStack
@@ -60,6 +59,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		services: newServicesModel(),
 		events:   newEventsModel(),
 		etcd:     newEtcdModel(),
+		problems: newProblemsModel(),
 		palette:  newCommandModel(),
 		views:    newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:   defaultStyles(), width: 120, height: 40, splash: true,
@@ -273,7 +273,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
@@ -334,6 +334,39 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, directEtcdCommand(m.session, request)
 			}
 			m.etcd = m.etcd.update(message, m.cluster.etcd.Value.Members)
+		} else if m.views.top().Kind == viewProblems {
+			diagnoses := application.EvaluateObservations(directHealthInput(m.cluster))
+			m.problems = m.problems.normalizeSelection(m.problems.control.Cursor(), diagnoses)
+			if (message.String() == "enter" || message.String() == "d") && !m.problems.filtering {
+				if diagnosis, ok := m.problems.selected(diagnoses); ok {
+					switch diagnosis.ResourceKind {
+					case "node":
+						m.nodes.filter = ""
+						m.nodes.filtering = false
+						m.nodes.selectedID = diagnosis.ResourceID
+						m.nodes = m.nodes.selectID(diagnosis.ResourceID, m.cluster.nodes.Value.Nodes)
+						m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(diagnosis.ResourceName)})
+					case "etcd-member":
+						m.etcd.filter = ""
+						m.etcd.filtering = false
+						for index, member := range m.cluster.etcd.Value.Members {
+							if fmt.Sprint(member.MemberID) == diagnosis.ResourceID {
+								m.etcd.selectedKey = etcdMemberKey(member)
+								m.etcd = m.etcd.normalizeSelection(m.cluster.etcd.Value.Members, index)
+								break
+							}
+						}
+						m.views = m.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
+					}
+				}
+				return m, nil
+			}
+			if message.String() == "q" && !m.problems.filtering {
+				return m, m.cleanup(tea.Quit())
+			}
+			m.problems = m.problems.update(message, diagnoses)
+		} else if m.views.top().Kind == viewOverview && message.String() == "q" {
+			return m, m.cleanup(tea.Quit())
 		}
 	}
 	return m, nil
@@ -397,28 +430,7 @@ func (m directModel) View() tea.View {
 	if m.contexts.active {
 		headerKind = viewContexts
 	}
-	health := "Loading"
-	switch m.cluster.nodes.Status {
-	case application.Failed:
-		health = "Unavailable"
-	case application.Partial:
-		health = "Degraded"
-	case application.Ready:
-		health = "Healthy"
-	}
-	metadata := shellMetadata{Context: m.cluster.contextName, Mode: "[RO]", Health: health, AppVersion: version.Version}
-	if m.options.WritesEnabled {
-		metadata.Mode = "[RW]"
-	}
-	for _, clusterContext := range m.cluster.contexts {
-		if clusterContext.Name == m.cluster.contextName {
-			metadata.Cluster = clusterContext.Cluster
-			if len(clusterContext.Endpoints) > 0 {
-				metadata.EndpointSummary = strconv.Itoa(len(clusterContext.Endpoints))
-			}
-			break
-		}
-	}
+	metadata := deriveShellMetadata(m.cluster.contextName, m.cluster.contexts, m.options.WritesEnabled, m.cluster.nodes.Status, directHealthInput(m.cluster))
 	content := ""
 	if m.contexts.active {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "contexts")
@@ -441,6 +453,10 @@ func (m directModel) View() tea.View {
 			content = m.events.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.events)
 		} else if m.views.top().Kind == viewEtcd {
 			content = m.etcd.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.etcd)
+		} else if m.views.top().Kind == viewOverview {
+			content = withHealthNotices(renderOverview(directHealthInput(m.cluster)), directHealthNotices(m.cluster))
+		} else if m.views.top().Kind == viewProblems {
+			content = withHealthNotices(m.problems.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, application.EvaluateObservations(directHealthInput(m.cluster))), directHealthNotices(m.cluster))
 		} else {
 			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
 		}
@@ -475,6 +491,8 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.events.filter
 	} else if !m.palette.active && m.views.top().Kind == viewEtcd && (m.etcd.filtering || m.etcd.filter != "") {
 		prompt = "/" + m.etcd.filter
+	} else if !m.palette.active && m.views.top().Kind == viewProblems && (m.problems.filtering || m.problems.filter != "") {
+		prompt = "/" + m.problems.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
@@ -513,6 +531,9 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.etcd.filtering = false
 	m.etcd.selectedKey = ""
 	m.etcd.control.SetCursor(0)
+	m.problems.filter = ""
+	m.problems.filtering = false
+	m.problems.control.SetCursor(0)
 	m.session = nil
 	m.view.notice = ""
 	m.palette = m.palette.close()

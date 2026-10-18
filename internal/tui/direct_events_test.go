@@ -124,7 +124,7 @@ func TestDirectEventsPartialProblemsSurviveWithoutAggregateError(t *testing.T) {
 func TestDirectEventsPartialWarningStaysVisibleWhenFilterHidesProblems(t *testing.T) {
 	model := newDirectModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "healthy", Name: "healthy"}}}}
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "healthy", Name: "healthy", Health: domain.HealthHealthy}}}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 	request, _ := model.requests.begin("cluster-events", model.generation())
 	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{
