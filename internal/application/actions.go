@@ -572,13 +572,13 @@ func readUpgradeUpdate(updates <-chan upgradeStreamResult, generation uint64, ta
 			if !ok {
 				return UpgradeFailed{Generation: generation, Target: target, Err: fmt.Errorf("upgrade stream closed without a terminal result")}
 			}
+			if update.Done && update.Outcome == ports.UpgradeOutcomeAppliedWithRecoveryWarning {
+				return UpgradeAppliedWithRecoveryWarning{Generation: generation, Target: target, Warning: update.Warning}
+			}
 			if update.Err != nil {
 				return UpgradeFailed{Generation: generation, Target: target, Err: update.Err}
 			}
 			if update.Done {
-				if update.Outcome == ports.UpgradeOutcomeAppliedWithRecoveryWarning {
-					return UpgradeAppliedWithRecoveryWarning{Generation: generation, Target: target, Warning: update.Warning}
-				}
 				outcome := domain.OperationCompleted
 				if update.Outcome == ports.UpgradeOutcomeAccepted {
 					outcome = domain.OperationAccepted

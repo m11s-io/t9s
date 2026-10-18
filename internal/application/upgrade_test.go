@@ -91,6 +91,35 @@ func TestUpgradeAppliedWithRecoveryWarningCompletesWithoutUpgradeError(t *testin
 	assert.Nil(t, effect)
 }
 
+func TestUpgradeBridgePreservesRecoveryWarningWithInspectableError(t *testing.T) {
+	cleanupErr := errors.New("uncordon unavailable")
+	terminal := ports.UpgradeResult{
+		Err:     cleanupErr,
+		Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning,
+		Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually.",
+		Done:    true,
+	}
+	results := make(chan ports.UpgradeResult, 1)
+	results <- terminal
+	close(results)
+	model, _ := application.NewModel("prod")
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+		return &controlledUpgradeStream{results: results, terminal: terminal}
+	}}}})
+
+	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
+	model, next := application.Update(model, started)
+	require.NotNil(t, next)
+	completed := next(t.Context(), application.Dependencies{})
+
+	assert.IsType(t, application.UpgradeAppliedWithRecoveryWarning{}, completed)
+	model, _ = application.Update(model, completed)
+	assert.False(t, model.Upgrade.Active)
+	assert.Empty(t, model.Upgrade.Err)
+	require.Len(t, model.ActionResults, 1)
+	assert.Contains(t, model.ActionResults[0].Warning, "recovery is pending")
+}
+
 func TestKubernetesRefreshPreservesRecoveryWarningWithoutSchedulingMutation(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}

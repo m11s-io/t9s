@@ -485,7 +485,7 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 		} else {
 			var recoveryErr *upgradeRecoveryError
 			if errors.As(err, &recoveryErr) {
-				emit(ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually.", Done: true})
+				emit(ports.UpgradeResult{Err: err, Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually.", Done: true})
 			} else {
 				emit(ports.UpgradeResult{Err: err, Done: true})
 			}

@@ -901,34 +901,40 @@ func TestSafeUpgradeMaintenancePreservesCleanupFailureAsRecoveryWarning(t *testi
 }
 
 func TestNodeControllerUpgradeStreamRetainsCleanupWarningInTerminalResult(t *testing.T) {
+	cleanupErr := errors.New("uncordon unavailable")
 	client := &fakeLifecycleMaintenanceClient{
 		fakeNodeControlClient: &fakeNodeControlClient{},
 		version:               "v1.13.3",
-		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}, uncordonErr: errors.New("uncordon unavailable")},
+		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}, uncordonErr: cleanupErr},
 	}
 
-	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4"))
+	stream := newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4")
+	last, err := stream.Wait(t.Context())
 
-	require.NotEmpty(t, results)
-	last := results[len(results)-1]
-	assert.NoError(t, last.Err)
+	require.NoError(t, err)
+	assert.ErrorIs(t, last.Err, cleanupErr)
 	assert.Equal(t, ports.UpgradeOutcomeAppliedWithRecoveryWarning, last.Outcome)
 	assert.NotEmpty(t, last.Warning)
 	assert.True(t, last.Done)
+	results := upgradeResults(stream)
+	require.NotEmpty(t, results)
+	assert.ErrorIs(t, results[len(results)-1].Err, cleanupErr)
+	assert.Equal(t, ports.UpgradeOutcomeAppliedWithRecoveryWarning, results[len(results)-1].Outcome)
 }
 
 func TestNodeControllerUpgradeStreamReportsRecoveryWarningAfterInstall(t *testing.T) {
+	recoveryErr := errors.New("node still booting")
 	client := &fakeLifecycleMaintenanceClient{
 		fakeNodeControlClient: &fakeNodeControlClient{},
 		version:               "v1.13.3",
-		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}, waitTalosErr: errors.New("node still booting")},
+		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}, waitTalosErr: recoveryErr},
 	}
 
 	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4"))
 
 	require.NotEmpty(t, results)
 	last := results[len(results)-1]
-	assert.NoError(t, last.Err)
+	assert.ErrorIs(t, last.Err, recoveryErr)
 	assert.Equal(t, ports.UpgradeOutcomeAppliedWithRecoveryWarning, last.Outcome)
 	assert.Contains(t, last.Warning, "recovery is pending")
 	assert.True(t, last.Done)
