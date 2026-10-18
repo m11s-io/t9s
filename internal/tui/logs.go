@@ -84,6 +84,20 @@ func (m logsModel) setStreamState(status application.LoadStatus, lines []string,
 	return m
 }
 
+// syncViewport applies content and size changes to the stored viewport before
+// the next input event. View remains a pure renderer over a value copy.
+func (m logsModel) syncViewport(size contentSize) logsModel {
+	if size.Height <= 0 {
+		return m
+	}
+	m.viewport.SetHeight(max(0, size.Height-1))
+	m.viewport.SetContentLines(m.renderedLines(max(0, size.Width)))
+	if m.following {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
 func (m logsModel) update(message tea.KeyPressMsg) logsModel {
 	key := message.String()
 	if m.filtering {

@@ -15,6 +15,7 @@ func (m *directModel) openDirectServiceLogs(service domain.ServiceSnapshot) tea.
 	m.logStream = directLogStreamState{request: request, target: target, status: application.Loading}
 	m.logs = newDirectServiceLogsModel()
 	m.views = m.views.push(viewFrame{Kind: viewServiceLogs, Label: fallback(service.Name) + "@" + fallback(service.Node) + " > logs"})
+	m.syncDirectStreamViewports()
 	return directOpenServiceLogsCommand(m.session, request, target)
 }
 
@@ -24,6 +25,7 @@ func (m *directModel) openDirectDmesg(node string) tea.Cmd {
 	m.dmesgStream = directDmesgStreamState{request: request, target: target, status: application.Loading}
 	m.dmesg = newDirectDmesgModel()
 	m.views = m.views.push(viewFrame{Kind: viewDmesg, Label: fallback(node) + " > dmesg"})
+	m.syncDirectStreamViewports()
 	return directOpenDmesgCommand(m.session, request, target)
 }
 
@@ -50,6 +52,7 @@ func (m *directModel) reconnectDirectLogs(dmesg bool) tea.Cmd {
 		request, _ := m.requests.beginWithContext("dmesg", m.generation(), m.sessionCtx)
 		m.dmesgStream = directDmesgStreamState{request: request, target: target, status: application.Loading}
 		m.dmesg = m.dmesg.setStreamState(application.Loading, nil, "", false)
+		m.syncDirectStreamViewports()
 		return directOpenDmesgCommand(m.session, request, target)
 	}
 	target := m.logStream.target
@@ -57,7 +60,19 @@ func (m *directModel) reconnectDirectLogs(dmesg bool) tea.Cmd {
 	request, _ := m.requests.beginWithContext("service-logs", m.generation(), m.sessionCtx)
 	m.logStream = directLogStreamState{request: request, target: target, status: application.Loading}
 	m.logs = m.logs.setStreamState(application.Loading, nil, "", false)
+	m.syncDirectStreamViewports()
 	return directOpenServiceLogsCommand(m.session, request, target)
+}
+
+func (m *directModel) syncDirectStreamViewports() {
+	layout := layoutShell(m.width, m.height)
+	size := contentSize{Width: layout.Width, Height: layout.ContentHeight}
+	if m.views.top().Kind == viewServiceLogs {
+		m.logs = m.logs.syncViewport(size)
+	}
+	if m.views.top().Kind == viewDmesg {
+		m.dmesg = m.dmesg.syncViewport(size)
+	}
 }
 
 func appendBoundedLines(current, batch []string, limit int) []string {

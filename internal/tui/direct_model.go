@@ -129,6 +129,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = message.Width, message.Height
 		m.resizeDirectResourceDetail()
+		m.syncDirectStreamViewports()
 		return m, nil
 	case directContextsLoaded:
 		if !m.requests.current(message.request) {
@@ -307,6 +308,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.logStream.status, m.logStream.err = application.Failed, "Service logs are unavailable"
 			m.logs = m.logs.setStreamState(application.Failed, nil, m.logStream.err, false)
+			m.syncDirectStreamViewports()
 			m.requests.cancelSlot("service-logs")
 			return m, nil
 		}
@@ -326,6 +328,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.logStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
 		m.logs = m.logs.setStreamState(m.logStream.status, lines, m.logStream.err, m.logStream.eof)
+		m.syncDirectStreamViewports()
 		if !m.logStream.eof && m.logStream.status != application.Failed {
 			return m, directServiceLogNextCommand(m.logStream.stream, m.logStream.request)
 		}
@@ -348,6 +351,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream is unavailable"
 			m.dmesg = m.dmesg.setStreamState(application.Failed, nil, m.dmesgStream.err, false)
+			m.syncDirectStreamViewports()
 			m.requests.cancelSlot("dmesg")
 			return m, nil
 		}
@@ -367,6 +371,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.dmesgStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
 		m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, lines, m.dmesgStream.err, m.dmesgStream.eof)
+		m.syncDirectStreamViewports()
 		if !m.dmesgStream.eof && m.dmesgStream.status != application.Failed {
 			return m, directDmesgNextCommand(m.dmesgStream.stream, m.dmesgStream.request)
 		}
@@ -376,9 +381,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.dmesg {
 			m.dmesgStream.err = ""
 			m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, nil, "", false)
+			m.syncDirectStreamViewports()
 		} else {
 			m.logStream.err = ""
 			m.logs = m.logs.setStreamState(m.logStream.status, nil, "", false)
+			m.syncDirectStreamViewports()
 		}
 		return m, nil
 	case directResourceKindsLoaded, directResourceInstancesLoaded, directResourceDetailLoaded:
@@ -459,6 +466,13 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		}
 		if m.views.top().Kind == viewNodeDetail || m.views.top().Kind == viewServiceDetail {
+			if m.views.top().Kind == viewServiceDetail && message.String() == "l" && m.session != nil {
+				if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
+					return m, m.openDirectServiceLogs(service)
+				}
+				m.view.notice = "Service unavailable"
+				return m, nil
+			}
 			if message.String() == "esc" || message.String() == "q" {
 				m.popDirectView()
 			}
@@ -567,10 +581,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.popDirectView()
 				return m, nil
 			}
-			if message.String() == "r" && m.session != nil {
+			if message.String() == "r" && m.session != nil && !m.logs.filtering {
 				return m, m.reconnectDirectLogs(false)
 			}
 			m.logs = m.logs.update(message)
+			m.syncDirectStreamViewports()
 			if m.logs.clearRequested {
 				m.logs.clearRequested = false
 				return m, func() tea.Msg { return directClearLogs{} }
@@ -583,10 +598,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.popDirectView()
 				return m, nil
 			}
-			if message.String() == "r" && m.session != nil {
+			if message.String() == "r" && m.session != nil && !m.dmesg.filtering {
 				return m, m.reconnectDirectLogs(true)
 			}
 			m.dmesg = m.dmesg.update(message)
+			m.syncDirectStreamViewports()
 			if m.dmesg.clearRequested {
 				m.dmesg.clearRequested = false
 				return m, func() tea.Msg { return directClearLogs{dmesg: true} }

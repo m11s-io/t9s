@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -267,4 +268,89 @@ func TestDirectLogStreamClosesOnContextSwitchAndQuit(t *testing.T) {
 			assert.Equal(t, int32(1), stream.closes.Load())
 		})
 	}
+}
+
+func TestDirectLogReconnectKeyIsTypedIntoActiveFilter(t *testing.T) {
+	for _, kind := range []viewKind{viewServiceLogs, viewDmesg} {
+		t.Run(map[viewKind]string{viewServiceLogs: "logs", viewDmesg: "dmesg"}[kind], func(t *testing.T) {
+			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model.session = &application.Session{}
+			model.sessionCtx = context.Background()
+			model.views = model.views.replaceRoot(viewFrame{Kind: kind, Label: "stream"})
+			model.logs.filtering = kind == viewServiceLogs
+			model.dmesg.filtering = kind == viewDmesg
+			updated, command := updateDirect(model, keyPress('r'))
+			require.Nil(t, command)
+			if kind == viewServiceLogs {
+				assert.Equal(t, "r", updated.logs.filter)
+				updated, command = updateDirect(updated, keyPress('C'))
+				assert.Nil(t, command)
+				assert.Equal(t, "rC", updated.logs.filter)
+				assert.Empty(t, updated.logs.state.Lines)
+			} else {
+				assert.Equal(t, "r", updated.dmesg.filter)
+				updated, command = updateDirect(updated, keyPress('C'))
+				assert.Nil(t, command)
+				assert.Equal(t, "rC", updated.dmesg.filter)
+				assert.Empty(t, updated.dmesg.state.Lines)
+			}
+		})
+	}
+}
+
+func TestDirectServiceDetailLogsUsePinnedFrameService(t *testing.T) {
+	opened := domain.ServiceSnapshot{Node: "node-a", Name: "api"}
+	other := domain.ServiceSnapshot{Node: "node-b", Name: "worker"}
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.session = &application.Session{}
+	model.sessionCtx = context.Background()
+	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{opened, other}}}
+	model.services = newServicesModel().normalizeSelection(model.cluster.services.Value.Services, 1)
+	model.services.filter = "work"
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServiceDetail, Label: "api@node-a", ServiceKey: serviceKey(opened)})
+	model, command := updateDirect(model, keyPress('l'))
+	require.NotNil(t, command)
+	assert.Equal(t, viewServiceLogs, model.views.top().Kind)
+	assert.Equal(t, domain.LogRequest{Node: opened.Node, Service: opened.Name}, model.logStream.target)
+}
+
+func TestDirectServiceDetailLogsDoNotRetargetWhenPinnedServiceDisappears(t *testing.T) {
+	opened := domain.ServiceSnapshot{Node: "node-a", Name: "api"}
+	other := domain.ServiceSnapshot{Node: "node-b", Name: "worker"}
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.session = &application.Session{}
+	model.sessionCtx = context.Background()
+	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{other}}}
+	model.services = newServicesModel().normalizeSelection(model.cluster.services.Value.Services, 0)
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServiceDetail, Label: "api@node-a", ServiceKey: serviceKey(opened)})
+	model, command := updateDirect(model, keyPress('l'))
+	assert.Nil(t, command)
+	assert.Equal(t, viewServiceDetail, model.views.top().Kind)
+	assert.Contains(t, ansi.Strip(model.View().Content), "Service unavailable")
+}
+
+func TestDirectLogViewportScrollAndResizeKeepPosition(t *testing.T) {
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%02d", i+1)
+	}
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServiceLogs, Label: "api@node-a > logs"})
+	model.logs = model.logs.setStreamState(application.Ready, lines, "", false)
+	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 60, Height: 14})
+	model, _ = updateDirect(model, keyPress('G'))
+	_ = model.View()
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyUp})
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "line-99")
+	assert.NotContains(t, content, "line-01")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyDown})
+	content = ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "line-100")
+	assert.NotContains(t, content, "line-01")
+	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 60, Height: 18})
+	content = ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "line-92", "resize keeps the stored scroll offset")
+	assert.NotContains(t, content, "line-01")
 }
