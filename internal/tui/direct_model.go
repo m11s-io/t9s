@@ -22,20 +22,23 @@ type directModel struct {
 	session              *application.Session
 	generationCounter    uint64
 
-	cluster  directClusterState
-	view     directViewState
-	nodes    nodesModel
-	services servicesModel
-	events   eventsModel
-	etcd     etcdModel
-	problems problemsModel
-	contexts contextsModel
-	palette  commandModel
-	views    viewStack
-	styles   styles
-	width    int
-	height   int
-	splash   bool
+	cluster   directClusterState
+	view      directViewState
+	nodes     nodesModel
+	services  servicesModel
+	events    eventsModel
+	etcd      etcdModel
+	problems  problemsModel
+	contexts  contextsModel
+	palette   commandModel
+	processes processesModel
+	disks     disksModel
+	network   networkModel
+	views     viewStack
+	styles    styles
+	width     int
+	height    int
+	splash    bool
 }
 
 func newDirectModel(parent context.Context, client *application.Client, options LaunchOptions) directModel {
@@ -55,14 +58,17 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 			etcd:        directEtcdState{Status: directLoading},
 			kubernetes:  directKubernetesState{Status: directLoading},
 		},
-		nodes:    newNodesModel(),
-		services: newServicesModel(),
-		events:   newEventsModel(),
-		etcd:     newEtcdModel(),
-		problems: newProblemsModel(),
-		palette:  newCommandModel(),
-		views:    newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
-		styles:   defaultStyles(), width: 120, height: 40, splash: true,
+		nodes:     newNodesModel(),
+		services:  newServicesModel(),
+		events:    newEventsModel(),
+		etcd:      newEtcdModel(),
+		problems:  newProblemsModel(),
+		processes: newDirectProcessesModel(),
+		disks:     newDirectDisksModel(),
+		network:   newDirectNetworkModel(),
+		palette:   newCommandModel(),
+		views:     newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
+		styles:    defaultStyles(), width: 120, height: 40, splash: true,
 	}
 }
 
@@ -232,6 +238,9 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.cluster.nodes.Value = application.EnrichNodes(m.cluster.nodes.Value, state.Nodes)
 		m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
 		return m, nil
+	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded:
+		m.applyDiagnosticResult(message)
+		return m, nil
 	case directRunCommand:
 		return m, m.runClusterCommand(message.value)
 	case tea.KeyPressMsg:
@@ -273,14 +282,17 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
 		}
+		if command, handled := m.handleDiagnosticKey(message); handled {
+			return m, command
+		}
 		if m.views.top().Kind == viewNodeDetail || m.views.top().Kind == viewServiceDetail {
 			if message.String() == "esc" || message.String() == "q" {
-				m.views, _ = m.views.pop()
+				m.popDirectView()
 			}
 			return m, nil
 		}
@@ -296,6 +308,9 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if message.String() == "r" && !m.nodes.filtering && m.session != nil {
 				return m, m.refreshDirectNodes()
+			}
+			if command, handled := m.handleNodeDiagnosticKey(message); handled {
+				return m, command
 			}
 			if message.String() == "space" && !m.options.WritesEnabled && !m.nodes.filtering {
 				return m, nil
@@ -438,7 +453,9 @@ func (m directModel) View() tea.View {
 	} else if m.splash {
 		content = "t9s\nInspect Talos clusters"
 	} else {
-		if m.views.top().Kind == viewNodeDetail {
+		if diagnosticContent, handled := m.directDiagnosticContent(contentSize{Width: layout.Width, Height: layout.ContentHeight}); handled {
+			content = diagnosticContent
+		} else if m.views.top().Kind == viewNodeDetail {
 			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
 		} else if m.views.top().Kind == viewServiceDetail {
 			if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
@@ -494,6 +511,12 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.etcd.filter
 	} else if !m.palette.active && m.views.top().Kind == viewProblems && (m.problems.filtering || m.problems.filter != "") {
 		prompt = "/" + m.problems.filter
+	} else if !m.palette.active && m.views.top().Kind == viewProcesses && (m.processes.filtering || m.processes.filter != "") {
+		prompt = "/" + m.processes.filter
+	} else if !m.palette.active && m.views.top().Kind == viewDisks && (m.disks.filtering || m.disks.filter != "") {
+		prompt = "/" + m.disks.filter
+	} else if !m.palette.active && m.views.top().Kind == viewNetwork && (m.network.filtering || m.network.filter != "") {
+		prompt = "/" + m.network.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))

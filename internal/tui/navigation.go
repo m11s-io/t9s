@@ -38,6 +38,11 @@ type viewFrame struct {
 	Kind       viewKind
 	Label      string
 	ServiceKey string
+	NodeID     string
+	NodeTarget string
+	ProcessPID int32
+	DeviceName string
+	LinkName   string
 }
 
 type viewStack []viewFrame

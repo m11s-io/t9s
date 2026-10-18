@@ -10,20 +10,62 @@ import (
 )
 
 type disksModel struct {
-	state     application.DisksState
+	status    directLoadStatus
+	values    domain.DiskSet
+	node      string
+	err       string
 	filter    string
 	filtering bool
 	control   listControl
 }
 
 func newDisksModel(state application.DisksState) disksModel {
-	return (disksModel{state: state}).normalizeSelection(0)
+	return (disksModel{status: directLoading}).setState(state)
 }
+
+func newDirectDisksModel() disksModel { return disksModel{status: directLoading} }
 
 func (m disksModel) setState(state application.DisksState) disksModel {
 	previousIndex := m.control.Cursor()
-	m.state = state
+	m.values, m.node, m.err = state.Value, state.Node, state.Err
+	switch state.Status {
+	case application.Loading, application.Idle:
+		m.status = directLoading
+	case application.Partial:
+		m.status = directPartial
+	case application.Failed:
+		m.status = directFailed
+	default:
+		m.status = directReady
+	}
 	return m.normalizeSelection(previousIndex)
+}
+
+func (m disksModel) setResult(node string, values domain.DiskSet, err error) disksModel {
+	selectedDevice, hadSelection := m.selectedDevice()
+	previousIndex := m.control.Cursor()
+	m.node, m.values, m.err, m.status = node, values, "", directReady
+	if err != nil {
+		m.status, m.err = directFailed, "Disk data is unavailable"
+		if len(values.Disks) > 0 {
+			m.status, m.err = directPartial, "Some disk data is unavailable"
+		}
+	}
+	m = m.normalizeSelection(previousIndex)
+	if hadSelection {
+		for index, disk := range m.visibleDisks() {
+			if disk.DeviceName == selectedDevice {
+				m.control.SetCursor(index)
+				break
+			}
+		}
+	}
+	return m
+}
+
+func (m disksModel) selectedDevice() (string, bool) {
+	disk, ok := m.selected()
+	return disk.DeviceName, ok
 }
 
 func (m disksModel) startFilter(value string) disksModel {
@@ -96,10 +138,10 @@ func (m disksModel) selectedValue() domain.DiskSnapshot {
 func (m disksModel) visibleDisks() []domain.DiskSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Disks
+		return m.values.Disks
 	}
-	filtered := make([]domain.DiskSnapshot, 0, len(m.state.Value.Disks))
-	for _, disk := range m.state.Value.Disks {
+	filtered := make([]domain.DiskSnapshot, 0, len(m.values.Disks))
+	for _, disk := range m.values.Disks {
 		values := []string{disk.DeviceName, disk.Model, disk.Type, disk.Serial}
 		for _, value := range values {
 			if strings.Contains(strings.ToLower(value), query) {
@@ -120,19 +162,30 @@ func (m disksModel) view(width int) string {
 }
 
 func (m disksModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+	if m.status == directFailed {
+		return fallback(m.err)
 	}
 	disks := m.visibleDisks()
 	if len(disks) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+		if m.status == directLoading {
 			return "Loading disks…"
+		}
+		if m.status == directFailed || m.status == directPartial {
+			return fallback(m.err)
 		}
 		return "No disks"
 	}
-	rowCapacity := max(0, size.Height-1)
+	warningRows := 0
+	if m.status == directPartial {
+		warningRows = 1
+	}
+	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(disks), m.control.Cursor(), rowCapacity)
-	return renderDiskTable(size.Width, disks[start:end], m.control.Cursor()-start)
+	content := renderDiskTable(size.Width, disks[start:end], m.control.Cursor()-start)
+	if warningRows > 0 {
+		content = "DISKS PARTIAL: " + fallback(m.err) + "\n" + content
+	}
+	return content
 }
 
 const defaultDisksWidth = 120

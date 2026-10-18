@@ -48,7 +48,7 @@ func (m model) syncScreens(message application.Message) model {
 	case application.ActionSucceeded:
 		// Disk wipe completion starts a new disk read; other actions leave this
 		// screen alone.
-		if m.disks.state.Status != m.application.Disks.Status {
+		if m.disks.status != directStatusFromApplication(m.application.Disks.Status) {
 			m.disks = m.disks.setState(m.application.Disks)
 		}
 	case application.OpenNetwork, application.RefreshNetwork, application.NetworkLoaded, application.NetworkFailed:
@@ -82,6 +82,19 @@ func (m model) syncScreens(message application.Message) model {
 		m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
 	}
 	return m
+}
+
+func directStatusFromApplication(status application.LoadStatus) directLoadStatus {
+	switch status {
+	case application.Loading, application.Idle:
+		return directLoading
+	case application.Partial:
+		return directPartial
+	case application.Failed:
+		return directFailed
+	default:
+		return directReady
+	}
 }
 
 func (m model) syncAllScreens() model {

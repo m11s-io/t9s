@@ -12,6 +12,7 @@ type directRunCommand struct{ value string }
 // runClusterCommand handles the root-owned cluster navigation aliases while
 // each screen is migrated in its own task.
 func (m *directModel) runClusterCommand(value string) tea.Cmd {
+	previous := m.views
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))
 	switch resolveCommand(value) {
 	case commandNodes:
@@ -31,6 +32,7 @@ func (m *directModel) runClusterCommand(value string) tea.Cmd {
 	default:
 		m.view.notice = unknownCommandNotice(value)
 	}
+	m.cancelClosedDirectDiagnostics(previous)
 	return nil
 }
 

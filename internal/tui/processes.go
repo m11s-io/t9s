@@ -11,20 +11,65 @@ import (
 )
 
 type processesModel struct {
-	state     application.ProcessesState
+	status    directLoadStatus
+	values    domain.ProcessSet
+	node      string
+	err       string
 	filter    string
 	filtering bool
 	control   listControl
 }
 
 func newProcessesModel(state application.ProcessesState) processesModel {
-	return (processesModel{state: state}).normalizeSelection(0)
+	model := processesModel{status: directLoading}
+	return model.setState(state)
 }
+
+func newDirectProcessesModel() processesModel { return processesModel{status: directLoading} }
 
 func (m processesModel) setState(state application.ProcessesState) processesModel {
 	previousIndex := m.control.Cursor()
-	m.state = state
+	m.values = state.Value
+	m.err = state.Err
+	switch state.Status {
+	case application.Loading, application.Idle:
+		m.status = directLoading
+	case application.Partial:
+		m.status = directPartial
+	case application.Failed:
+		m.status = directFailed
+	default:
+		m.status = directReady
+	}
 	return m.normalizeSelection(previousIndex)
+}
+
+func (m processesModel) setResult(node string, values domain.ProcessSet, err error) processesModel {
+	selectedPID, hadSelection := m.selectedDirect()
+	previousIndex := m.control.Cursor()
+	m.node, m.values, m.err, m.status = node, values, "", directReady
+	if err != nil {
+		m.status = directFailed
+		m.err = "Process data is unavailable"
+		if len(values.Processes) > 0 {
+			m.status, m.err = directPartial, "Some process data is unavailable"
+		}
+	}
+	m = m.normalizeSelection(previousIndex)
+	if hadSelection {
+		for index, process := range m.visibleProcesses() {
+			if process.PID == selectedPID {
+				m.control.SetCursor(index)
+				break
+			}
+		}
+	}
+	return m
+}
+
+func (m processesModel) selectedDirect() (int32, bool) {
+	process, ok := m.selected()
+	return process.PID, ok
 }
 
 func (m processesModel) startFilter(value string) processesModel {
@@ -97,10 +142,10 @@ func (m processesModel) selectedValue() domain.ProcessSnapshot {
 func (m processesModel) visibleProcesses() []domain.ProcessSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Processes
+		return m.values.Processes
 	}
-	filtered := make([]domain.ProcessSnapshot, 0, len(m.state.Value.Processes))
-	for _, process := range m.state.Value.Processes {
+	filtered := make([]domain.ProcessSnapshot, 0, len(m.values.Processes))
+	for _, process := range m.values.Processes {
 		values := []string{process.Command, process.State, process.Executable}
 		for _, value := range values {
 			if strings.Contains(strings.ToLower(value), query) {
@@ -121,19 +166,33 @@ func (m processesModel) view(width int) string {
 }
 
 func (m processesModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+	if m.status == directFailed {
+		return fallback(m.err)
 	}
 	processes := m.visibleProcesses()
 	if len(processes) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+		if m.status == directLoading {
 			return "Loading processes…"
+		}
+		if m.status == directFailed {
+			return fallback(m.err)
+		}
+		if m.status == directPartial {
+			return fallback(m.err)
 		}
 		return "No processes"
 	}
-	rowCapacity := max(0, size.Height-1)
+	warningRows := 0
+	if m.status == directPartial {
+		warningRows = 1
+	}
+	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(processes), m.control.Cursor(), rowCapacity)
-	return renderProcessTable(size.Width, processes[start:end], m.control.Cursor()-start)
+	content := renderProcessTable(size.Width, processes[start:end], m.control.Cursor()-start)
+	if warningRows > 0 {
+		content = "PROCESSES PARTIAL: " + fallback(m.err) + "\n" + content
+	}
+	return content
 }
 
 const defaultProcessesWidth = 120

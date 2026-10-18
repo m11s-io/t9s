@@ -50,6 +50,6 @@ func TestSyncDiskActionSuccessUpdatesDiskLoadingStatusOnly(t *testing.T) {
 		problems:    newProblemsModel(),
 	}
 	m = m.syncScreens(application.ActionSucceeded{})
-	assert.Equal(t, application.Loading, m.disks.state.Status)
+	assert.Equal(t, directLoading, m.disks.status)
 	assert.Empty(t, m.problems.filter)
 }

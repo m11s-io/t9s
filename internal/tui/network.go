@@ -11,20 +11,62 @@ import (
 )
 
 type networkModel struct {
-	state     application.NetworkState
+	status    directLoadStatus
+	values    domain.NetworkSet
+	node      string
+	err       string
 	filter    string
 	filtering bool
 	control   listControl
 }
 
 func newNetworkModel(state application.NetworkState) networkModel {
-	return (networkModel{state: state}).normalizeSelection(0)
+	return (networkModel{status: directLoading}).setState(state)
 }
+
+func newDirectNetworkModel() networkModel { return networkModel{status: directLoading} }
 
 func (m networkModel) setState(state application.NetworkState) networkModel {
 	previousIndex := m.control.Cursor()
-	m.state = state
+	m.values, m.node, m.err = state.Value, state.Node, state.Err
+	switch state.Status {
+	case application.Loading, application.Idle:
+		m.status = directLoading
+	case application.Partial:
+		m.status = directPartial
+	case application.Failed:
+		m.status = directFailed
+	default:
+		m.status = directReady
+	}
 	return m.normalizeSelection(previousIndex)
+}
+
+func (m networkModel) setResult(node string, values domain.NetworkSet, err error) networkModel {
+	selectedName, hadSelection := m.selectedName()
+	previousIndex := m.control.Cursor()
+	m.node, m.values, m.err, m.status = node, values, "", directReady
+	if err != nil {
+		m.status, m.err = directFailed, "Network data is unavailable"
+		if len(values.Links) > 0 {
+			m.status, m.err = directPartial, "Some network data is unavailable"
+		}
+	}
+	m = m.normalizeSelection(previousIndex)
+	if hadSelection {
+		for index, link := range m.visibleLinks() {
+			if link.Name == selectedName {
+				m.control.SetCursor(index)
+				break
+			}
+		}
+	}
+	return m
+}
+
+func (m networkModel) selectedName() (string, bool) {
+	link, ok := m.selected()
+	return link.Name, ok
 }
 
 func (m networkModel) startFilter(value string) networkModel {
@@ -97,10 +139,10 @@ func (m networkModel) selectedValue() domain.LinkSnapshot {
 func (m networkModel) visibleLinks() []domain.LinkSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Links
+		return m.values.Links
 	}
-	filtered := make([]domain.LinkSnapshot, 0, len(m.state.Value.Links))
-	for _, link := range m.state.Value.Links {
+	filtered := make([]domain.LinkSnapshot, 0, len(m.values.Links))
+	for _, link := range m.values.Links {
 		if strings.Contains(strings.ToLower(link.Name), query) {
 			filtered = append(filtered, link)
 		}
@@ -117,19 +159,30 @@ func (m networkModel) view(width int) string {
 }
 
 func (m networkModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+	if m.status == directFailed {
+		return fallback(m.err)
 	}
 	links := m.visibleLinks()
 	if len(links) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+		if m.status == directLoading {
 			return "Loading network interfaces…"
+		}
+		if m.status == directFailed || m.status == directPartial {
+			return fallback(m.err)
 		}
 		return "No network interfaces"
 	}
-	rowCapacity := max(0, size.Height-1)
+	warningRows := 0
+	if m.status == directPartial {
+		warningRows = 1
+	}
+	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(links), m.control.Cursor(), rowCapacity)
-	return renderLinkTable(size.Width, links[start:end], m.control.Cursor()-start)
+	content := renderLinkTable(size.Width, links[start:end], m.control.Cursor()-start)
+	if warningRows > 0 {
+		content = "NETWORK PARTIAL: " + fallback(m.err) + "\n" + content
+	}
+	return content
 }
 
 const defaultNetworkWidth = 120
