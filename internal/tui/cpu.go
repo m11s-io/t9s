@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,14 +13,41 @@ import (
 )
 
 type cpuModel struct {
-	state     application.CPUState
+	status    directLoadStatus
+	node      string
+	value     domain.CPUSnapshot
+	err       string
 	filter    string
 	filtering bool
 	offset    int
 }
 
-func newCPUModel(state application.CPUState) cpuModel           { return cpuModel{state: state} }
-func (m cpuModel) setState(state application.CPUState) cpuModel { m.state = state; return m }
+func newCPUModel(state application.CPUState) cpuModel { return cpuModel{}.setState(state) }
+func newDirectCPUModel() cpuModel                     { return cpuModel{status: directLoading} }
+func (m cpuModel) setState(state application.CPUState) cpuModel {
+	m.status, m.node, m.value, m.err = directStatusFromApplication(state.Status), state.Node, state.Value, state.Err
+	return m
+}
+func (m cpuModel) setResult(node string, value domain.CPUSnapshot, err error) cpuModel {
+	m.node, m.value, m.err = node, value, ""
+	switch {
+	case err != nil && errors.Is(err, context.Canceled):
+		m.status, m.err = directFailed, "CPU sample canceled"
+		if value.ProcessCountsKnown || len(value.Cores) > 0 || value.Aggregate.Known {
+			m.status = directPartial
+		}
+	case err != nil:
+		m.status, m.err = directFailed, "CPU sample unavailable"
+		if value.ProcessCountsKnown || len(value.Cores) > 0 || value.Aggregate.Known {
+			m.status = directPartial
+		}
+	case len(value.Problems) > 0 || !value.Aggregate.Known:
+		m.status, m.err = directPartial, "CPU data is incomplete"
+	default:
+		m.status = directReady
+	}
+	return m
+}
 func (m cpuModel) update(message tea.KeyPressMsg) cpuModel {
 	key := message.String()
 	if m.filtering {
@@ -52,13 +81,13 @@ func (m cpuModel) update(message tea.KeyPressMsg) cpuModel {
 	return m
 }
 func (m cpuModel) rows() []string {
-	if m.state.Status == application.Loading || m.state.Status == application.Idle {
+	if m.status == directLoading || m.status == directLoadStatus("") {
 		return []string{"Sampling CPU… (two samples, one second apart)"}
 	}
-	if m.state.Status == application.Failed {
-		return []string{fallback(m.state.Err)}
+	if m.status == directFailed {
+		return []string{fallback(m.err)}
 	}
-	value := m.state.Value
+	value := m.value
 	interval := "unknown"
 	if value.Interval > 0 {
 		interval = value.Interval.String()
@@ -79,8 +108,8 @@ func (m cpuModel) rows() []string {
 	for _, core := range value.Cores {
 		rows = append(rows, cpuUsageRow(fmt.Sprintf("CPU%d", core.ID), core.CPUUtilization))
 	}
-	if m.state.Err != "" {
-		rows = append(rows, "Problem: "+m.state.Err)
+	if m.err != "" {
+		rows = append(rows, "Problem: "+m.err)
 	}
 	for _, problem := range value.Problems {
 		rows = append(rows, "Problem: "+problem)
@@ -120,3 +149,5 @@ func (m cpuModel) viewSized(size contentSize) string {
 	end := min(len(rows), m.offset+max(0, size.Height))
 	return strings.Join(rows[m.offset:end], "\n")
 }
+
+func (m cpuModel) filteringActive() bool { return m.filtering || m.filter != "" }

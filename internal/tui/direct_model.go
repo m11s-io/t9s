@@ -22,26 +22,29 @@ type directModel struct {
 	session              *application.Session
 	generationCounter    uint64
 
-	cluster   directClusterState
-	view      directViewState
-	nodes     nodesModel
-	services  servicesModel
-	events    eventsModel
-	etcd      etcdModel
-	problems  problemsModel
-	contexts  contextsModel
-	palette   commandModel
-	processes processesModel
-	disks     disksModel
-	network   networkModel
-	netstat   netstatModel
-	mounts    mountsModel
-	memory    memoryModel
-	views     viewStack
-	styles    styles
-	width     int
-	height    int
-	splash    bool
+	cluster    directClusterState
+	view       directViewState
+	nodes      nodesModel
+	services   servicesModel
+	events     eventsModel
+	etcd       etcdModel
+	problems   problemsModel
+	contexts   contextsModel
+	palette    commandModel
+	processes  processesModel
+	disks      disksModel
+	network    networkModel
+	netstat    netstatModel
+	mounts     mountsModel
+	memory     memoryModel
+	time       timeModel
+	cpu        cpuModel
+	timePrompt *timePromptModel
+	views      viewStack
+	styles     styles
+	width      int
+	height     int
+	splash     bool
 }
 
 func newDirectModel(parent context.Context, client *application.Client, options LaunchOptions) directModel {
@@ -72,6 +75,8 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		netstat:   newDirectNetstatModel(),
 		mounts:    newDirectMountsModel(),
 		memory:    newDirectMemoryModel(),
+		time:      newDirectTimeModel(),
+		cpu:       newDirectCPUModel(),
 		palette:   newCommandModel(),
 		views:     newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:    defaultStyles(), width: 120, height: 40, splash: true,
@@ -244,7 +249,8 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.cluster.nodes.Value = application.EnrichNodes(m.cluster.nodes.Value, state.Nodes)
 		m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
 		return m, nil
-	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded, directSocketsLoaded, directMountsLoaded, directMemoryLoaded:
+	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded, directSocketsLoaded, directMountsLoaded, directMemoryLoaded,
+		directCPULoaded, directTimeLoaded, directTimeCheckLoaded:
 		m.applyDiagnosticResult(message)
 		return m, nil
 	case directRunCommand:
@@ -253,6 +259,29 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.splash = false
 		if message.String() == "ctrl+c" {
 			return m, m.cleanup(tea.Quit())
+		}
+		if m.timePrompt != nil {
+			switch message.String() {
+			case "esc":
+				m.timePrompt = nil
+				return m, nil
+			case "enter":
+				server, err := application.ValidateTimeServer(m.timePrompt.input.Value())
+				if err != nil {
+					m.timePrompt.err = err.Error()
+					return m, nil
+				}
+				m.timePrompt = nil
+				frame := m.views.top()
+				request, _ := m.requests.beginWithContext(directDiagnosticSlot(frame.NodeID, "time-check"), m.generation(), m.sessionCtx)
+				m.time.checkStatus = directLoading
+				m.time.check = domain.TimeCheckResult{TimeSample: domain.TimeSample{Server: server}}
+				m.time.checkErr = ""
+				return m, directTimeCheckCommand(m.session, request, frame.NodeID, frame.NodeTarget, server)
+			}
+			var command tea.Cmd
+			*m.timePrompt, command = m.timePrompt.update(message)
+			return m, command
 		}
 		if m.contexts.active {
 			switch message.String() {
@@ -288,7 +317,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering && !m.cpu.filtering && !m.time.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
@@ -507,7 +536,9 @@ func (m directModel) View() tea.View {
 		breadcrumb = m.cluster.contextName + " > contexts"
 	}
 	prompt := ""
-	if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
+	if m.timePrompt != nil {
+		prompt = m.timePrompt.view()
+	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
 		prompt = "/" + m.nodes.filter
 	} else if !m.palette.active && m.views.top().Kind == viewServices && (m.services.filtering || m.services.filter != "") {
 		prompt = "/" + m.services.filter
@@ -529,6 +560,10 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.mounts.filter
 	} else if !m.palette.active && m.views.top().Kind == viewMemory && (m.memory.filtering || m.memory.filter != "") {
 		prompt = "/" + m.memory.filter
+	} else if !m.palette.active && m.views.top().Kind == viewCPU && m.cpu.filteringActive() {
+		prompt = "/" + m.cpu.filter
+	} else if !m.palette.active && m.views.top().Kind == viewTime && m.time.filteringActive() {
+		prompt = "/" + m.time.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))

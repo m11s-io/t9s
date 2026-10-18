@@ -57,6 +57,31 @@ type directMemoryLoaded struct {
 	err     error
 }
 
+type directCPULoaded struct {
+	request directRequestStamp
+	nodeID  string
+	node    string
+	value   domain.CPUSnapshot
+	err     error
+}
+
+type directTimeLoaded struct {
+	request directRequestStamp
+	nodeID  string
+	node    string
+	value   domain.TimeSnapshot
+	err     error
+}
+
+type directTimeCheckLoaded struct {
+	request directRequestStamp
+	nodeID  string
+	node    string
+	server  string
+	value   domain.TimeCheckResult
+	err     error
+}
+
 func directProcessesCommand(session *application.Session, request directRequest, nodeID, node string) tea.Cmd {
 	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
 		values, err := session.Processes(ctx, node)
@@ -99,6 +124,27 @@ func directMemoryCommand(session *application.Session, request directRequest, no
 	})
 }
 
+func directCPUCommand(session *application.Session, request directRequest, nodeID, node string) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		values, err := session.CPU(ctx, node)
+		return directCPULoaded{request: request.stamp, nodeID: nodeID, node: node, value: values, err: err}
+	})
+}
+
+func directTimeCommand(session *application.Session, request directRequest, nodeID, node string) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		values, err := session.Time(ctx, node)
+		return directTimeLoaded{request: request.stamp, nodeID: nodeID, node: node, value: values, err: err}
+	})
+}
+
+func directTimeCheckCommand(session *application.Session, request directRequest, nodeID, node, server string) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		values, err := session.CheckTime(ctx, node, server)
+		return directTimeCheckLoaded{request: request.stamp, nodeID: nodeID, node: node, server: server, value: values, err: err}
+	})
+}
+
 func (m *directModel) applyDiagnosticResult(message tea.Msg) bool {
 	switch result := message.(type) {
 	case directProcessesLoaded:
@@ -137,6 +183,24 @@ func (m *directModel) applyDiagnosticResult(message tea.Msg) bool {
 		}
 		m.requests.cancelSlot(directDiagnosticSlot(result.nodeID, "memory"))
 		m.memory = m.memory.setResult(result.node, result.memory, result.err)
+	case directCPULoaded:
+		if !m.requests.current(result.request) || result.request.generation != m.generation() || !m.directDiagnosticOpen(result.nodeID, viewCPU, 0) {
+			return true
+		}
+		m.requests.cancelSlot(directDiagnosticSlot(result.nodeID, "cpu"))
+		m.cpu = m.cpu.setResult(result.node, result.value, result.err)
+	case directTimeLoaded:
+		if !m.requests.current(result.request) || result.request.generation != m.generation() || !m.directDiagnosticOpen(result.nodeID, viewTime, 0) {
+			return true
+		}
+		m.requests.cancelSlot(directDiagnosticSlot(result.nodeID, "time"))
+		m.time = m.time.setReadResult(result.node, result.value, result.err)
+	case directTimeCheckLoaded:
+		if !m.requests.current(result.request) || result.request.generation != m.generation() || !m.directDiagnosticOpen(result.nodeID, viewTime, 0) {
+			return true
+		}
+		m.requests.cancelSlot(directDiagnosticSlot(result.nodeID, "time-check"))
+		m.time = m.time.setCheckResult(result.node, result.server, result.value, result.err)
 	default:
 		return false
 	}
@@ -164,6 +228,10 @@ func (m *directModel) handleNodeDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd,
 		return m.openDirectDiagnostic(node, viewMounts), true
 	case "f":
 		return m.openDirectDiagnostic(node, viewMemory), true
+	case "u":
+		return m.openDirectDiagnostic(node, viewCPU), true
+	case "t":
+		return m.openDirectDiagnostic(node, viewTime), true
 	default:
 		return nil, false
 	}
@@ -178,7 +246,7 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 			return nil, true
 		}
 		return nil, true
-	case viewProcesses, viewDisks, viewNetwork, viewNetstat, viewMounts, viewMemory:
+	case viewProcesses, viewDisks, viewNetwork, viewNetstat, viewMounts, viewMemory, viewCPU, viewTime:
 		filtering := m.processes.filtering
 		if frame.Kind == viewDisks {
 			filtering = m.disks.filtering
@@ -195,12 +263,23 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 		if frame.Kind == viewMemory {
 			filtering = m.memory.filtering
 		}
+		if frame.Kind == viewCPU {
+			filtering = m.cpu.filtering
+		}
+		if frame.Kind == viewTime {
+			filtering = m.time.filtering
+		}
 		if !filtering && (message.String() == "q" || message.String() == "esc") {
 			m.popDirectView()
 			return nil, true
 		}
 		if message.String() == "r" && !filtering && m.session != nil {
 			return m.refreshDirectDiagnostic(frame), true
+		}
+		if frame.Kind == viewTime && message.String() == "c" && !filtering {
+			prompt := newTimePromptModel()
+			m.timePrompt = &prompt
+			return prompt.input.Focus(), true
 		}
 		if (message.String() == "enter" || message.String() == "d") && !filtering {
 			switch frame.Kind {
@@ -232,6 +311,10 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 			m.mounts = m.mounts.update(message)
 		case viewMemory:
 			m.memory = m.memory.update(message)
+		case viewCPU:
+			m.cpu = m.cpu.update(message)
+		case viewTime:
+			m.time = m.time.update(message)
 		}
 		return nil, true
 	default:
@@ -254,6 +337,10 @@ func (m directModel) directDiagnosticContent(size contentSize) (string, bool) {
 		return m.mounts.viewSized(size), true
 	case viewMemory:
 		return m.memory.viewSized(size), true
+	case viewCPU:
+		return m.cpu.viewSized(size), true
+	case viewTime:
+		return m.time.viewSized(size), true
 	case viewProcessDetail:
 		if value, ok := findProcessByPID(m.processes.values.Processes, frame.ProcessPID); ok {
 			return renderProcessDetail(value), true
@@ -311,8 +398,8 @@ func (m directModel) directDiagnosticOpen(nodeID string, list, detail viewKind) 
 }
 
 func (m *directModel) openDirectDiagnostic(node domain.NodeSnapshot, kind viewKind) tea.Cmd {
-	label := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "netstat", viewMounts: "mounts", viewMemory: "memory"}[kind]
-	scope := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory"}[kind]
+	label := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "netstat", viewMounts: "mounts", viewMemory: "memory", viewCPU: "CPU", viewTime: "time"}[kind]
+	scope := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory", viewCPU: "cpu", viewTime: "time"}[kind]
 	nodeID := directDiagnosticNodeID(node)
 	m.views = m.views.push(viewFrame{Kind: kind, Label: fallback(node.DisplayName()) + " > " + label, NodeID: nodeID, NodeTarget: node.Target()})
 	request, _ := m.requests.beginWithContext(directDiagnosticSlot(nodeID, scope), m.generation(), m.sessionCtx)
@@ -332,9 +419,15 @@ func (m *directModel) openDirectDiagnostic(node domain.NodeSnapshot, kind viewKi
 	case viewMounts:
 		m.mounts = newDirectMountsModel()
 		return directMountsCommand(m.session, request, nodeID, node.Target())
-	default:
+	case viewMemory:
 		m.memory = newDirectMemoryModel()
 		return directMemoryCommand(m.session, request, nodeID, node.Target())
+	case viewCPU:
+		m.cpu = newDirectCPUModel()
+		return directCPUCommand(m.session, request, nodeID, node.Target())
+	default:
+		m.time = newDirectTimeModel()
+		return directTimeCommand(m.session, request, nodeID, node.Target())
 	}
 }
 
@@ -346,7 +439,7 @@ func directDiagnosticNodeID(node domain.NodeSnapshot) string {
 }
 
 func (m *directModel) refreshDirectDiagnostic(frame viewFrame) tea.Cmd {
-	scope := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory"}[frame.Kind]
+	scope := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory", viewCPU: "cpu", viewTime: "time"}[frame.Kind]
 	request, _ := m.requests.beginWithContext(directDiagnosticSlot(frame.NodeID, scope), m.generation(), m.sessionCtx)
 	switch frame.Kind {
 	case viewProcesses:
@@ -359,8 +452,12 @@ func (m *directModel) refreshDirectDiagnostic(frame viewFrame) tea.Cmd {
 		return directSocketsCommand(m.session, request, frame.NodeID, frame.NodeTarget)
 	case viewMounts:
 		return directMountsCommand(m.session, request, frame.NodeID, frame.NodeTarget)
-	default:
+	case viewMemory:
 		return directMemoryCommand(m.session, request, frame.NodeID, frame.NodeTarget)
+	case viewCPU:
+		return directCPUCommand(m.session, request, frame.NodeID, frame.NodeTarget)
+	default:
+		return directTimeCommand(m.session, request, frame.NodeID, frame.NodeTarget)
 	}
 }
 
@@ -380,17 +477,25 @@ func (m *directModel) popDirectView() {
 		list, scope = viewMounts, "mounts"
 	case viewMemory:
 		list, scope = viewMemory, "memory"
+	case viewCPU:
+		list, scope = viewCPU, "cpu"
+	case viewTime:
+		list, scope = viewTime, "time"
 	}
 	m.views, _ = m.views.pop()
 	if list != 0 && !m.directDiagnosticOpen(frame.NodeID, list, map[viewKind]viewKind{viewProcesses: viewProcessDetail, viewDisks: viewDiskDetail, viewNetwork: viewLinkDetail}[list]) {
 		m.requests.cancelSlot(directDiagnosticSlot(frame.NodeID, scope))
+		if frame.Kind == viewTime {
+			m.requests.cancelSlot(directDiagnosticSlot(frame.NodeID, "time-check"))
+			m.timePrompt = nil
+		}
 	}
 }
 
 func (m *directModel) cancelClosedDirectDiagnostics(previous viewStack) {
 	seen := map[string]bool{}
 	for _, frame := range previous {
-		scope := map[viewKind]string{viewProcesses: "processes", viewProcessDetail: "processes", viewDisks: "disks", viewDiskDetail: "disks", viewNetwork: "network", viewLinkDetail: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory"}[frame.Kind]
+		scope := map[viewKind]string{viewProcesses: "processes", viewProcessDetail: "processes", viewDisks: "disks", viewDiskDetail: "disks", viewNetwork: "network", viewLinkDetail: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory", viewCPU: "cpu", viewTime: "time"}[frame.Kind]
 		if scope == "" {
 			continue
 		}
@@ -399,8 +504,12 @@ func (m *directModel) cancelClosedDirectDiagnostics(previous viewStack) {
 			continue
 		}
 		seen[slot] = true
-		if !m.directDiagnosticOpen(frame.NodeID, map[string]viewKind{"processes": viewProcesses, "disks": viewDisks, "network": viewNetwork, "sockets": viewNetstat, "mounts": viewMounts, "memory": viewMemory}[scope], map[string]viewKind{"processes": viewProcessDetail, "disks": viewDiskDetail, "network": viewLinkDetail}[scope]) {
+		if !m.directDiagnosticOpen(frame.NodeID, map[string]viewKind{"processes": viewProcesses, "disks": viewDisks, "network": viewNetwork, "sockets": viewNetstat, "mounts": viewMounts, "memory": viewMemory, "cpu": viewCPU, "time": viewTime}[scope], map[string]viewKind{"processes": viewProcessDetail, "disks": viewDiskDetail, "network": viewLinkDetail}[scope]) {
 			m.requests.cancelSlot(slot)
+			if scope == "time" {
+				m.requests.cancelSlot(directDiagnosticSlot(frame.NodeID, "time-check"))
+				m.timePrompt = nil
+			}
 		}
 	}
 }

@@ -1,23 +1,76 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 type timeModel struct {
-	state     application.TimeState
-	filter    string
-	filtering bool
-	offset    int
+	status      directLoadStatus
+	node        string
+	value       domain.TimeSnapshot
+	err         string
+	checkStatus directLoadStatus
+	check       domain.TimeCheckResult
+	checkErr    string
+	filter      string
+	filtering   bool
+	offset      int
 }
 
-func newTimeModel(state application.TimeState) timeModel           { return timeModel{state: state} }
-func (m timeModel) setState(state application.TimeState) timeModel { m.state = state; return m }
+func newTimeModel(state application.TimeState) timeModel { return timeModel{}.setState(state) }
+func newDirectTimeModel() timeModel                      { return timeModel{status: directLoading} }
+func (m timeModel) setState(state application.TimeState) timeModel {
+	m.status, m.node, m.value, m.err = directStatusFromApplication(state.Status), state.Node, state.Value, state.Err
+	m.checkStatus, m.check, m.checkErr = directStatusFromApplication(state.CheckStatus), state.Check, state.CheckErr
+	return m
+}
+func (m timeModel) setReadResult(node string, value domain.TimeSnapshot, err error) timeModel {
+	m.node, m.value, m.err = node, value, ""
+	switch {
+	case err != nil:
+		m.status, m.err = directFailed, "Time status unavailable"
+		if timeSnapshotHasValues(value) {
+			m.status, m.err = directPartial, "Some time status is unavailable"
+		}
+	case len(value.Problems) > 0:
+		m.status, m.err = directPartial, "Some time status is unavailable"
+	default:
+		m.status = directReady
+	}
+	return m
+}
+func (m timeModel) setCheckResult(node, server string, value domain.TimeCheckResult, err error) timeModel {
+	m.check = value
+	m.check.Server = server
+	m.checkErr = ""
+	switch {
+	case err != nil && errors.Is(err, ports.ErrTimePermissionDenied):
+		m.checkStatus, m.checkErr = directFailed, "time check permission denied"
+	case err != nil:
+		m.checkStatus, m.checkErr = directFailed, "time check unavailable"
+		if timeSampleHasValues(value.TimeSample) {
+			m.checkStatus, m.checkErr = directPartial, "Some time check data is unavailable"
+		}
+	case len(value.Problems) > 0:
+		m.checkStatus, m.checkErr = directPartial, "Some time check data is unavailable"
+	default:
+		m.checkStatus = directReady
+	}
+	return m
+}
+func timeSnapshotHasValues(value domain.TimeSnapshot) bool {
+	return value.SyncKnown || timeSampleHasValues(value.TimeSample) || len(value.Problems) > 0
+}
+func timeSampleHasValues(value domain.TimeSample) bool {
+	return value.Server != "" || value.LocalTimeValid || value.RemoteTimeValid || value.DifferenceValid || len(value.Problems) > 0
+}
 func (m timeModel) update(message tea.KeyPressMsg) timeModel {
 	key := message.String()
 	if m.filtering {
@@ -52,33 +105,42 @@ func (m timeModel) update(message tea.KeyPressMsg) timeModel {
 }
 func (m timeModel) rows() []string {
 	rows := []string{"TIME STATUS"}
-	switch m.state.Status {
-	case application.Loading, application.Idle:
+	switch m.status {
+	case directLoading, directLoadStatus(""):
 		rows = append(rows, "Loading time status…")
-	case application.Failed:
-		rows = append(rows, m.state.Err)
+	case directFailed:
+		rows = append(rows, m.err)
 	default:
 		synced := "unknown"
-		if m.state.Value.SyncKnown {
+		if m.value.SyncKnown {
 			synced = "no"
-			if m.state.Value.Synced {
+			if m.value.Synced {
 				synced = "yes"
 			}
-			if m.state.Value.SyncDisabled {
+			if m.value.SyncDisabled {
 				synced += " (synchronization disabled)"
 			}
 		}
 		rows = append(rows, "Synchronized: "+synced)
-		rows = append(rows, timeSampleRows(m.state.Value.TimeSample)...)
+		rows = append(rows, timeSampleRows(m.value.TimeSample)...)
+		if m.err != "" {
+			rows = append(rows, "Problem: "+m.err)
+		}
+		for _, problem := range m.value.Problems {
+			rows = append(rows, "Problem: "+problem)
+		}
 	}
 	rows = append(rows, "", "SERVER CHECK (explicit)")
-	switch m.state.CheckStatus {
-	case application.Loading:
-		rows = append(rows, "Checking "+m.state.Check.Server+"…")
-	case application.Failed:
-		rows = append(rows, "Server: "+m.state.Check.Server, m.state.CheckErr)
-	case application.Ready, application.Partial:
-		rows = append(rows, timeSampleRows(m.state.Check.TimeSample)...)
+	switch m.checkStatus {
+	case directLoading:
+		rows = append(rows, "Checking "+m.check.Server+"…")
+	case directFailed:
+		rows = append(rows, "Server: "+m.check.Server, m.checkErr)
+	case directReady, directPartial:
+		rows = append(rows, timeSampleRows(m.check.TimeSample)...)
+		if m.checkErr != "" {
+			rows = append(rows, "Problem: "+m.checkErr)
+		}
 	default:
 		rows = append(rows, "Press c to check a server")
 	}
@@ -137,3 +199,5 @@ func (m timeModel) viewSized(size contentSize) string {
 	end := min(len(rows), m.offset+max(0, size.Height))
 	return strings.Join(rows[m.offset:end], "\n")
 }
+
+func (m timeModel) filteringActive() bool { return m.filtering || m.filter != "" }
