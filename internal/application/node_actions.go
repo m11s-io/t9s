@@ -20,9 +20,12 @@ type nodeIdentityFacts struct {
 }
 
 type nodeActionFacts struct {
-	Nodes   []nodeIdentityFacts
-	Warning string
-	Blocked string
+	Nodes       []nodeIdentityFacts
+	Warning     string
+	Blocked     string
+	Disks       *destructiveDiskFacts
+	ResetQuorum etcdQuorumAssessment
+	HasQuorum   bool
 }
 
 // PrepareNodeAction resolves real backend nodes and captures their identity
@@ -68,14 +71,40 @@ func (s *Session) PrepareNodeAction(ctx context.Context, request NodeActionReque
 		return nil, err
 	}
 	request.Targets = canonical
+	if request.Kind == ActionWipeDevice {
+		wipeNode, ok := resolveNodeTarget(nodes.Nodes, request.DeviceWipe.Node)
+		if !ok || wipeNode.Target() != canonical[0] {
+			return nil, errors.New("device-wipe node must resolve to the requested target")
+		}
+		wipe := *request.DeviceWipe
+		wipe.Node = canonical[0]
+		request.DeviceWipe = &wipe
+	}
 	facts, err := s.readNodeActionFacts(readCtx, nodes.Nodes, resolved, request)
 	if err != nil {
 		return nil, err
 	}
+	assessment := Assessment{Targets: append([]string(nil), canonical...), Warning: facts.Warning, Blocked: facts.Blocked}
+	if request.Kind == ActionReset || request.Kind == ActionWipeDevice {
+		diskFacts, err := s.readDestructiveDiskFacts(readCtx, resolved, request)
+		if err != nil {
+			return nil, err
+		}
+		facts.Disks = &diskFacts
+		assessment.Blocked = appendActionBlock(assessment.Blocked, diskFacts.Blocked)
+		if request.Kind == ActionReset {
+			assessment.ResetPreview = cloneResetPreviews(diskFacts.Previews)
+		}
+	}
 	if err := readCtx.Err(); err != nil {
 		return nil, err
 	}
-	assessment := Assessment{Targets: append([]string(nil), canonical...), Warning: facts.Warning, Blocked: facts.Blocked}
+	if request.Kind == ActionReset {
+		assessment.RequiredToken = ResetConfirmationToken(canonical)
+	}
+	if request.Kind == ActionWipeDevice {
+		assessment.RequiredToken = request.DeviceWipe.Device
+	}
 	plan := newPreparedNodeAction(s, request, assessment)
 	plan.state.nodeFacts = &facts
 	return &plan, nil
@@ -91,10 +120,11 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 	if request.Kind == ActionUpgrade {
 		return MutationResult{}, errors.New("upgrade execution is handled by the streaming upgrade operation")
 	}
+	timeout := controlOperationTimeout
 	if request.Kind == ActionReset || request.Kind == ActionWipeDevice {
-		return MutationResult{}, fmt.Errorf("node action kind %q is not supported by this workflow", request.Kind)
+		timeout = destructiveNodeTimeout
 	}
-	operationCtx, release, err := s.admit(ctx, plan.state, confirmation, controlOperationTimeout)
+	operationCtx, release, err := s.admit(ctx, plan.state, confirmation, timeout)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -132,6 +162,14 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 	if err := readCtx.Err(); err != nil {
 		return MutationResult{}, err
 	}
+	if request.Kind == ActionReset || request.Kind == ActionWipeDevice {
+		currentDisks, diskErr := s.readDestructiveDiskFacts(readCtx, resolved, request)
+		if diskErr != nil {
+			return MutationResult{}, diskErr
+		}
+		currentFacts.Disks = &currentDisks
+		currentFacts.Blocked = appendActionBlock(currentFacts.Blocked, currentDisks.Blocked)
+	}
 	if currentFacts.Blocked != "" {
 		return MutationResult{}, ErrActionBlocked
 	}
@@ -149,7 +187,7 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 	completed := make(chan targetExecution, len(request.Targets))
 	for index, target := range request.Targets {
 		go func(index int, target string) {
-			result := dispatchNodeAction(operationCtx, s.sdkSession.NodeActions(), request.Kind, target)
+			result := dispatchPreparedNodeAction(operationCtx, s.sdkSession.NodeActions(), request, currentFacts.Disks, target)
 			completed <- targetExecution{index: index, result: result}
 		}(index, target)
 	}
@@ -172,23 +210,58 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 }
 
 func validateNodeActionRequest(request NodeActionRequest) error {
-	if request.Kind == ActionReset || request.Kind == ActionWipeDevice {
-		return fmt.Errorf("node action kind %q is not supported by this workflow", request.Kind)
-	}
-	if request.Reset != nil || request.DeviceWipe != nil {
-		return errors.New("reset and device-wipe options are not supported by this workflow")
-	}
 	switch request.Kind {
 	case ActionReboot, ActionShutdown, ActionRollback:
+		if request.Reset != nil || request.DeviceWipe != nil {
+			return errors.New("reset and device-wipe options require their matching action kind")
+		}
 		if strings.TrimSpace(request.Image) != "" {
 			return errors.New("image is only valid for upgrade actions")
 		}
 	case ActionUpgrade:
+		if request.Reset != nil || request.DeviceWipe != nil {
+			return errors.New("reset and device-wipe options require their matching action kind")
+		}
 		if len(request.Targets) != 1 {
 			return errors.New("upgrade requires exactly one target")
 		}
 		if strings.TrimSpace(request.Image) == "" {
 			return errors.New("upgrade requires an explicit image")
+		}
+	case ActionReset:
+		if request.Reset == nil || request.DeviceWipe != nil {
+			return errors.New("reset requires reset options only")
+		}
+		if strings.TrimSpace(request.Image) != "" {
+			return errors.New("image is only valid for upgrade actions")
+		}
+		if request.Reset.Mode < ports.WipeModeAll || request.Reset.Mode > ports.WipeModeUserDisks {
+			return fmt.Errorf("unsupported reset mode %d", request.Reset.Mode)
+		}
+		if request.Reset.Mode != ports.WipeModeSystemDisk && len(request.Targets) != 1 {
+			return errors.New("all-disk and user-disk reset modes are single-node only")
+		}
+		if request.Reset.Mode == ports.WipeModeSystemDisk && len(request.Reset.UserDisks) > 0 {
+			return errors.New("system-disk reset cannot include user disks")
+		}
+		if request.Reset.Mode != ports.WipeModeSystemDisk && len(request.Reset.SystemPartitions) > 0 {
+			return errors.New("system partitions require system-disk reset mode")
+		}
+	case ActionWipeDevice:
+		if request.DeviceWipe == nil || request.Reset != nil {
+			return errors.New("device wipe requires device-wipe options only")
+		}
+		if strings.TrimSpace(request.Image) != "" {
+			return errors.New("image is only valid for upgrade actions")
+		}
+		if len(request.Targets) != 1 {
+			return errors.New("device wipe requires exactly one target")
+		}
+		if strings.TrimSpace(request.DeviceWipe.Node) == "" || strings.TrimSpace(request.DeviceWipe.Device) == "" {
+			return errors.New("device wipe requires a node and device")
+		}
+		if request.DeviceWipe.Method != ports.DeviceWipeFast && request.DeviceWipe.Method != ports.DeviceWipeZeroes {
+			return fmt.Errorf("unsupported device-wipe method %d", request.DeviceWipe.Method)
 		}
 	default:
 		return fmt.Errorf("unsupported node action kind %q", request.Kind)
@@ -251,6 +324,12 @@ func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []d
 		if request.Kind == ActionUpgrade {
 			facts.Warning = upgradeActionWarningFacts(allNodes, EtcdPolicyFacts{}, targetNames, request.Image)
 		}
+		if request.Kind == ActionReset && request.Reset.Graceful {
+			facts.Warning = appendWarning(facts.Warning, "node(s) leave etcd before reset")
+		}
+		return facts, nil
+	}
+	if request.Kind == ActionWipeDevice {
 		return facts, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -275,15 +354,29 @@ func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []d
 	}
 	if request.Kind == ActionUpgrade {
 		facts.Warning = upgradeActionWarningFacts(allNodes, etcdFacts, targetNames, request.Image)
+	} else if request.Kind == ActionReset {
+		facts.Warning = etcdQuorumWarningFacts(etcdFacts, targetNames)
+		if request.Reset.Graceful {
+			facts.Warning = appendWarning(facts.Warning, "node(s) leave etcd before reset")
+		}
+		facts.Blocked = resetQuorumBlockReasonFacts(allNodes, etcdFacts, targetNames)
+		facts.ResetQuorum = assessEtcdQuorumFacts(etcdFacts, targetNames)
+		facts.HasQuorum = true
 	} else {
 		facts.Warning = etcdQuorumWarningFacts(etcdFacts, targetNames)
+		facts.Blocked = etcdQuorumBlockReasonFacts(etcdFacts, targetNames)
 	}
-	facts.Blocked = etcdQuorumBlockReasonFacts(etcdFacts, targetNames)
 	return facts, nil
 }
 
 func sameNodeActionFacts(prepared, current nodeActionFacts) bool {
-	return slices.Equal(prepared.Nodes, current.Nodes) && prepared.Warning == current.Warning && prepared.Blocked == current.Blocked
+	if !slices.Equal(prepared.Nodes, current.Nodes) || prepared.Warning != current.Warning || prepared.Blocked != current.Blocked {
+		return false
+	}
+	if prepared.HasQuorum != current.HasQuorum || (prepared.HasQuorum && prepared.ResetQuorum != current.ResetQuorum) {
+		return false
+	}
+	return sameDestructiveDiskFacts(prepared.Disks, current.Disks)
 }
 
 func dispatchNodeAction(ctx context.Context, controller ports.NodeController, kind ActionKind, target string) TargetResult {

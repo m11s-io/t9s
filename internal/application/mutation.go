@@ -61,7 +61,11 @@ func (s *Session) admit(ctx context.Context, plan *preparedState, confirmation C
 	if plan.assessment.Blocked != "" {
 		return nil, nil, ErrActionBlocked
 	}
-	if !confirmation.Approved || (plan.assessment.RequiredToken != "" && confirmation.Token != plan.assessment.RequiredToken) {
+	tokenMatches := confirmation.Token == plan.assessment.RequiredToken
+	if plan.nodeRequest != nil && plan.nodeRequest.Kind == ActionWipeDevice && plan.nodeRequest.DeviceWipe != nil {
+		tokenMatches = ValidateDeviceWipeConfirmation(plan.nodeRequest.DeviceWipe.Device, confirmation.Token) == nil
+	}
+	if !confirmation.Approved || (plan.assessment.RequiredToken != "" && !tokenMatches) {
 		return nil, nil, ErrConfirmationRequired
 	}
 	if s.mutationBusy {

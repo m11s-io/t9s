@@ -165,6 +165,23 @@ func etcdQuorumBlockReasonFacts(etcd EtcdPolicyFacts, targets []string) string {
 	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
 }
 
+// resetQuorumBlockReasonFacts applies the destructive reset gate to normalized
+// etcd observations. Unlike ordinary node actions, reset refuses unknown
+// quorum and counts unknown peers as lost when calculating the floor.
+func resetQuorumBlockReasonFacts(nodes []domain.NodeSnapshot, etcd EtcdPolicyFacts, targets []string) string {
+	if !targetsIncludeControlPlane(nodes, targets) {
+		return ""
+	}
+	assessment := assessEtcdQuorumFacts(etcd, targets)
+	if !assessment.known {
+		return "refusing: " + assessment.reason
+	}
+	if assessment.belowQuorum() {
+		return fmt.Sprintf("refusing: would drop etcd to %d/%d — below quorum (need %d)", assessment.remaining, assessment.voters, assessment.floor)
+	}
+	return ""
+}
+
 func upgradeActionWarningFacts(nodes []domain.NodeSnapshot, etcd EtcdPolicyFacts, targets []string, image string) string {
 	warning := ""
 	if targetsIncludeControlPlane(nodes, targets) {

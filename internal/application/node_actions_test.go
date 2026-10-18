@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -379,5 +380,359 @@ func TestWorkerUpgradePreparationKeepsMinorSkipWarning(t *testing.T) {
 	}
 	if got := plan.Assessment().Warning; got != "skips intermediate Talos minor releases" {
 		t.Fatalf("worker upgrade warning = %q, want minor-skip warning", got)
+	}
+}
+
+func TestResetNeverExpandsConfirmedDiskScope(t *testing.T) {
+	var calls atomic.Int32
+	var reads atomic.Int32
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{ResetFunc: func(_ context.Context, _ string, options ports.ResetOptions) error {
+		calls.Add(1)
+		if !reflect.DeepEqual(options.UserDisks, []string{"/dev/sdb"}) {
+			t.Errorf("reset user-disk scope = %v, want only confirmed /dev/sdb", options.UserDisks)
+		}
+		return nil
+	}})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		disks := []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb"}}
+		if reads.Add(1) > 1 {
+			// A newly discovered unrelated disk cannot silently expand the
+			// explicitly confirmed /dev/sdb scope.
+			disks = append(disks, domain.DiskSnapshot{DeviceName: "/dev/sdc"})
+		}
+		return domain.DiskSet{Disks: disks}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeAll, UserDisks: []string{"/dev/sdb"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Assessment().RequiredToken; got != "worker-1" {
+		t.Fatalf("reset intent token = %q, want worker-1", got)
+	}
+	if got := plan.Assessment().ResetPreview[0].UserDisks; !reflect.DeepEqual(got, []string{"/dev/sdb"}) {
+		t.Fatalf("reset preview = %v, want exact confirmed scope [/dev/sdb]", got)
+	}
+	result, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "worker-1"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Targets) != 1 || calls.Load() != 1 {
+		t.Fatalf("reset results/calls = %d/%d, want 1/1", len(result.Targets), calls.Load())
+	}
+}
+
+func TestBulkResultPreservesPerTargetUncertainty(t *testing.T) {
+	transportErr := errors.New("reset acknowledgement was lost")
+	controller := &testkit.FakeNodeController{ResetFunc: func(_ context.Context, target string, _ ports.ResetOptions) error {
+		if target == "worker-2" {
+			return transportErr
+		}
+		return nil
+	}}
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}, {Name: "worker-2", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, controller)
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(_ context.Context, target string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda-" + target, SystemDisk: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1", "worker-2"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "wipe 2 nodes"}, nil)
+	if !errors.Is(err, transportErr) {
+		t.Fatalf("execute error = %v, want inspectable transport error", err)
+	}
+	if len(result.Targets) != 2 {
+		t.Fatalf("target results = %d, want 2 despite nil observer", len(result.Targets))
+	}
+	byTarget := map[string]TargetResult{}
+	for _, target := range result.Targets {
+		byTarget[target.Target] = target
+	}
+	if got := byTarget["worker-1"].Outcome; got != domain.OperationAccepted {
+		t.Fatalf("worker-1 outcome = %v, want accepted", got)
+	}
+	if got := byTarget["worker-2"]; got.Outcome != domain.OperationUnconfirmed || !errors.Is(got.Err, transportErr) {
+		t.Fatalf("worker-2 result = %+v, want unconfirmed with transport error", got)
+	}
+}
+
+func TestWipeRejectsReusedDeviceIdentity(t *testing.T) {
+	var reads, calls atomic.Int32
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{WipeDeviceFunc: func(context.Context, string, string, ports.DeviceWipeMethod) error { calls.Add(1); return nil }})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		serial := "serial-before"
+		if reads.Add(1) > 1 {
+			serial = "serial-after"
+		}
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb", Serial: serial}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionWipeDevice, Targets: []string{"worker-1"}, DeviceWipe: &ports.DeviceWipeOptions{Node: "worker-1", Device: "/dev/sdb", Method: ports.DeviceWipeFast}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "sdb"}, nil)
+	if !errors.Is(err, ErrAssessmentChanged) {
+		t.Fatalf("execute error = %v, want ErrAssessmentChanged for reused device name", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("wipe controller calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestUnknownInventoryBlocksDestructiveAction(t *testing.T) {
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}, errors.New("inventory partial")
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := plan.Assessment()
+	if assessment.Blocked == "" {
+		t.Fatal("partial inventory authorized destructive reset")
+	}
+	if len(assessment.ResetPreview) != 1 || assessment.ResetPreview[0].SystemDisk != "/dev/sda" || assessment.ResetPreview[0].Known || assessment.ResetPreview[0].Err == "" {
+		t.Fatalf("partial inventory diagnostics were lost or authorized: %+v", assessment.ResetPreview)
+	}
+}
+
+func TestDestructivePreparationRejectsUnknownNodeRole(t *testing.T) {
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "unknown", Role: domain.NodeRoleUnknown}}}, nil
+	}}, nil, &testkit.FakeNodeController{})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	if _, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"unknown"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}}); err == nil {
+		t.Fatal("unknown node role authorized destructive reset")
+	}
+}
+
+func TestDestructiveNodeOptionsMustMatchTargetsAndSupportedMethods(t *testing.T) {
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb"}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	for _, options := range []ports.DeviceWipeOptions{
+		{Node: "other-node", Device: "/dev/sdb", Method: ports.DeviceWipeFast},
+		{Node: "worker-1", Device: "/dev/sdb", Method: ports.DeviceWipeMethod(99)},
+	} {
+		if _, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionWipeDevice, Targets: []string{"worker-1"}, DeviceWipe: &options}); err == nil {
+			t.Errorf("invalid wipe options %+v were accepted", options)
+		}
+	}
+}
+
+func TestResetRejectsChangedSystemDiskIdentity(t *testing.T) {
+	var reads atomic.Int32
+	var calls atomic.Int32
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error { calls.Add(1); return nil }})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		serial := "system-before"
+		if reads.Add(1) > 1 {
+			serial = "system-after"
+		}
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", Serial: serial, SystemDisk: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "worker-1"}, nil)
+	if !errors.Is(err, ErrAssessmentChanged) {
+		t.Fatalf("execute error = %v, want ErrAssessmentChanged for changed system-disk identity", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("reset controller calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestResetSystemOnlyBulkPreservesPartitionScope(t *testing.T) {
+	var calls atomic.Int32
+	controller := &testkit.FakeNodeController{ResetFunc: func(_ context.Context, target string, options ports.ResetOptions) error {
+		calls.Add(1)
+		if options.Mode != ports.WipeModeSystemDisk || !reflect.DeepEqual(options.SystemPartitions, []string{"EFI", "BOOT"}) {
+			t.Errorf("reset options for %s = %+v, want exact system partition scope", target, options)
+		}
+		return nil
+	}}
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}, {Name: "worker-2", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, controller)
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(_ context.Context, target string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda-" + target, SystemDisk: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1", "worker-2"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk, SystemPartitions: []string{"EFI", "BOOT"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessment := plan.Assessment()
+	if assessment.RequiredToken != "wipe 2 nodes" || assessment.Blocked != "" {
+		t.Fatalf("bulk reset assessment = %+v", assessment)
+	}
+	result, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "wipe 2 nodes"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Targets) != 2 || calls.Load() != 2 {
+		t.Fatalf("reset results/calls = %d/%d, want 2/2", len(result.Targets), calls.Load())
+	}
+}
+
+func TestResetPreparationBlocksUnknownControlPlaneQuorum(t *testing.T) {
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleControl}}}, nil
+	}}, &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
+		return domain.EtcdSet{}, errors.New("etcd unavailable")
+	}}, &testkit.FakeNodeController{})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"cp-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Assessment().Blocked == "" {
+		t.Fatal("control-plane reset was not blocked with unknown etcd quorum")
+	}
+}
+
+func TestResetExecutionRechecksConfirmationRelevantQuorumFacts(t *testing.T) {
+	var reads atomic.Int32
+	var calls atomic.Int32
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleControl}}}, nil
+	}}, &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
+		count := 3
+		if reads.Add(1) > 1 {
+			count = 4
+		}
+		members := make([]domain.EtcdMemberSnapshot, 0, count)
+		for i := 1; i <= count; i++ {
+			members = append(members, domain.EtcdMemberSnapshot{MemberID: uint64(i), Hostname: fmt.Sprintf("cp-%d", i), StatusKnown: true})
+		}
+		return domain.EtcdSet{Members: members}, nil
+	}}, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error { calls.Add(1); return nil }})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"cp-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Assessment().Blocked != "" {
+		t.Fatalf("initial quorum assessment blocked reset: %+v", plan.Assessment())
+	}
+	_, err = session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "cp-1"}, nil)
+	if !errors.Is(err, ErrAssessmentChanged) {
+		t.Fatalf("execute error = %v, want ErrAssessmentChanged for a changed voter set", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("reset controller calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestResetRechecksDerivedAllDiskScope(t *testing.T) {
+	var reads, calls atomic.Int32
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error { calls.Add(1); return nil }})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		if reads.Add(1) == 1 {
+			return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb"}}}, nil
+		}
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb"}, {DeviceName: "/dev/sdc"}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeAll}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "worker-1"}, nil)
+	if !errors.Is(err, ErrAssessmentChanged) {
+		t.Fatalf("execute error = %v, want ErrAssessmentChanged for changed derived scope", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("reset controller calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestDeviceWipeBackendConfirmationAcceptsBothDeviceTokenForms(t *testing.T) {
+	var calls atomic.Int32
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{WipeDeviceFunc: func(context.Context, string, string, ports.DeviceWipeMethod) error { calls.Add(1); return nil }})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb"}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionWipeDevice, Targets: []string{"worker-1"}, DeviceWipe: &ports.DeviceWipeOptions{Node: "worker-1", Device: "/dev/sdb", Method: ports.DeviceWipeFast}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "sdc"}, nil); !errors.Is(err, ErrConfirmationRequired) {
+		t.Fatalf("wrong token error = %v, want ErrConfirmationRequired", err)
+	}
+	result, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "/dev/sdb"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Targets) != 1 || calls.Load() != 1 {
+		t.Fatalf("wipe results/calls = %d/%d, want 1/1 after invalid intent leaves plan usable", len(result.Targets), calls.Load())
+	}
+}
+
+func TestResetRejectsReadOnlySystemDisk(t *testing.T) {
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, &testkit.FakeNodeController{})
+	adapter.DiskReader = &testkit.FakeDiskReader{ListFunc: func(context.Context, string) (domain.DiskSet, error) {
+		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true, ReadOnly: true}}}, nil
+	}}
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	for _, mode := range []ports.WipeMode{ports.WipeModeAll, ports.WipeModeSystemDisk} {
+		plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReset, Targets: []string{"worker-1"}, Reset: &ports.ResetOptions{Mode: mode}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Assessment().Blocked == "" {
+			t.Errorf("read-only system disk authorized reset mode %d", mode)
+		}
 	}
 }

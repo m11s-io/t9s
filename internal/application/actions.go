@@ -73,20 +73,10 @@ func ValidateResetConfirmation(targets []string, typed string) error {
 // is unknown is never authorized. It reuses the shared assessEtcdQuorum
 // arithmetic.
 func resetQuorumBlockReason(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string) string {
-	if !targetsIncludeControlPlane(nodes, targets) {
-		return ""
-	}
-	assessment := assessEtcdQuorum(etcd, targets)
-	if !assessment.known {
-		return "refusing: " + assessment.reason
-	}
-	// A reset is irreversible, so an unknown peer is treated as lost (the
-	// pessimistic predicate), matching membership removal rather than the
-	// optimistic gate used for reboots.
-	if assessment.belowQuorum() {
-		return fmt.Sprintf("refusing: would drop etcd to %d/%d — below quorum (need %d)", assessment.remaining, assessment.voters, assessment.floor)
-	}
-	return ""
+	return resetQuorumBlockReasonFacts(nodes, EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, targets)
 }
 
 // resetPreviewFor picks the disk preview for a reset from the currently loaded
