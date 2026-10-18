@@ -341,6 +341,21 @@ func (s *Session) readEtcdActionFacts(ctx context.Context, nodes []domain.NodeSn
 		}
 		source, sourceOK := resolveNodeTarget(nodes, facts.snapshotNode)
 		if !sourceOK || source.Role != domain.NodeRoleControl {
+			// The policy helper can prefer a healthy voter that is not currently
+			// discoverable as a node. Before the weaker control-plane fallback,
+			// find another healthy voter that has a routable node identity.
+			for _, candidate := range etcd.Members {
+				if candidate.IsLearner || candidate.Hostname == "" || memberMatchesMember(candidate, request.MemberID, member.Hostname) || !candidate.StatusKnown || len(candidate.Errors) > 0 {
+					continue
+				}
+				candidateNode, found := resolveNodeTarget(nodes, candidate.Hostname)
+				if found && candidateNode.Role == domain.NodeRoleControl {
+					source, sourceOK = candidateNode, true
+					break
+				}
+			}
+		}
+		if !sourceOK || source.Role != domain.NodeRoleControl {
 			fallback := firstOtherControlPlaneHostname(nodes, member.Hostname)
 			source, sourceOK = resolveNodeTarget(nodes, fallback)
 			if !sourceOK || source.Role != domain.NodeRoleControl {

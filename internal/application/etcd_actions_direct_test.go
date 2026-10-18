@@ -259,6 +259,36 @@ func TestRemoveOrphanMemberUsesDiscoveredHealthyGateway(t *testing.T) {
 	}
 }
 
+func TestRemoveOrphanSkipsUnreadyDiscoveredNodeForHealthyVoter(t *testing.T) {
+	var snapshotNode, removeNode string
+	members := domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{MemberID: 1, Hostname: "cp-1"},
+		{MemberID: 2, Hostname: "cp-2", StatusKnown: true}, // healthy, but absent from node discovery
+		{MemberID: 3, Hostname: "cp-3", StatusKnown: true},
+	}}
+	adapter := directEtcdAdapter(members, &testkit.FakeEtcdOperations{
+		SnapshotFunc: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+			snapshotNode = node
+			return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 32, SHA256: strings.Repeat("d", 64)}, nil
+		},
+		RemoveMemberByIDFunc: func(_ context.Context, node string, _ uint64) error {
+			removeNode = node
+			return nil
+		},
+	})
+	adapter.NodeReader = &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		// cp-0 is discovered but has not joined etcd; cp-3 is the usable voter.
+		return nodesOnly("cp-0", "cp-3"), nil
+	}}
+	session := openDirectEtcdSession(t, adapter)
+	plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{Kind: application.EtcdActionRemoveMember, Node: "cp-1", MemberID: 1, MemberHostname: "cp-1", SnapshotPath: "/tmp/healthy-voter.db"})
+	require.NoError(t, err)
+	_, err = session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+	require.NoError(t, err)
+	assert.Equal(t, "cp-3", snapshotNode)
+	assert.Equal(t, "cp-3", removeNode)
+}
+
 func TestRemoveDoesNotUseGatewayThatChangedAfterSnapshot(t *testing.T) {
 	read := 0
 	var removeCalls int
