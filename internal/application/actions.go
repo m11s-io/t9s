@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -124,30 +123,7 @@ func resetActionRisk(nodes []domain.NodeSnapshot, etcd EtcdState, targets []stri
 // or the erase silently does nothing. Enumeration is per node, so the modes
 // that erase user disks are single-target only.
 func resetScope(targets []string, options ports.ResetOptions, preview *ResetPreview) ([]string, string) {
-	switch options.Mode {
-	case ports.WipeModeSystemDisk:
-		// System partitions are wiped without a user-disk list.
-		return nil, ""
-	case ports.WipeModeUserDisks:
-		if len(targets) != 1 {
-			return nil, "refusing: user-disk wipe is single-node only"
-		}
-		if preview == nil || !preview.Known {
-			return nil, "refusing: user disk inventory unknown"
-		}
-		if len(preview.UserDisks) == 0 {
-			return nil, "refusing: no user disks discovered"
-		}
-		return append([]string(nil), preview.UserDisks...), ""
-	default: // WipeModeAll
-		if len(targets) != 1 {
-			return nil, "refusing: all-disk wipe is single-node only"
-		}
-		if preview == nil || !preview.Known {
-			return nil, "refusing: user disk inventory unknown"
-		}
-		return append([]string(nil), preview.UserDisks...), ""
-	}
+	return resetScopeForPreview(targets, options.Mode, preview)
 }
 
 // resetModeBlockReason re-derives the disk-scope block for an already-open
@@ -181,25 +157,11 @@ func ValidateDeviceWipeConfirmation(device, typed string) error {
 // verified against the loaded inventory — a wipe is irreversible, so an
 // unknown target is never authorized.
 func DeviceWipeBlockReason(disks DisksState, wipe ports.DeviceWipeOptions) string {
-	if wipe.Node == "" || wipe.Device == "" {
-		return "refusing: no device selected"
-	}
-	if disks.Status != Ready || disks.Node != wipe.Node {
-		return fmt.Sprintf("refusing: disk inventory for %s is not loaded", wipe.Node)
-	}
-	for _, disk := range disks.Value.Disks {
-		if disk.DeviceName != wipe.Device {
-			continue
-		}
-		if disk.SystemDisk {
-			return fmt.Sprintf("refusing: %s is the system disk", wipe.Device)
-		}
-		if disk.ReadOnly {
-			return fmt.Sprintf("refusing: %s is read-only", wipe.Device)
-		}
-		return ""
-	}
-	return fmt.Sprintf("refusing: %s is not in the current inventory", wipe.Device)
+	return assessDeviceWipeFacts(DiskPolicyFacts{
+		Available: disks.Status == Ready,
+		Node:      disks.Node,
+		Disks:     disks.Value.Disks,
+	}, wipe.Node, diskIdentity{DeviceName: wipe.Device})
 }
 
 // resetPreviewFrom picks the disk preview for a reset: the one the overlay
@@ -243,81 +205,11 @@ func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) b
 // computeEtcdQuorumWarning is shared by every action that reboots a
 // control-plane node (Reboot, Shutdown, Rollback, Upgrade) and by service
 // actions that stop or restart the etcd service directly.
-// etcdQuorumAssessment is the shared result of evaluating how an action's
-// targets affect etcd's voting membership. When known is false, reason
-// explains why quorum could not be assessed from the current snapshot.
-type etcdQuorumAssessment struct {
-	known bool
-	// voters is the number of non-learner etcd members.
-	voters int
-	// remaining counts every voter not positively known healthy as lost, and
-	// drives the advisory warning.
-	remaining int
-	// confirmedRemaining counts only voters positively known healthy as
-	// present; it drives the hard gate so a transient status read failure
-	// cannot dead-end a possibly quorum-safe action.
-	confirmedRemaining int
-	floor              int
-	reason             string
-}
-
-func (a etcdQuorumAssessment) belowQuorum() bool {
-	return a.known && a.remaining < a.floor
-}
-
-// certainlyBelowQuorum is true only when the action would drop below quorum
-// even in the best case where every unknown member is actually healthy. It is
-// the hard-gate predicate; belowQuorum() remains the advisory.
-func (a etcdQuorumAssessment) certainlyBelowQuorum() bool {
-	return a.known && a.confirmedRemaining < a.floor
-}
-
 func assessEtcdQuorum(etcd EtcdState, targets []string) etcdQuorumAssessment {
-	if etcd.Status != Ready && etcd.Status != Partial {
-		return etcdQuorumAssessment{reason: "etcd quorum impact unknown (etcd data unavailable)"}
-	}
-	// Only voting members count toward quorum; learners never vote and must
-	// be excluded from both the floor and the at-risk arithmetic.
-	voters := 0
-	for _, member := range etcd.Value.Members {
-		if !member.IsLearner {
-			voters++
-		}
-	}
-	if voters == 0 {
-		return etcdQuorumAssessment{reason: "etcd membership unknown"}
-	}
-	atRisk := 0
-	confirmedUnhealthy := 0
-	unknown := 0
-	for _, member := range etcd.Value.Members {
-		if member.IsLearner {
-			continue
-		}
-		if memberMatchesAnyTarget(member, targets) {
-			atRisk++
-			continue // don't also count this member as already-unhealthy below
-		}
-		// A member positively reporting errors is confirmed unhealthy; a
-		// member whose status read failed is merely unknown. Both reduce the
-		// advisory "remaining" (same conservative predicate as
-		// evaluateEtcdMemberUnhealthy in health.go), but only confirmed
-		// unhealthy voters are allowed to hard-block an action.
-		switch {
-		case !member.StatusKnown:
-			unknown++
-		case len(member.Errors) > 0:
-			confirmedUnhealthy++
-		}
-	}
-
-	return etcdQuorumAssessment{
-		known:              true,
-		voters:             voters,
-		remaining:          voters - atRisk - confirmedUnhealthy - unknown,
-		confirmedRemaining: voters - atRisk - confirmedUnhealthy,
-		floor:              voters/2 + 1,
-	}
+	return assessEtcdQuorumFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, targets)
 }
 
 func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
@@ -384,28 +276,10 @@ func etcdQuorumBlockReason(etcd EtcdState, targets []string) string {
 // leadership it is giving up. A target that is not the current leader (or whose
 // status is unknown) has nothing to forfeit and never warns.
 func etcdLeadershipWarning(etcd EtcdState, memberHostname string) string {
-	if etcd.Status != Ready && etcd.Status != Partial {
-		return ""
-	}
-	targetIsLeader := false
-	for _, member := range etcd.Value.Members {
-		if member.Hostname == memberHostname && member.StatusKnown && member.IsLeader {
-			targetIsLeader = true
-			break
-		}
-	}
-	if !targetIsLeader {
-		return ""
-	}
-	for _, member := range etcd.Value.Members {
-		if member.IsLearner || member.Hostname == memberHostname {
-			continue
-		}
-		if member.StatusKnown && len(member.Errors) == 0 {
-			return ""
-		}
-	}
-	return "no healthy follower is known to take leadership"
+	return etcdLeadershipWarningFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, memberHostname)
 }
 
 // isDestructiveEtcdMembership reports whether a kind changes cluster
@@ -435,26 +309,42 @@ func assessEtcdMembership(etcd EtcdState, memberID uint64, memberHostname string
 	if etcd.Status != Ready && etcd.Status != Partial {
 		return etcdMembershipAssessment{reason: "etcd membership unknown (etcd data unavailable)"}
 	}
-	for _, member := range etcd.Value.Members {
-		if memberMatchesMember(member, memberID, memberHostname) {
-			return etcdMembershipAssessment{
-				found:   true,
-				voter:   !member.IsLearner,
-				healthy: member.StatusKnown && len(member.Errors) == 0,
-				target:  membershipTargetForMember(member),
+	member, ok := resolveEtcdMember(etcd.Value.Members, memberID, memberHostname)
+	// Compatibility for the legacy reducer wrapper: its historical request
+	// shape treats an exact hostname as authoritative, then falls back to ID.
+	// Prepared-plan callers use resolveEtcdMember directly and reject conflict.
+	if !ok {
+		for _, candidate := range etcd.Value.Members {
+			if memberHostname != "" && candidate.Hostname == memberHostname {
+				member, ok = candidate, true
+				break
+			}
+		}
+		if !ok && memberID != 0 {
+			for _, candidate := range etcd.Value.Members {
+				if candidate.MemberID == memberID {
+					member, ok = candidate, true
+					break
+				}
 			}
 		}
 	}
-
+	if ok {
+		return etcdMembershipAssessment{
+			found:   true,
+			voter:   !member.IsLearner,
+			healthy: member.StatusKnown && len(member.Errors) == 0,
+			target:  membershipTargetForMember(member),
+		}
+	}
 	return etcdMembershipAssessment{reason: "member is not in the current etcd snapshot"}
 }
 
 func memberMatchesMember(member domain.EtcdMemberSnapshot, memberID uint64, memberHostname string) bool {
-	if memberHostname != "" && member.Hostname == memberHostname {
-		return true
+	if memberID == 0 && memberHostname == "" {
+		return false
 	}
-
-	return memberID != 0 && member.MemberID == memberID
+	return (memberID == 0 || member.MemberID == memberID) && (memberHostname == "" || member.Hostname == memberHostname)
 }
 
 // membershipTargetForMember is the target string fed to assessEtcdQuorum for a
@@ -618,41 +508,6 @@ func sanitizeSnapshotToken(value string) string {
 		return "-"
 	}
 	return token
-}
-
-func memberMatchesAnyTarget(member domain.EtcdMemberSnapshot, targets []string) bool {
-	for _, target := range targets {
-		if target == "" {
-			continue
-		}
-		if member.Hostname == target {
-			return true
-		}
-		if member.MemberID != 0 && strconv.FormatUint(member.MemberID, 10) == target {
-			return true
-		}
-		for _, raw := range member.ClientURLs {
-			if endpointHost(raw) == target {
-				return true
-			}
-		}
-		for _, raw := range member.PeerURLs {
-			if endpointHost(raw) == target {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func endpointHost(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-
-	return parsed.Hostname()
 }
 
 func actionEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {
