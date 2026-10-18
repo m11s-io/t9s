@@ -21,7 +21,7 @@ func sanitizeLogLines(lines []string) []string {
 
 type logsModel struct {
 	title          string
-	state          application.LogState
+	state          logDisplayState
 	filter         string
 	filtering      bool
 	following      bool
@@ -30,9 +30,24 @@ type logsModel struct {
 	viewport       viewport.Model
 }
 
+type logDisplayState struct {
+	Status application.LoadStatus
+	Lines  []string
+	Err    string
+	EOF    bool
+}
+
 func newLogsModel(state application.LogState) logsModel {
 	m := logsModel{title: "SERVICE LOGS", following: true, viewport: viewport.New()}
 	return m.setState(state)
+}
+
+func newDirectServiceLogsModel() logsModel {
+	return logsModel{title: "SERVICE LOGS", following: true, viewport: viewport.New(), state: logDisplayState{Status: application.Loading}}
+}
+
+func newDirectDmesgModel() logsModel {
+	return logsModel{title: "DMESG", following: true, viewport: viewport.New(), state: logDisplayState{Status: application.Loading}}
 }
 
 // newDmesgModel reuses the service-log stream renderer: dmesg frames are the
@@ -59,9 +74,13 @@ func (m logsModel) setDmesgState(state application.DmesgState) logsModel {
 // visibleLines and viewSized can rely on that invariant instead of
 // re-sanitizing on every render frame.
 func (m logsModel) setState(state application.LogState) logsModel {
-	state.Lines = sanitizeLogLines(state.Lines)
-	state.Err = sanitizeUntrustedText(state.Err)
-	m.state = state
+	return m.setStreamState(state.Status, state.Lines, state.Err, state.EOF)
+}
+
+// setStreamState owns the display snapshot used by direct stream commands;
+// setState above remains the thin legacy adapter until the old reducer is removed.
+func (m logsModel) setStreamState(status application.LoadStatus, lines []string, err string, eof bool) logsModel {
+	m.state = logDisplayState{Status: status, Lines: sanitizeLogLines(lines), Err: sanitizeUntrustedText(err), EOF: eof}
 	return m
 }
 

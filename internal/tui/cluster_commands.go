@@ -38,6 +38,7 @@ func (m *directModel) runClusterCommand(value string) tea.Cmd {
 	}
 	m.cancelClosedDirectDiagnostics(previous)
 	m.cancelClosedDirectResources(previous)
+	m.closeStreamsOutsideView(previous)
 	return command
 }
 

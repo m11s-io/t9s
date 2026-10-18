@@ -2,12 +2,15 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
+	"io"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 type directModel struct {
@@ -44,12 +47,36 @@ type directModel struct {
 	resourceInstances   resourceInstancesModel
 	resourceDetail      resourceDetailModel
 	pendingResourceKind string
+	logs                logsModel
+	dmesg               logsModel
+	logStream           directLogStreamState
+	dmesgStream         directDmesgStreamState
 	views               viewStack
 	styles              styles
 	width               int
 	height              int
 	splash              bool
 }
+
+type directLogStreamState struct {
+	request directRequest
+	stream  ports.ServiceLogStream
+	target  domain.LogRequest
+	status  application.LoadStatus
+	err     string
+	eof     bool
+}
+
+type directDmesgStreamState struct {
+	request directRequest
+	stream  ports.DmesgStream
+	target  domain.DmesgRequest
+	status  application.LoadStatus
+	err     string
+	eof     bool
+}
+
+type directClearLogs struct{ dmesg bool }
 
 func newDirectModel(parent context.Context, client *application.Client, options LaunchOptions) directModel {
 	if parent == nil {
@@ -84,6 +111,8 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		resourceKinds:     newResourceKindsModel(application.ResourceBrowserState{}),
 		resourceInstances: newResourceInstancesModel(application.ResourceBrowserState{}),
 		resourceDetail:    newResourceDetailModel(),
+		logs:              newDirectServiceLogsModel(),
+		dmesg:             newDirectDmesgModel(),
 		palette:           newCommandModel(),
 		views:             newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:            defaultStyles(), width: 120, height: 40, splash: true,
@@ -261,6 +290,97 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		directCPULoaded, directTimeLoaded, directTimeCheckLoaded:
 		m.applyDiagnosticResult(message)
 		return m, nil
+	case directServiceLogsOpened:
+		current := m.requests.current(message.request)
+		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewServiceLogs {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			if current {
+				m.requests.cancelSlot("service-logs")
+			}
+			return m, nil
+		}
+		if message.err != nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.logStream.status, m.logStream.err = application.Failed, "Service logs are unavailable"
+			m.logs = m.logs.setStreamState(application.Failed, nil, m.logStream.err, false)
+			m.requests.cancelSlot("service-logs")
+			return m, nil
+		}
+		m.logStream.stream = message.stream
+		m.logStream.status = application.Ready
+		return m, directServiceLogNextCommand(message.stream, m.logStream.request)
+	case directServiceLogBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.logStream.request.stamp {
+			return m, nil
+		}
+		lines := appendBoundedLines(m.logs.state.Lines, message.batch.Lines, 5000)
+		if message.batch.Err != "" {
+			m.logStream.status, m.logStream.err = application.Failed, message.batch.Err
+		}
+		if message.err != nil && !errors.Is(message.err, io.EOF) {
+			m.logStream.status, m.logStream.err = application.Failed, "Service log stream failed"
+		}
+		m.logStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
+		m.logs = m.logs.setStreamState(m.logStream.status, lines, m.logStream.err, m.logStream.eof)
+		if !m.logStream.eof && m.logStream.status != application.Failed {
+			return m, directServiceLogNextCommand(m.logStream.stream, m.logStream.request)
+		}
+		m.requests.cancelSlot("service-logs")
+		return m, nil
+	case directDmesgOpened:
+		current := m.requests.current(message.request)
+		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewDmesg {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			if current {
+				m.requests.cancelSlot("dmesg")
+			}
+			return m, nil
+		}
+		if message.err != nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream is unavailable"
+			m.dmesg = m.dmesg.setStreamState(application.Failed, nil, m.dmesgStream.err, false)
+			m.requests.cancelSlot("dmesg")
+			return m, nil
+		}
+		m.dmesgStream.stream = message.stream
+		m.dmesgStream.status = application.Ready
+		return m, directDmesgNextCommand(message.stream, m.dmesgStream.request)
+	case directDmesgBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.dmesgStream.request.stamp {
+			return m, nil
+		}
+		lines := appendBoundedLines(m.dmesg.state.Lines, message.batch.Lines, 5000)
+		if message.batch.Err != "" {
+			m.dmesgStream.status, m.dmesgStream.err = application.Failed, message.batch.Err
+		}
+		if message.err != nil && !errors.Is(message.err, io.EOF) {
+			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream failed"
+		}
+		m.dmesgStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
+		m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, lines, m.dmesgStream.err, m.dmesgStream.eof)
+		if !m.dmesgStream.eof && m.dmesgStream.status != application.Failed {
+			return m, directDmesgNextCommand(m.dmesgStream.stream, m.dmesgStream.request)
+		}
+		m.requests.cancelSlot("dmesg")
+		return m, nil
+	case directClearLogs:
+		if message.dmesg {
+			m.dmesgStream.err = ""
+			m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, nil, "", false)
+		} else {
+			m.logStream.err = ""
+			m.logs = m.logs.setStreamState(m.logStream.status, nil, "", false)
+		}
+		return m, nil
 	case directResourceKindsLoaded, directResourceInstancesLoaded, directResourceDetailLoaded:
 		return m, m.applyResourceResult(message)
 	case directRunCommand:
@@ -327,7 +447,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering && !m.cpu.filtering && !m.time.filtering && !m.resourceKinds.filtering && !m.resourceInstances.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering && !m.cpu.filtering && !m.time.filtering && !m.resourceKinds.filtering && !m.resourceInstances.filtering && !m.logs.filtering && !m.dmesg.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
@@ -360,6 +480,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if command, handled := m.handleNodeDiagnosticKey(message); handled {
 				return m, command
 			}
+			if message.String() == "e" && !m.nodes.filtering && m.session != nil {
+				if node, ok := m.nodes.selected(m.cluster.nodes.Value.Nodes); ok {
+					return m, m.openDirectDmesg(node.Target())
+				}
+			}
 			if message.String() == "space" && !m.options.WritesEnabled && !m.nodes.filtering {
 				return m, nil
 			}
@@ -377,6 +502,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if message.String() == "r" && !m.services.filtering && m.session != nil {
 				return m, m.refreshDirectNodes()
+			}
+			if message.String() == "l" && !m.services.filtering && m.session != nil {
+				if service, ok := m.services.selected(m.cluster.services.Value.Services); ok {
+					return m, m.openDirectServiceLogs(service)
+				}
 			}
 			m.services = m.services.update(message, m.cluster.services.Value.Services)
 		} else if m.views.top().Kind == viewEvents {
@@ -430,6 +560,38 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.problems = m.problems.update(message, diagnoses)
 		} else if m.views.top().Kind == viewOverview && message.String() == "q" {
 			return m, m.cleanup(tea.Quit())
+		}
+		if m.views.top().Kind == viewServiceLogs {
+			if (message.String() == "esc" && !m.logs.filtering) || (message.String() == "q" && !m.logs.filtering) {
+				m.closeDirectLogs(false)
+				m.popDirectView()
+				return m, nil
+			}
+			if message.String() == "r" && m.session != nil {
+				return m, m.reconnectDirectLogs(false)
+			}
+			m.logs = m.logs.update(message)
+			if m.logs.clearRequested {
+				m.logs.clearRequested = false
+				return m, func() tea.Msg { return directClearLogs{} }
+			}
+			return m, nil
+		}
+		if m.views.top().Kind == viewDmesg {
+			if (message.String() == "esc" && !m.dmesg.filtering) || (message.String() == "q" && !m.dmesg.filtering) {
+				m.closeDirectLogs(true)
+				m.popDirectView()
+				return m, nil
+			}
+			if message.String() == "r" && m.session != nil {
+				return m, m.reconnectDirectLogs(true)
+			}
+			m.dmesg = m.dmesg.update(message)
+			if m.dmesg.clearRequested {
+				m.dmesg.clearRequested = false
+				return m, func() tea.Msg { return directClearLogs{dmesg: true} }
+			}
+			return m, nil
 		}
 	}
 	return m, nil
@@ -513,6 +675,10 @@ func (m directModel) View() tea.View {
 			} else {
 				content = "SERVICE DETAIL\nService unavailable"
 			}
+		} else if m.views.top().Kind == viewServiceLogs {
+			content = m.logs.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+		} else if m.views.top().Kind == viewDmesg {
+			content = m.dmesg.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
 		} else if m.views.top().Kind == viewServices {
 			content = m.services.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.services.Value,
 				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)
@@ -583,6 +749,10 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.resourceKinds.filter
 	} else if !m.palette.active && m.views.top().Kind == viewResourceInstances && (m.resourceInstances.filtering || m.resourceInstances.filter != "") {
 		prompt = "/" + m.resourceInstances.filter
+	} else if !m.palette.active && m.views.top().Kind == viewServiceLogs && (m.logs.filtering || m.logs.filter != "") {
+		prompt = "/" + m.logs.filter
+	} else if !m.palette.active && m.views.top().Kind == viewDmesg && (m.dmesg.filtering || m.dmesg.filter != "") {
+		prompt = "/" + m.dmesg.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
@@ -593,6 +763,8 @@ func (m directModel) View() tea.View {
 }
 
 func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
+	m.closeDirectLogs(false)
+	m.closeDirectLogs(true)
 	m.pendingResourceKind = ""
 	if m.sessionCancel != nil {
 		m.sessionCancel()
@@ -658,6 +830,8 @@ func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
 }
 
 func (m directModel) fallbackCleanup() {
+	m.closeDirectLogs(false)
+	m.closeDirectLogs(true)
 	if m.rootCancel != nil {
 		m.rootCancel()
 	}
