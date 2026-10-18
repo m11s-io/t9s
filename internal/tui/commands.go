@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 type directContextsLoaded struct {
@@ -32,6 +33,30 @@ type directEventsLoaded struct {
 	request directRequestStamp
 	events  domain.EventSet
 	err     error
+}
+
+type directEventFollowOpened struct {
+	request directRequestStamp
+	stream  ports.EventStream
+	err     error
+}
+
+type directEventFollowBatch struct {
+	request directRequestStamp
+	batch   domain.EventSet
+	err     error
+}
+
+type directClusterHealthOpened struct {
+	request directRequestStamp
+	stream  ports.ClusterHealthStream
+	err     error
+}
+
+type directClusterHealthBatch struct {
+	request  directRequestStamp
+	progress domain.ClusterHealthProgress
+	err      error
 }
 
 type directEtcdLoaded struct {

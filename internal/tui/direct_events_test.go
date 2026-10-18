@@ -25,7 +25,7 @@ func TestDirectEventsFilterSelectionAndPaletteNavigation(t *testing.T) {
 	model.cluster.events = directEventState{Status: directReady, Value: domain.EventSet{Events: events}}
 	model.events = newEventsModel().normalizeSelection(events, 0)
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
-	assert.NotContains(t, ansi.Strip(model.View().Content), "Follow")
+	assert.Contains(t, ansi.Strip(model.View().Content), "Follow")
 
 	model, _ = updateDirect(model, keyPress('j'))
 	assert.Equal(t, eventKey(events[1]), model.events.selectedKey)

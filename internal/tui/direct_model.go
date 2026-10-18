@@ -49,8 +49,11 @@ type directModel struct {
 	pendingResourceKind string
 	logs                logsModel
 	dmesg               logsModel
+	healthcheck         healthcheckModel
 	logStream           directLogStreamState
 	dmesgStream         directDmesgStreamState
+	eventFollow         directEventFollowState
+	healthStream        directHealthStreamState
 	views               viewStack
 	styles              styles
 	width               int
@@ -74,6 +77,20 @@ type directDmesgStreamState struct {
 	status  application.LoadStatus
 	err     string
 	eof     bool
+}
+
+type directEventFollowState struct {
+	request   directRequest
+	stream    ports.EventStream
+	attempted bool
+	following bool
+	err       string
+}
+
+type directHealthStreamState struct {
+	request directRequest
+	stream  ports.ClusterHealthStream
+	target  domain.ClusterHealthRequest
 }
 
 type directClearLogs struct{ dmesg bool }
@@ -113,6 +130,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		resourceDetail:    newResourceDetailModel(),
 		logs:              newDirectServiceLogsModel(),
 		dmesg:             newDirectDmesgModel(),
+		healthcheck:       newDirectHealthcheckModel(healthcheckDisplayState{}),
 		palette:           newCommandModel(),
 		views:             newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:            defaultStyles(), width: 120, height: 40, splash: true,
@@ -189,6 +207,97 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = message.session
 		m.cluster.contextName = message.contextName
 		return m, m.startClusterObservations(message.session, message.request.generation)
+	case directEventFollowOpened:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			return m, nil
+		}
+		if message.err != nil || message.stream == nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.eventFollow.following = false
+			m.eventFollow.err = "Event stream is unavailable"
+			m.cluster.events.Status = directPartial
+			m.cluster.events.Err = m.eventFollow.err
+			m.requests.cancelSlot("cluster-events-follow")
+			return m, nil
+		}
+		m.eventFollow.stream = message.stream
+		return m, directEventFollowNextCommand(message.stream, m.eventFollow.request)
+	case directEventFollowBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
+			return m, nil
+		}
+		m.applyDirectEventBatch(message.batch, message.err)
+		if message.err != nil || m.eventFollow.err != "" {
+			m.eventFollow.following = false
+			if m.eventFollow.stream != nil {
+				_ = m.eventFollow.stream.Close()
+				m.eventFollow.stream = nil
+			}
+			m.requests.cancelSlot("cluster-events-follow")
+			return m, nil
+		}
+		return m, directEventFollowNextCommand(m.eventFollow.stream, m.eventFollow.request)
+	case directClusterHealthOpened:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			return m, nil
+		}
+		if message.err != nil || message.stream == nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Failed, Request: m.healthStream.target, Err: "Cluster health check is unavailable"})
+			m.requests.cancelSlot("cluster-health")
+			return m, nil
+		}
+		m.healthStream.stream = message.stream
+		m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Ready, Request: m.healthStream.target})
+		return m, directClusterHealthNextCommand(message.stream, m.healthStream.request)
+	case directClusterHealthBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
+			return m, nil
+		}
+		state := m.healthcheck.state
+		if message.progress.Message != "" {
+			state.Lines = appendBoundedLines(state.Lines, []string{message.progress.Message}, 500)
+		}
+		if (message.err != nil && !errors.Is(message.err, io.EOF)) || message.progress.Err != "" {
+			state.Status = application.Failed
+			state.Err = "Cluster health check is unavailable"
+			if message.progress.Err != "" {
+				state.Err = message.progress.Err
+			}
+			state.VerdictReady = false
+			m.healthcheck = m.healthcheck.setStreamState(state)
+			m.syncDirectStreamViewports()
+			m.closeDirectHealth()
+			return m, nil
+		}
+		if message.progress.EOF {
+			state.EOF = true
+			state.VerdictReady = true
+			state.Status = application.Ready
+			m.healthcheck = m.healthcheck.setStreamState(state)
+			m.syncDirectStreamViewports()
+			m.closeDirectHealth()
+			return m, nil
+		}
+		m.healthcheck = m.healthcheck.setStreamState(state)
+		m.syncDirectStreamViewports()
+		if errors.Is(message.err, io.EOF) {
+			state.EOF = true
+			m.healthcheck = m.healthcheck.setStreamState(state)
+			m.closeDirectHealth()
+			return m, nil
+		}
+		return m, directClusterHealthNextCommand(m.healthStream.stream, m.healthStream.request)
 	case directNodeServicesLoaded:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
 			return m, nil
@@ -528,10 +637,39 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.cleanup(tea.Quit())
 			}
 			if message.String() == "r" && !m.events.filtering && m.session != nil {
+				if m.eventFollow.following {
+					m.events = m.events.update(message, eventRows(m.cluster.events.Value))
+					return m, nil
+				}
 				request, _ := m.requests.beginWithContext("cluster-events", m.generation(), m.sessionCtx)
 				return m, directEventsCommand(m.session, request)
 			}
+			if message.String() == "s" && !m.events.filtering && m.session != nil {
+				if m.eventFollow.following {
+					m.closeDirectEventFollow()
+					return m, nil
+				}
+				return m, m.openDirectEventFollow()
+			}
 			m.events = m.events.update(message, eventRows(m.cluster.events.Value))
+		} else if m.views.top().Kind == viewClusterHealth {
+			if !m.healthcheck.filtering && (message.String() == "q" || message.String() == "esc") {
+				previous := m.views
+				m.popDirectView()
+				m.closeStreamsOutsideView(previous)
+				return m, nil
+			}
+			if message.String() == "r" && !m.healthcheck.filtering && m.session != nil {
+				return m, m.reconnectDirectClusterHealth()
+			}
+			m.healthcheck = m.healthcheck.update(message)
+			if m.healthcheck.clearRequested {
+				m.healthcheck.clearRequested = false
+				state := m.healthcheck.state
+				state.Lines = nil
+				m.healthcheck = m.healthcheck.setStreamState(state)
+			}
+			m.syncDirectStreamViewports()
 		} else if m.views.top().Kind == viewEtcd {
 			if message.String() == "q" && !m.etcd.filtering {
 				return m, m.cleanup(tea.Quit())
@@ -699,7 +837,10 @@ func (m directModel) View() tea.View {
 			content = m.services.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.services.Value,
 				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)
 		} else if m.views.top().Kind == viewEvents {
-			content = m.events.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.events)
+			content = m.events.viewFollowSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.events,
+				m.eventFollow.attempted, m.eventFollow.following, m.eventFollow.err)
+		} else if m.views.top().Kind == viewClusterHealth {
+			content = m.healthcheck.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
 		} else if m.views.top().Kind == viewEtcd {
 			content = m.etcd.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.etcd)
 		} else if m.views.top().Kind == viewOverview {
@@ -741,6 +882,8 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.services.filter
 	} else if !m.palette.active && m.views.top().Kind == viewEvents && (m.events.filtering || m.events.filter != "") {
 		prompt = "/" + m.events.filter
+	} else if !m.palette.active && m.views.top().Kind == viewClusterHealth && (m.healthcheck.filtering || m.healthcheck.filter != "") {
+		prompt = "/" + m.healthcheck.filter
 	} else if !m.palette.active && m.views.top().Kind == viewEtcd && (m.etcd.filtering || m.etcd.filter != "") {
 		prompt = "/" + m.etcd.filter
 	} else if !m.palette.active && m.views.top().Kind == viewProblems && (m.problems.filtering || m.problems.filter != "") {
@@ -781,6 +924,8 @@ func (m directModel) View() tea.View {
 func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.closeDirectLogs(false)
 	m.closeDirectLogs(true)
+	m.closeDirectEventFollow()
+	m.closeDirectHealth()
 	m.pendingResourceKind = ""
 	if m.sessionCancel != nil {
 		m.sessionCancel()
@@ -832,22 +977,16 @@ func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
 	if kind == viewEtcd {
 		return actionHints(kind, false)
 	}
-	hints := actionHints(kind, writesEnabled)
-	if kind != viewEvents {
-		return hints
-	}
-	filtered := hints[:0]
-	for _, hint := range hints {
-		if hint.Key != "s" || hint.Label != "Follow" {
-			filtered = append(filtered, hint)
-		}
-	}
-	return filtered
+	return actionHints(kind, writesEnabled)
 }
 
 func (m directModel) fallbackCleanup() {
 	m.closeDirectLogs(false)
 	m.closeDirectLogs(true)
+	m.closeDirectEventFollow()
+	m.closeDirectHealth()
+	m.eventFollow = directEventFollowState{}
+	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{})
 	if m.rootCancel != nil {
 		m.rootCancel()
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
 )
 
 // defaultClusterHealthWait is the wait timeout used when ":healthcheck" is run
@@ -18,11 +19,20 @@ const defaultClusterHealthWait = 60 * time.Second
 
 type healthcheckModel struct {
 	title          string
-	state          application.ClusterHealthState
+	state          healthcheckDisplayState
 	filter         string
 	filtering      bool
 	clearRequested bool
 	viewport       viewport.Model
+}
+
+type healthcheckDisplayState struct {
+	Status       application.LoadStatus
+	Request      domain.ClusterHealthRequest
+	Lines        []string
+	Err          string
+	EOF          bool
+	VerdictReady bool
 }
 
 func newHealthcheckModel(state application.ClusterHealthState) healthcheckModel {
@@ -30,12 +40,34 @@ func newHealthcheckModel(state application.ClusterHealthState) healthcheckModel 
 	return m.setState(state)
 }
 
+func newDirectHealthcheckModel(state healthcheckDisplayState) healthcheckModel {
+	m := healthcheckModel{title: "CLUSTER HEALTH", viewport: viewport.New()}
+	return m.setStreamState(state)
+}
+
 // setState is the single point where health-check content enters the model. It
 // sanitizes Lines and Err so m.state is always sanitized thereafter.
 func (m healthcheckModel) setState(state application.ClusterHealthState) healthcheckModel {
+	return m.setStreamState(healthcheckDisplayState{
+		Status: state.Status, Request: state.Request, Lines: state.Lines, Err: state.Err,
+		EOF: state.EOF, VerdictReady: state.VerdictReady,
+	})
+}
+
+func (m healthcheckModel) setStreamState(state healthcheckDisplayState) healthcheckModel {
 	state.Lines = sanitizeLogLines(state.Lines)
 	state.Err = sanitizeUntrustedText(state.Err)
 	m.state = state
+	return m
+}
+
+func (m healthcheckModel) syncViewport(size contentSize) healthcheckModel {
+	if size.Height <= 0 {
+		return m
+	}
+	bodyHeight := max(0, size.Height-2)
+	m.viewport.SetHeight(bodyHeight)
+	m.viewport.SetContentLines(m.renderedLines(max(0, size.Width)))
 	return m
 }
 
@@ -112,6 +144,8 @@ func (m healthcheckModel) verdictLine() string {
 		return "✘ " + m.state.Err
 	case m.state.VerdictReady:
 		return "✔ cluster is healthy"
+	case m.state.EOF:
+		return "… check ended without a verdict"
 	case m.state.Status == application.Loading:
 		return "… starting"
 	default:
@@ -125,10 +159,9 @@ func (m healthcheckModel) viewSized(size contentSize) string {
 	}
 	header := m.headerLine()
 	verdict := m.verdictLine()
+	m = m.syncViewport(size)
 	bodyHeight := max(0, size.Height-2)
 	body := m.renderedLines(max(0, size.Width))
-	m.viewport.SetHeight(bodyHeight)
-	m.viewport.SetContentLines(body)
 	start := min(m.viewport.YOffset(), len(body))
 	end := min(start+bodyHeight, len(body))
 	lines := make([]string, 0, bodyHeight+2)

@@ -2,6 +2,10 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net/netip"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
@@ -64,6 +68,16 @@ func (m *directModel) reconnectDirectLogs(dmesg bool) tea.Cmd {
 	return directOpenServiceLogsCommand(m.session, request, target)
 }
 
+func (m *directModel) reconnectDirectClusterHealth() tea.Cmd {
+	target := m.healthStream.target
+	m.closeDirectHealth()
+	request, _ := m.requests.beginWithContext("cluster-health", m.generation(), m.sessionCtx)
+	m.healthStream = directHealthStreamState{request: request, target: target}
+	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{Status: application.Loading, Request: target})
+	m.syncDirectStreamViewports()
+	return directOpenClusterHealthCommand(m.session, request, target)
+}
+
 func (m *directModel) syncDirectStreamViewports() {
 	layout := layoutShell(m.width, m.height)
 	size := contentSize{Width: layout.Width, Height: layout.ContentHeight}
@@ -72,6 +86,9 @@ func (m *directModel) syncDirectStreamViewports() {
 	}
 	if m.views.top().Kind == viewDmesg {
 		m.dmesg = m.dmesg.syncViewport(size)
+	}
+	if m.views.top().Kind == viewClusterHealth {
+		m.healthcheck = m.healthcheck.syncViewport(size)
 	}
 }
 
@@ -92,6 +109,12 @@ func (m *directModel) closeStreamsOutsideView(previous viewStack) {
 	}
 	if previous.top().Kind == viewDmesg && m.views.top().Kind != viewDmesg {
 		m.closeDirectLogs(true)
+	}
+	if previous.top().Kind == viewEvents && m.views.top().Kind != viewEvents {
+		m.closeDirectEventFollow()
+	}
+	if previous.top().Kind == viewClusterHealth && m.views.top().Kind != viewClusterHealth {
+		m.closeDirectHealth()
 	}
 }
 
@@ -144,5 +167,140 @@ func directDmesgNextCommand(stream ports.DmesgStream, request directRequest) tea
 	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
 		batch, err := stream.Next(ctx)
 		return directDmesgBatch{request: request.stamp, batch: batch, err: err}
+	})
+}
+
+func (m *directModel) openDirectEventFollow() tea.Cmd {
+	m.requests.cancelSlot("cluster-events")
+	request, _ := m.requests.beginWithContext("cluster-events-follow", m.generation(), m.sessionCtx)
+	m.eventFollow = directEventFollowState{request: request, attempted: true, following: true}
+	m.cluster.events.Value.Events = appendBoundedEvents(nil, m.cluster.events.Value.Events, 2000)
+	m.cluster.events.Value.Problems = nil
+	m.cluster.events.Status = directReady
+	m.cluster.events.Err = ""
+	return directFollowEventsCommand(m.session, request)
+}
+
+func (m *directModel) closeDirectEventFollow() {
+	m.requests.cancelSlot("cluster-events-follow")
+	if m.eventFollow.stream != nil {
+		_ = m.eventFollow.stream.Close()
+		m.eventFollow.stream = nil
+	}
+	m.eventFollow.following = false
+}
+
+func (m *directModel) applyDirectEventBatch(batch domain.EventSet, err error) {
+	m.cluster.events.Value.Events = appendBoundedEvents(m.cluster.events.Value.Events, batch.Events, 2000)
+	for _, problem := range batch.Problems {
+		found := false
+		for _, old := range m.cluster.events.Value.Problems {
+			if old.Node == problem.Node {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.cluster.events.Value.Problems = append(m.cluster.events.Value.Problems, problem)
+		}
+	}
+	if len(m.cluster.events.Value.Problems) > 0 {
+		m.cluster.events.Status = directPartial
+		m.cluster.events.Err = "Some event streams are unavailable"
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		m.eventFollow.err = "Event stream is unavailable"
+		m.cluster.events.Status = directPartial
+		m.cluster.events.Err = m.eventFollow.err
+	}
+	m.events = m.events.normalizeSelection(eventRows(m.cluster.events.Value), m.events.control.Cursor())
+}
+
+func appendBoundedEvents(current, batch []domain.EventSnapshot, limit int) []domain.EventSnapshot {
+	if len(batch) >= limit {
+		return append([]domain.EventSnapshot(nil), batch[len(batch)-limit:]...)
+	}
+	result := append(append([]domain.EventSnapshot(nil), current...), batch...)
+	if len(result) > limit {
+		result = append([]domain.EventSnapshot(nil), result[len(result)-limit:]...)
+	}
+	return result
+}
+
+func (m *directModel) openDirectClusterHealth(timeout time.Duration) (directModel, tea.Cmd) {
+	if m.session == nil {
+		m.view.notice = "Session unavailable"
+		return *m, nil
+	}
+	requestTarget := pureClusterHealthRequestFromNodes(m.cluster.nodes.Value.Nodes, timeout)
+	request, _ := m.requests.beginWithContext("cluster-health", m.generation(), m.sessionCtx)
+	m.healthStream = directHealthStreamState{request: request, target: requestTarget}
+	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{Status: application.Loading, Request: requestTarget})
+	m.views = m.views.push(viewFrame{Kind: viewClusterHealth, Label: "healthcheck"})
+	m.syncDirectStreamViewports()
+	return *m, directOpenClusterHealthCommand(m.session, request, requestTarget)
+}
+
+func (m *directModel) closeDirectHealth() {
+	m.requests.cancelSlot("cluster-health")
+	if m.healthStream.stream != nil {
+		_ = m.healthStream.stream.Close()
+		m.healthStream.stream = nil
+	}
+}
+
+func pureClusterHealthRequestFromNodes(nodes []domain.NodeSnapshot, timeout time.Duration) domain.ClusterHealthRequest {
+	var controlPlane, workers []string
+	for _, node := range nodes {
+		target := &workers
+		switch node.Role {
+		case domain.NodeRoleControl:
+			target = &controlPlane
+		case domain.NodeRoleWorker:
+		default:
+			continue
+		}
+		added := false
+		for _, address := range node.Addresses {
+			if _, err := netip.ParseAddr(address); err == nil {
+				*target = append(*target, address)
+				added = true
+				break
+			}
+		}
+		if !added && node.Name != "" {
+			if _, err := netip.ParseAddr(node.Name); err == nil {
+				*target = append(*target, node.Name)
+			}
+		}
+	}
+	return domain.ClusterHealthRequest{ControlPlaneNodes: controlPlane, WorkerNodes: workers, WaitTimeout: timeout}
+}
+
+func directFollowEventsCommand(session *application.Session, request directRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		stream, err := session.FollowEvents(ctx)
+		return directEventFollowOpened{request: request.stamp, stream: stream, err: err}
+	})
+}
+
+func directEventFollowNextCommand(stream ports.EventStream, request directRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		batch, err := stream.Next(ctx)
+		return directEventFollowBatch{request: request.stamp, batch: batch, err: err}
+	})
+}
+
+func directOpenClusterHealthCommand(session *application.Session, request directRequest, target domain.ClusterHealthRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		stream, err := session.OpenClusterHealth(ctx, target)
+		return directClusterHealthOpened{request: request.stamp, stream: stream, err: err}
+	})
+}
+
+func directClusterHealthNextCommand(stream ports.ClusterHealthStream, request directRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		progress, err := stream.Next(ctx)
+		return directClusterHealthBatch{request: request.stamp, progress: progress, err: err}
 	})
 }

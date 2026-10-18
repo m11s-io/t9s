@@ -217,6 +217,30 @@ func (m eventsModel) viewSized(size contentSize, state directEventState) string 
 	return warning + "\n" + m.tableViewSized(size, state.Value, false, false, state.Err)
 }
 
+func (m eventsModel) viewFollowSized(size contentSize, state directEventState, attempted, following bool, err string) string {
+	status := ""
+	if attempted {
+		status = "EVENTS PAUSED"
+		if following {
+			status = "EVENTS FOLLOW"
+		}
+		if err != "" {
+			status += " — " + sanitizeUntrustedText(err)
+		}
+		if len(state.Value.Problems) > 0 {
+			status += " — failed nodes: " + fmt.Sprint(len(state.Value.Problems))
+		}
+	}
+	if status == "" {
+		return m.viewSized(size, state)
+	}
+	if size.Height <= 1 {
+		return status
+	}
+	size.Height--
+	return status + "\n" + m.viewSized(size, state)
+}
+
 func (m eventsModel) tableViewSized(size contentSize, eventSet domain.EventSet, loading, failed bool, err string) string {
 	if failed {
 		return fallback(err)

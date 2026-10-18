@@ -31,6 +31,12 @@ func (m *directModel) runClusterCommand(value string) tea.Cmd {
 	case commandResources:
 		kind, _ := resourcesCommandArgument(value)
 		command = m.openDirectResources(kind)
+	case commandClusterHealth:
+		timeout := defaultClusterHealthWait
+		if parsed, ok := healthcheckCommandArgument(value); ok {
+			timeout = parsed
+		}
+		_, command = m.openDirectClusterHealth(timeout)
 	case commandContexts:
 		m.contexts = newContextsModel(m.cluster.contexts, m.cluster.contextName)
 	default:
