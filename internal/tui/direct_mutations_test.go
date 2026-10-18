@@ -186,6 +186,72 @@ func TestDirectBlockedMutationPromptShowsRiskAndCannotBeConfirmed(t *testing.T) 
 	assert.NotContains(t, renderDirectMutationPrompt(prompt), "(y/n)")
 }
 
+func TestCompletedMutationKeepsTimeServerValidationVisible(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model.splash = false
+	model.session = directMutationSession(t, true, domain.ServiceSet{}, func(context.Context, string, ports.RebootMode) error { return nil })
+	model.sessionCtx = context.Background()
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
+
+	model, command := updateDirect(model, keyPress('R'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	model, command = updateDirect(model, keyPress('y'))
+	for model.mutation.busy {
+		model, command = updateDirect(model, command())
+	}
+	assert.NotEmpty(t, model.mutation.notice, "the completed operation status remains available")
+
+	model, command = updateDirect(model, keyPress('t'))
+	require.Equal(t, viewTime, model.views.top().Kind)
+	require.NotNil(t, command)
+	model, _ = updateDirect(model, keyPress('c'))
+	require.NotNil(t, model.timePrompt)
+	model.timePrompt.input.SetValue("https://bad.example")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, model.timePrompt)
+	require.NotEmpty(t, model.timePrompt.err)
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "TIME SERVER :")
+	assert.Contains(t, content, model.timePrompt.err)
+}
+
+func TestActiveMutationDoesNotHideNodeOrServiceFilterInput(t *testing.T) {
+	cases := []struct {
+		name string
+		view viewKind
+	}{
+		{name: "nodes", view: viewNodes},
+		{name: "services", view: viewServices},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+			model.splash = false
+			model.views = model.views.replaceRoot(viewFrame{Kind: test.view, Label: test.name})
+			model.mutation.busy = true
+			model.mutation.notice = "Mutation in progress…"
+			if test.view == viewNodes {
+				model.nodes.filtering = true
+				model.nodes.filter = "worker"
+			} else {
+				model.services.filtering = true
+				model.services.filter = "kubelet"
+			}
+
+			content := ansi.Strip(model.View().Content)
+			query := "/worker"
+			if test.view == viewServices {
+				query = "/kubelet"
+			}
+			assert.Contains(t, content, query, "active input must take footer priority")
+			assert.True(t, model.mutation.busy)
+			assert.Equal(t, "Mutation in progress…", model.mutation.notice, "operation status remains stored independently")
+		})
+	}
+}
+
 func TestDirectNodeActionAcceptedOperationSurvivesViewNavigationAndBlocksDuplicateConfirm(t *testing.T) {
 	started := make(chan struct{})
 	finish := make(chan struct{})
@@ -216,6 +282,11 @@ func TestDirectNodeActionAcceptedOperationSurvivesViewNavigationAndBlocksDuplica
 	model, duplicate := updateDirect(model, keyPress('y'))
 	assert.Nil(t, duplicate)
 	assert.True(t, model.mutation.busy)
+	model, _ = updateDirect(model, keyPress('/'))
+	model, _ = updateDirect(model, keyPress('c'))
+	model, _ = updateDirect(model, keyPress('p'))
+	assert.Contains(t, ansi.Strip(model.View().Content), "/cp", "node filter input remains visible during the accepted operation")
+	assert.Equal(t, "Mutation in progress…", model.mutation.notice, "operation status remains available independently")
 	close(finish)
 	model, next := updateDirect(model, <-done)
 	require.NotNil(t, next)

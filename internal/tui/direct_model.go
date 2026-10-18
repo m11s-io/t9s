@@ -568,7 +568,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.mutation.operation = prompt.operation
 				m.mutation.total = len(prompt.assessment.Targets)
 				m.mutation.results = nil
-				m.mutation.notice = ""
+				m.mutation.notice = "Mutation in progress…"
 				capacity := m.mutation.total
 				if capacity < 1 {
 					capacity = 1
@@ -1020,10 +1020,6 @@ func (m directModel) View() tea.View {
 	prompt := ""
 	if m.mutation.prompt != nil {
 		prompt = renderDirectMutationPrompt(m.mutation.prompt)
-	} else if m.mutation.notice != "" {
-		prompt = m.mutation.notice
-	} else if m.mutation.busy {
-		prompt = "Mutation in progress…"
 	} else if m.timePrompt != nil {
 		prompt = m.timePrompt.view()
 	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
@@ -1062,6 +1058,10 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.logs.filter
 	} else if !m.palette.active && m.views.top().Kind == viewDmesg && (m.dmesg.filtering || m.dmesg.filter != "") {
 		prompt = "/" + m.dmesg.filter
+	} else if m.mutation.notice != "" {
+		prompt = m.mutation.notice
+	} else if m.mutation.busy {
+		prompt = "Mutation in progress…"
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
