@@ -89,6 +89,7 @@ type preparedState struct {
 	assessment     Assessment
 	serviceFacts   *serviceActionFacts
 	nodeFacts      *nodeActionFacts
+	etcdFacts      *etcdActionFacts
 	nodeRequest    *NodeActionRequest
 	serviceRequest *ServiceActionRequest
 	etcdRequest    *EtcdActionRequest

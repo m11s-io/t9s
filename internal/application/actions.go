@@ -274,37 +274,14 @@ func isDestructiveEtcdMembership(kind EtcdActionKind) bool {
 	return kind == EtcdActionRemoveMember || kind == EtcdActionLeaveCluster
 }
 
-// etcdMembershipAssessment classifies a single-member removal/leave against
-// the current snapshot. Unlike assessEtcdQuorum (which takes node-name
-// targets), it resolves the member by numeric ID and/or hostname.
-type etcdMembershipAssessment struct {
-	found   bool
-	voter   bool
-	healthy bool
-	// target is the matched member's own hostname (or decimal ID), so the
-	// quorum assessment counts the member the caller actually matched rather
-	// than an echoed caller string.
-	target string
-	reason string
-}
-
 // assessEtcdMembership locates the member being changed. found is false when
 // etcd data is unavailable (Loading/Failed/Idle) or the member is absent from
 // the last snapshot; either way the caller cannot compute impact.
 func assessEtcdMembership(etcd EtcdState, memberID uint64, memberHostname string) etcdMembershipAssessment {
-	if etcd.Status != Ready && etcd.Status != Partial {
-		return etcdMembershipAssessment{reason: "etcd membership unknown (etcd data unavailable)"}
-	}
-	member, ok := resolveEtcdMember(etcd.Value.Members, memberID, memberHostname)
-	if ok {
-		return etcdMembershipAssessment{
-			found:   true,
-			voter:   !member.IsLearner,
-			healthy: member.StatusKnown && len(member.Errors) == 0,
-			target:  membershipTargetForMember(member),
-		}
-	}
-	return etcdMembershipAssessment{reason: "member is not in the current etcd snapshot"}
+	return assessEtcdMembershipFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, memberID, memberHostname)
 }
 
 func memberMatchesMember(member domain.EtcdMemberSnapshot, memberID uint64, memberHostname string) bool {
@@ -334,73 +311,31 @@ func membershipTargetForMember(member domain.EtcdMemberSnapshot) string {
 // is still healthy (which must go through graceful leave instead). Learners
 // do not vote, so removing one is never quorum-blocked.
 func etcdMembershipBlockReason(etcd EtcdState, kind EtcdActionKind, memberID uint64, memberHostname string) string {
-	assessment := assessEtcdMembership(etcd, memberID, memberHostname)
-	if !assessment.found {
-		return "refusing: " + assessment.reason
-	}
-	if kind == EtcdActionRemoveMember && assessment.healthy {
-		return "refusing: member is healthy — use leave (L)"
-	}
-	if assessment.target == "" {
-		return "refusing: cannot identify the member to change"
-	}
-	quorum := assessEtcdQuorum(etcd, []string{assessment.target})
-	if !quorum.known {
-		return "refusing: etcd quorum impact unknown"
-	}
-	// Irreversible membership surgery uses the pessimistic predicate: an
-	// unknown peer is treated as lost, not as optimistically healthy. A read
-	// blip must not authorize a removal that could strand the cluster.
-	if quorum.belowQuorum() {
-		return fmt.Sprintf("refusing: would drop etcd to %d/%d — below quorum (need %d)", quorum.remaining, quorum.voters, quorum.floor)
-	}
-
-	return ""
+	return etcdMembershipBlockReasonFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, kind, memberID, memberHostname)
 }
 
-// etcdMembershipWarning is the advisory text for a membership change that is
-// allowed but leaves no fault tolerance. A learner target is quorum-neutral
-// and never warns. The block reason is authoritative; this is display only.
-func etcdMembershipWarning(etcd EtcdState, _ EtcdActionKind, memberID uint64, memberHostname string) string {
-	assessment := assessEtcdMembership(etcd, memberID, memberHostname)
-	if !assessment.found || !assessment.voter {
-		return ""
-	}
-	if assessment.target == "" {
-		return ""
-	}
-	quorum := assessEtcdQuorum(etcd, []string{assessment.target})
-	if !quorum.known {
-		return quorum.reason
-	}
-	if quorum.remaining <= quorum.floor {
-		return fmt.Sprintf("would drop etcd to %d/%d — no fault tolerance (need %d)", quorum.remaining, quorum.voters, quorum.floor)
-	}
-
-	return ""
+func etcdMembershipWarning(etcd EtcdState, kind EtcdActionKind, memberID uint64, memberHostname string) string {
+	return etcdMembershipWarningFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, kind, memberID, memberHostname)
 }
 
-// etcdSnapshotNodeFor picks a source member for the mandatory pre-removal
-// snapshot: a healthy voter other than the target, so the snapshot is taken
-// from a live node whenever one exists. When no other healthy voter is known
-// it falls back to the target's own hostname (a local snapshot is still
-// valid; the caller surfaces the degraded source in the prompt).
 func etcdSnapshotNodeFor(etcd EtcdState, memberID uint64, memberHostname string) string {
-	if etcd.Status == Ready || etcd.Status == Partial {
-		for _, member := range etcd.Value.Members {
-			if member.IsLearner || member.Hostname == "" {
-				continue
-			}
-			if memberMatchesMember(member, memberID, memberHostname) {
-				continue
-			}
-			if member.StatusKnown && len(member.Errors) == 0 {
-				return member.Hostname
-			}
-		}
-	}
+	return etcdSnapshotNodeForFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, memberID, memberHostname)
+}
 
-	return memberHostname
+func appendWarning(existing, extra string) string {
+	if existing == "" {
+		return extra
+	}
+	return existing + "; " + extra
 }
 
 // firstOtherControlPlaneHostname returns a control-plane hostname other than
@@ -412,17 +347,7 @@ func firstOtherControlPlaneHostname(nodes []domain.NodeSnapshot, exclude string)
 			return hostname
 		}
 	}
-
 	return ""
-}
-
-// appendWarning joins a new advisory onto an existing one.
-func appendWarning(existing, extra string) string {
-	if existing == "" {
-		return extra
-	}
-
-	return existing + "; " + extra
 }
 
 // ValidateEtcdSnapshotPath rejects paths that cannot name a snapshot file:
@@ -455,6 +380,12 @@ func ValidateEtcdSnapshotPath(path string) error {
 // a hostname containing a separator cannot escape the working directory.
 func defaultEtcdSnapshotPath(contextName, memberHostname string, now time.Time) string {
 	return fmt.Sprintf("etcd-%s-%s-%s.db", sanitizeSnapshotToken(contextName), sanitizeSnapshotToken(memberHostname), now.UTC().Format("20060102T150405Z"))
+}
+
+// DefaultEtcdSnapshotPath returns a sanitized process-local default filename.
+// Callers may show and edit it before preparing an etcd snapshot action.
+func DefaultEtcdSnapshotPath(contextName, memberHostname string, now time.Time) string {
+	return defaultEtcdSnapshotPath(contextName, memberHostname, now)
 }
 
 func sanitizeSnapshotToken(value string) string {

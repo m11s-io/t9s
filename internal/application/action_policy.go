@@ -165,6 +165,79 @@ func etcdQuorumBlockReasonFacts(etcd EtcdPolicyFacts, targets []string) string {
 	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
 }
 
+type etcdMembershipAssessment struct {
+	found   bool
+	voter   bool
+	healthy bool
+	target  string
+	reason  string
+}
+
+func assessEtcdMembershipFacts(etcd EtcdPolicyFacts, memberID uint64, memberHostname string) etcdMembershipAssessment {
+	if !etcd.Available {
+		return etcdMembershipAssessment{reason: "etcd membership unknown (etcd data unavailable)"}
+	}
+	member, ok := resolveEtcdMember(etcd.Members, memberID, memberHostname)
+	if !ok {
+		return etcdMembershipAssessment{reason: "member is not in the current etcd snapshot"}
+	}
+	return etcdMembershipAssessment{
+		found: true, voter: !member.IsLearner,
+		healthy: member.StatusKnown && len(member.Errors) == 0,
+		target:  membershipTargetForMember(member),
+	}
+}
+
+func etcdMembershipBlockReasonFacts(etcd EtcdPolicyFacts, kind EtcdActionKind, memberID uint64, memberHostname string) string {
+	assessment := assessEtcdMembershipFacts(etcd, memberID, memberHostname)
+	if !assessment.found {
+		return "refusing: " + assessment.reason
+	}
+	if kind == EtcdActionRemoveMember && assessment.healthy {
+		return "refusing: member is healthy — use leave (L)"
+	}
+	if assessment.target == "" {
+		return "refusing: cannot identify the member to change"
+	}
+	quorum := assessEtcdQuorumFacts(etcd, []string{assessment.target})
+	if !quorum.known {
+		return "refusing: etcd quorum impact unknown"
+	}
+	if quorum.belowQuorum() {
+		return fmt.Sprintf("refusing: would drop etcd to %d/%d — below quorum (need %d)", quorum.remaining, quorum.voters, quorum.floor)
+	}
+	return ""
+}
+
+func etcdMembershipWarningFacts(etcd EtcdPolicyFacts, _ EtcdActionKind, memberID uint64, memberHostname string) string {
+	assessment := assessEtcdMembershipFacts(etcd, memberID, memberHostname)
+	if !assessment.found || !assessment.voter || assessment.target == "" {
+		return ""
+	}
+	quorum := assessEtcdQuorumFacts(etcd, []string{assessment.target})
+	if !quorum.known {
+		return quorum.reason
+	}
+	if quorum.remaining <= quorum.floor {
+		return fmt.Sprintf("would drop etcd to %d/%d — no fault tolerance (need %d)", quorum.remaining, quorum.voters, quorum.floor)
+	}
+	return ""
+}
+
+func etcdSnapshotNodeForFacts(etcd EtcdPolicyFacts, memberID uint64, memberHostname string) string {
+	if etcd.Available {
+		for _, member := range etcd.Members {
+			if member.IsLearner || member.Hostname == "" || memberMatchesMember(member, memberID, memberHostname) {
+				continue
+			}
+			if member.StatusKnown && len(member.Errors) == 0 {
+				return member.Hostname
+			}
+		}
+	}
+	return memberHostname
+}
+
 // resetQuorumBlockReasonFacts applies the destructive reset gate to normalized
 // etcd observations. Unlike ordinary node actions, reset refuses unknown
 // quorum and counts unknown peers as lost when calculating the floor.
