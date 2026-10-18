@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -109,4 +111,60 @@ func TestDirectMetadataUsesSharedHealthProjectionForReadyUnhealthyNode(t *testin
 	assert.Contains(t, header, "Degraded")
 	assert.Contains(t, header, "1/2")
 	assert.Contains(t, header, "Talos Rev: v1.2")
+}
+
+func TestDirectProblemsBottomSelectionVisibleWithPartialOrUnavailableNotice(t *testing.T) {
+	for _, status := range []directLoadStatus{directPartial, directFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model.splash = false
+			model.width, model.height = 120, 16
+			nodes := make([]domain.NodeSnapshot, 10)
+			for index := range nodes {
+				nodes[index] = domain.NodeSnapshot{
+					ID: fmt.Sprintf("node-%02d", index), Name: fmt.Sprintf("worker-%02d", index), Health: domain.HealthUnhealthy,
+				}
+			}
+			model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+			model.cluster.etcd = directEtcdState{Status: status, Err: "Etcd data is unavailable"}
+			model, _ = runDirectPalette(t, model, "problems")
+			for range 9 {
+				model, _ = updateDirect(model, keyPress('j'))
+			}
+
+			layout := layoutShell(model.width, model.height)
+			lines := strings.Split(model.View().Content, "\n")
+			visibleContent := strings.Join(lines[layout.HeaderHeight:layout.HeaderHeight+layout.ContentHeight], "\n")
+			assert.Equal(t, 9, model.problems.control.Cursor())
+			assert.Contains(t, visibleContent, "worker-09", "the selected diagnosis must remain in the actual content viewport")
+
+			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+			assert.Equal(t, "node-09", model.nodes.selectedID)
+		})
+	}
+}
+
+func TestDirectProblemsSelectionResetsAcrossContextsWithSameDiagnosisIdentity(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	nodes := []domain.NodeSnapshot{
+		{ID: "node-a", Name: "worker-a", Health: domain.HealthUnhealthy},
+		{ID: "node-b", Name: "worker-b", Health: domain.HealthUnhealthy},
+	}
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	model.cluster.etcd = directEtcdState{Status: directReady}
+	model, _ = runDirectPalette(t, model, "problems")
+	model, _ = updateDirect(model, keyPress('j'))
+	assert.Equal(t, "node\x00node-b\x00node-readiness", model.problems.selectedKey)
+
+	model.beginSessionOpen("staging")
+	assert.Empty(t, model.problems.selectedKey)
+	assert.Equal(t, 0, model.problems.control.Cursor())
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	model.cluster.etcd = directEtcdState{Status: directReady}
+	model, _ = runDirectPalette(t, model, "problems")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	assert.Equal(t, viewNodeDetail, model.views.top().Kind)
+	assert.Equal(t, "node-a", model.nodes.selectedID)
 }

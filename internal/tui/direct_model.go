@@ -456,7 +456,8 @@ func (m directModel) View() tea.View {
 		} else if m.views.top().Kind == viewOverview {
 			content = withHealthNotices(renderOverview(directHealthInput(m.cluster)), directHealthNotices(m.cluster))
 		} else if m.views.top().Kind == viewProblems {
-			content = withHealthNotices(m.problems.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, application.EvaluateObservations(directHealthInput(m.cluster))), directHealthNotices(m.cluster))
+			notices := directHealthNotices(m.cluster)
+			content = withHealthNotices(m.problems.viewSized(contentSize{Width: layout.Width, Height: max(0, layout.ContentHeight-len(notices))}, application.EvaluateObservations(directHealthInput(m.cluster))), notices)
 		} else {
 			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
 		}
@@ -533,7 +534,8 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.etcd.control.SetCursor(0)
 	m.problems.filter = ""
 	m.problems.filtering = false
-	m.problems.control.SetCursor(0)
+	m.problems.selectedKey = ""
+	m.problems.control.SetCount(0)
 	m.session = nil
 	m.view.notice = ""
 	m.palette = m.palette.close()
