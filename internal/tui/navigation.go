@@ -35,14 +35,17 @@ const (
 )
 
 type viewFrame struct {
-	Kind       viewKind
-	Label      string
-	ServiceKey string
-	NodeID     string
-	NodeTarget string
-	ProcessPID int32
-	DeviceName string
-	LinkName   string
+	Kind              viewKind
+	Label             string
+	ServiceKey        string
+	NodeID            string
+	NodeTarget        string
+	ProcessPID        int32
+	DeviceName        string
+	LinkName          string
+	ResourceKind      string
+	ResourceID        string
+	ResourceNamespace string
 }
 
 type viewStack []viewFrame

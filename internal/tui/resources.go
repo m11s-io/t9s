@@ -19,21 +19,64 @@ func sensitivityMarker(sensitive bool) string {
 	return ""
 }
 
+func directStatusFromLegacy(status application.LoadStatus) directLoadStatus {
+	switch status {
+	case application.Loading:
+		return directLoading
+	case application.Ready:
+		return directReady
+	case application.Partial:
+		return directPartial
+	case application.Failed:
+		return directFailed
+	default:
+		return ""
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 type resourceKindsModel struct {
-	state     application.ResourceBrowserState
-	filter    string
-	filtering bool
-	control   listControl
+	state       application.ResourceBrowserState
+	status      directLoadStatus
+	values      domain.ResourceKindSet
+	err         string
+	selectedKey string
+	filter      string
+	filtering   bool
+	control     listControl
 }
 
 func newResourceKindsModel(state application.ResourceBrowserState) resourceKindsModel {
-	return (resourceKindsModel{state: state}).normalizeSelection(0)
+	return (resourceKindsModel{state: state, values: state.Kinds, status: directStatusFromLegacy(state.KindsStatus), err: state.KindsErr}).normalizeSelection(0)
 }
 
 func (m resourceKindsModel) setState(state application.ResourceBrowserState) resourceKindsModel {
 	previousIndex := m.control.Cursor()
 	m.state = state
+	m.values, m.status, m.err = state.Kinds, directStatusFromLegacy(state.KindsStatus), state.KindsErr
 	return m.normalizeSelection(previousIndex)
+}
+
+func (m resourceKindsModel) setKinds(values domain.ResourceKindSet, status directLoadStatus, err string) resourceKindsModel {
+	previous := m.selectedKey
+	m.values, m.status, m.err = values, status, err
+	cursor := m.control.Cursor()
+	visible := m.visibleKinds()
+	for index, kind := range visible {
+		if kind.Type == previous {
+			cursor = index
+			break
+		}
+	}
+	return m.normalizeSelection(cursor)
 }
 
 func (m resourceKindsModel) update(message tea.KeyPressMsg) resourceKindsModel {
@@ -78,7 +121,18 @@ func (m resourceKindsModel) normalizeSelection(closest int) resourceKindsModel {
 	kinds := m.visibleKinds()
 	m.control.SetCount(len(kinds))
 	m.control.SetCursor(min(max(closest, 0), max(0, len(kinds)-1)))
+	if kind, ok := m.selectedAtCursor(kinds); ok {
+		m.selectedKey = kind.Type
+	}
 	return m
+}
+
+func (m resourceKindsModel) selectedAtCursor(kinds []domain.ResourceKindSnapshot) (domain.ResourceKindSnapshot, bool) {
+	cursor := m.control.Cursor()
+	if cursor < 0 || cursor >= len(kinds) {
+		return domain.ResourceKindSnapshot{}, false
+	}
+	return kinds[cursor], true
 }
 
 func (m resourceKindsModel) selected() (domain.ResourceKindSnapshot, bool) {
@@ -96,12 +150,16 @@ func (m resourceKindsModel) selectedValue() domain.ResourceKindSnapshot {
 }
 
 func (m resourceKindsModel) visibleKinds() []domain.ResourceKindSnapshot {
+	kinds := m.values.Kinds
+	if kinds == nil {
+		kinds = m.state.Kinds.Kinds
+	}
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Kinds.Kinds
+		return kinds
 	}
-	filtered := make([]domain.ResourceKindSnapshot, 0, len(m.state.Kinds.Kinds))
-	for _, kind := range m.state.Kinds.Kinds {
+	filtered := make([]domain.ResourceKindSnapshot, 0, len(kinds))
+	for _, kind := range kinds {
 		if strings.Contains(strings.ToLower(kind.DisplayType), query) || strings.Contains(strings.ToLower(kind.Type), query) {
 			filtered = append(filtered, kind)
 		}
@@ -118,19 +176,26 @@ func (m resourceKindsModel) view(width int) string {
 }
 
 func (m resourceKindsModel) viewSized(size contentSize) string {
-	if m.state.KindsStatus == application.Failed {
-		return fallback(m.state.KindsErr)
-	}
 	kinds := m.visibleKinds()
+	if (m.status == directFailed || m.state.KindsStatus == application.Failed) && len(kinds) == 0 {
+		return fallback(firstNonEmpty(m.err, m.state.KindsErr))
+	}
 	if len(kinds) == 0 {
-		if m.state.KindsStatus == application.Loading || m.state.KindsStatus == application.Idle {
+		if m.status == directLoading || m.status == "" || m.state.KindsStatus == application.Loading || m.state.KindsStatus == application.Idle {
 			return "Loading resource kinds…"
+		}
+		if m.err != "" {
+			return "No resource kinds\n" + m.err
 		}
 		return "No resource kinds"
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(kinds), m.control.Cursor(), rowCapacity)
-	return renderResourceKindTable(size.Width, kinds[start:end], m.control.Cursor()-start)
+	content := renderResourceKindTable(size.Width, kinds[start:end], m.control.Cursor()-start)
+	if m.status == directPartial || m.err != "" {
+		content += "\n" + m.err
+	}
+	return content
 }
 
 const defaultResourceKindsWidth = 120
@@ -178,20 +243,42 @@ func resourceKindRowValues(kind domain.ResourceKindSnapshot) []string {
 }
 
 type resourceInstancesModel struct {
-	state     application.ResourceBrowserState
-	filter    string
-	filtering bool
-	control   listControl
+	state       application.ResourceBrowserState
+	status      directLoadStatus
+	values      domain.ResourceInstanceSet
+	err         string
+	selectedKey string
+	filter      string
+	filtering   bool
+	control     listControl
 }
 
 func newResourceInstancesModel(state application.ResourceBrowserState) resourceInstancesModel {
-	return (resourceInstancesModel{state: state}).normalizeSelection(0)
+	return (resourceInstancesModel{state: state, values: state.Instances, status: directStatusFromLegacy(state.InstancesStatus), err: state.InstancesErr}).normalizeSelection(0)
 }
 
 func (m resourceInstancesModel) setState(state application.ResourceBrowserState) resourceInstancesModel {
 	previousIndex := m.control.Cursor()
 	m.state = state
+	m.values, m.status, m.err = state.Instances, directStatusFromLegacy(state.InstancesStatus), state.InstancesErr
 	return m.normalizeSelection(previousIndex)
+}
+
+func resourceInstanceIdentity(value domain.ResourceInstanceSnapshot) string {
+	return value.Namespace + "\x00" + value.ID
+}
+func (m resourceInstancesModel) setInstances(values domain.ResourceInstanceSet, status directLoadStatus, err string) resourceInstancesModel {
+	previous := m.selectedKey
+	m.values, m.status, m.err = values, status, err
+	cursor := m.control.Cursor()
+	visible := m.visibleInstances()
+	for index, item := range visible {
+		if resourceInstanceIdentity(item) == previous {
+			cursor = index
+			break
+		}
+	}
+	return m.normalizeSelection(cursor)
 }
 
 func (m resourceInstancesModel) update(message tea.KeyPressMsg) resourceInstancesModel {
@@ -236,7 +323,18 @@ func (m resourceInstancesModel) normalizeSelection(closest int) resourceInstance
 	instances := m.visibleInstances()
 	m.control.SetCount(len(instances))
 	m.control.SetCursor(min(max(closest, 0), max(0, len(instances)-1)))
+	if item, ok := m.selectedAtCursor(instances); ok {
+		m.selectedKey = resourceInstanceIdentity(item)
+	}
 	return m
+}
+
+func (m resourceInstancesModel) selectedAtCursor(items []domain.ResourceInstanceSnapshot) (domain.ResourceInstanceSnapshot, bool) {
+	cursor := m.control.Cursor()
+	if cursor < 0 || cursor >= len(items) {
+		return domain.ResourceInstanceSnapshot{}, false
+	}
+	return items[cursor], true
 }
 
 func (m resourceInstancesModel) selected() (domain.ResourceInstanceSnapshot, bool) {
@@ -254,12 +352,16 @@ func (m resourceInstancesModel) selectedValue() domain.ResourceInstanceSnapshot 
 }
 
 func (m resourceInstancesModel) visibleInstances() []domain.ResourceInstanceSnapshot {
+	instances := m.values.Instances
+	if instances == nil {
+		instances = m.state.Instances.Instances
+	}
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Instances.Instances
+		return instances
 	}
-	filtered := make([]domain.ResourceInstanceSnapshot, 0, len(m.state.Instances.Instances))
-	for _, instance := range m.state.Instances.Instances {
+	filtered := make([]domain.ResourceInstanceSnapshot, 0, len(instances))
+	for _, instance := range instances {
 		if strings.Contains(strings.ToLower(instance.ID), query) {
 			filtered = append(filtered, instance)
 		}
@@ -289,19 +391,26 @@ func (m resourceInstancesModel) view(width int) string {
 }
 
 func (m resourceInstancesModel) viewSized(size contentSize) string {
-	if m.state.InstancesStatus == application.Failed {
-		return fallback(m.state.InstancesErr)
-	}
 	instances := m.visibleInstances()
+	if (m.status == directFailed || m.state.InstancesStatus == application.Failed) && len(instances) == 0 {
+		return fallback(firstNonEmpty(m.err, m.state.InstancesErr))
+	}
 	if len(instances) == 0 {
-		if m.state.InstancesStatus == application.Loading || m.state.InstancesStatus == application.Idle {
+		if m.status == directLoading || m.status == "" || m.state.InstancesStatus == application.Loading || m.state.InstancesStatus == application.Idle {
 			return "Loading instances…"
+		}
+		if m.err != "" {
+			return "No instances\n" + m.err
 		}
 		return "No instances"
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(instances), m.control.Cursor(), rowCapacity)
-	return renderResourceInstanceTable(size.Width, instances[start:end], m.control.Cursor()-start)
+	content := renderResourceInstanceTable(size.Width, instances[start:end], m.control.Cursor()-start)
+	if m.status == directPartial || m.err != "" {
+		content += "\n" + m.err
+	}
+	return content
 }
 
 func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceSnapshot, selectedIndex int) string {
@@ -332,7 +441,11 @@ func resourceInstanceRowValues(instance domain.ResourceInstanceSnapshot) []strin
 }
 
 type resourceDetailModel struct {
-	viewport viewport.Model
+	viewport  viewport.Model
+	status    directLoadStatus
+	value     domain.ResourceInstanceSnapshot
+	err       string
+	sensitive bool
 }
 
 func newResourceDetailModel() resourceDetailModel {
@@ -351,6 +464,11 @@ func (m resourceDetailModel) update(message tea.KeyPressMsg) resourceDetailModel
 	case "G":
 		m.viewport.GotoBottom()
 	}
+	return m
+}
+
+func (m resourceDetailModel) setResult(value domain.ResourceInstanceSnapshot, status directLoadStatus, err string, sensitive bool) resourceDetailModel {
+	m.value, m.status, m.err, m.sensitive = value, status, err, sensitive
 	return m
 }
 
@@ -380,4 +498,20 @@ func (m resourceDetailModel) viewSized(size contentSize, instance domain.Resourc
 	lines = append(lines, "")
 	lines = append(lines, body[start:end]...)
 	return strings.Join(lines, "\n")
+}
+
+func (m resourceDetailModel) directViewSized(size contentSize) string {
+	switch m.status {
+	case directLoading:
+		return "Loading resource…"
+	case directFailed:
+		if m.value.YAML == "" {
+			return firstNonEmpty(m.err, "Resource unavailable")
+		}
+	}
+	content := m.viewSized(size, m.value, m.sensitive)
+	if m.status == directPartial || m.err != "" {
+		content += "\n" + m.err
+	}
+	return content
 }

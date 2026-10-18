@@ -14,6 +14,7 @@ type directRunCommand struct{ value string }
 func (m *directModel) runClusterCommand(value string) tea.Cmd {
 	previous := m.views
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))
+	var command tea.Cmd
 	switch resolveCommand(value) {
 	case commandNodes:
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
@@ -27,13 +28,17 @@ func (m *directModel) runClusterCommand(value string) tea.Cmd {
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewOverview, Label: "overview"})
 	case commandProblems:
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewProblems, Label: "problems"})
+	case commandResources:
+		kind, _ := resourcesCommandArgument(value)
+		command = m.openDirectResources(kind)
 	case commandContexts:
 		m.contexts = newContextsModel(m.cluster.contexts, m.cluster.contextName)
 	default:
 		m.view.notice = unknownCommandNotice(value)
 	}
 	m.cancelClosedDirectDiagnostics(previous)
-	return nil
+	m.cancelClosedDirectResources(previous)
+	return command
 }
 
 func directContextKnown(contexts []domain.ClusterContext, name string) bool {
