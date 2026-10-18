@@ -247,6 +247,24 @@ func TestDirectStartupLoadsSharedSnapshotsIndependently(t *testing.T) {
 	assert.Nil(t, nodeCommand)
 }
 
+func TestDirectNodeServicesNilErrorProblemsRemainPartial(t *testing.T) {
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model.generationCounter = 4
+	request, _ := model.requests.begin("cluster-nodes-services", 4)
+	updated, _ := model.Update(directNodeServicesLoaded{
+		request:  request.stamp,
+		nodes:    domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-1", Name: "worker-1", Problem: "backend-specific node detail"}}},
+		services: domain.ServiceSet{Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "backend-specific service detail"}}},
+	})
+	model = updated.(directModel)
+	assert.Equal(t, directPartial, directNodeLoadStatus(model.cluster.nodes.Value))
+	assert.Equal(t, application.Partial, model.cluster.nodes.Status)
+	assert.Equal(t, directPartial, model.cluster.services.Status)
+	assert.Equal(t, "Some nodes report problems", model.cluster.nodes.Err)
+	assert.Equal(t, "Some services report problems", model.cluster.services.Err)
+	assert.NotContains(t, model.View().Content, "backend-specific")
+}
+
 func TestDirectContextPickerSelectsAndSwitchResetsSessionData(t *testing.T) {
 	opened := []string{}
 	client := application.NewClient(application.Dependencies{
@@ -320,7 +338,9 @@ func TestDirectClusterCommandAliasesRouteSharedViews(t *testing.T) {
 	} {
 		t.Run(test.alias, func(t *testing.T) {
 			model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
-			model.runClusterCommand(test.alias)
+			updated, command := model.Update(directRunCommand{value: test.alias})
+			model = updated.(directModel)
+			assert.Nil(t, command)
 			if test.view == viewContexts {
 				assert.True(t, model.contexts.active)
 			} else {
@@ -328,6 +348,32 @@ func TestDirectClusterCommandAliasesRouteSharedViews(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDirectPaletteSubmitsContextAlias(t *testing.T) {
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model.cluster.contexts = []domain.ClusterContext{{Name: "dev"}, {Name: "prod", Current: true}}
+	model.cluster.contextName = "prod"
+	var command tea.Cmd
+	for _, message := range []tea.KeyPressMsg{
+		{Code: ':', Text: ":"},
+		{Code: 'c', Text: "c"},
+		{Code: 't', Text: "t"},
+		{Code: 'x', Text: "x"},
+		{Code: tea.KeyEnter},
+	} {
+		updated, next := model.Update(message)
+		model = updated.(directModel)
+		if next != nil {
+			command = next
+		}
+	}
+	require.NotNil(t, command)
+	updated, commandMessage := model.Update(command())
+	model = updated.(directModel)
+	assert.Nil(t, commandMessage)
+	assert.True(t, model.contexts.active)
+	assert.Equal(t, "prod", model.contexts.values[model.contexts.control.Cursor()].Name)
 }
 
 func TestDirectStartupHonorsContextAndNodeFocus(t *testing.T) {

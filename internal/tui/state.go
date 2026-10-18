@@ -59,6 +59,22 @@ type directKubernetesState struct {
 	Err    string
 }
 
+func directNodeLoadStatus(nodes domain.NodeSet) directLoadStatus {
+	for _, node := range nodes.Nodes {
+		if node.Problem != "" {
+			return directPartial
+		}
+	}
+	return directReady
+}
+
+func directServiceLoadStatus(services domain.ServiceSet) directLoadStatus {
+	if len(services.Problems) > 0 {
+		return directPartial
+	}
+	return directReady
+}
+
 // directNodeState temporarily aliases the node renderer's presentation
 // contract. Task 18 can remove it after that renderer consumes direct state.
 type directNodeState = application.NodeState

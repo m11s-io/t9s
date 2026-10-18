@@ -136,18 +136,27 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.requests.cancelSlot("cluster-nodes-services")
+		nodeStatus := directNodeLoadStatus(message.nodes)
 		state := application.NodeState{Status: application.Ready, Value: message.nodes}
-		serviceState := directServiceState{Status: directReady, Value: message.services}
+		if nodeStatus == directPartial {
+			state.Status = application.Partial
+			state.Err = "Some nodes report problems"
+		}
+		serviceStatus := directServiceLoadStatus(message.services)
+		serviceState := directServiceState{Status: serviceStatus, Value: message.services}
+		if serviceStatus == directPartial {
+			serviceState.Err = "Some services report problems"
+		}
 		if message.err != nil {
 			state.Status = application.Failed
 			state.Err = "Node data is unavailable"
-			if len(message.nodes.Nodes) > 0 || !message.nodes.ObservedAt.IsZero() {
+			if nodeStatus == directPartial || len(message.nodes.Nodes) > 0 || !message.nodes.ObservedAt.IsZero() {
 				state.Status = application.Partial
 				state.Err = "Some node data is unavailable"
 			}
 			serviceState.Status = directFailed
 			serviceState.Err = "Service data is unavailable"
-			if len(message.services.Services) > 0 || len(message.services.Problems) > 0 || !message.services.ObservedAt.IsZero() {
+			if serviceStatus == directPartial || len(message.services.Services) > 0 || !message.services.ObservedAt.IsZero() {
 				serviceState.Status = directPartial
 				serviceState.Err = "Some service data is unavailable"
 			}
