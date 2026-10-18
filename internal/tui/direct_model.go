@@ -55,6 +55,9 @@ type directModel struct {
 	eventFollow         directEventFollowState
 	healthStream        directHealthStreamState
 	views               viewStack
+	mutation            directMutationState
+	mutationWork        directMutationWork
+	mutationSequence    uint64
 	styles              styles
 	width               int
 	height              int
@@ -207,6 +210,53 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = message.session
 		m.cluster.contextName = message.contextName
 		return m, m.startClusterObservations(message.session, message.request.generation)
+	case directServicePrepared:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		if message.err != nil || message.plan == nil {
+			m.view.notice = mutationErrorMessage(message.err)
+			return m, nil
+		}
+		m.mutation.prompt = &directMutationPrompt{operation: message.operation, generation: message.generation, service: message.plan, serviceKind: message.request.Kind, label: message.request.Service + "@" + message.request.Node, assessment: message.plan.Assessment(), session: m.session}
+		return m, nil
+	case directNodePrepared:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		if message.err != nil || message.plan == nil {
+			m.view.notice = mutationErrorMessage(message.err)
+			return m, nil
+		}
+		m.mutation.prompt = &directMutationPrompt{operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind, assessment: message.plan.Assessment(), session: m.session}
+		return m, nil
+	case directMutationProgress:
+		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
+			return m, nil
+		}
+		m.mutation.results = appendMutationResult(m.mutation.results, message.result)
+		m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
+		return m, directMutationAwaitCommand(m.mutationWork)
+	case directMutationFinished:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		m.mutation.prompt = nil
+		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
+		if len(m.mutation.results) == 0 && message.err != nil {
+			m.view.notice = mutationErrorMessage(message.err)
+			m.mutation.notice = ""
+		} else {
+			m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
+			if message.err != nil && len(m.mutation.results) == 0 {
+				m.mutation.notice = mutationErrorMessage(message.err)
+			}
+		}
+		m.mutationWork = directMutationWork{}
+		return m, nil
 	case directEventFollowOpened:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
 			if message.stream != nil {
@@ -506,6 +556,32 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.String() == "ctrl+c" {
 			return m, m.cleanup(tea.Quit())
 		}
+		if m.mutation.prompt != nil {
+			prompt := m.mutation.prompt
+			if message.String() == "y" || message.String() == "Y" {
+				if prompt.assessment.Blocked != "" {
+					m.view.notice = "Action refused: " + prompt.assessment.Blocked
+					return m, nil
+				}
+				m.mutation.prompt = nil
+				m.mutation.busy = true
+				m.mutation.operation = prompt.operation
+				m.mutation.total = len(prompt.assessment.Targets)
+				m.mutation.results = nil
+				m.mutation.notice = ""
+				capacity := m.mutation.total
+				if capacity < 1 {
+					capacity = 1
+				}
+				m.mutationWork = directMutationWork{operation: prompt.operation, generation: prompt.generation, plan: prompt, session: prompt.session, ctx: m.sessionCtx, events: make(chan directMutationWorkItem, capacity+1)}
+				return m, directMutationStartCommand(m.mutationWork)
+			}
+			if message.String() == "n" || message.String() == "N" || message.String() == "esc" {
+				m.mutation.prompt = nil
+				m.view.notice = "Action canceled"
+			}
+			return m, nil
+		}
 		if m.timePrompt != nil {
 			switch message.String() {
 			case "esc":
@@ -575,6 +651,15 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		}
 		if m.views.top().Kind == viewNodeDetail || m.views.top().Kind == viewServiceDetail {
+			if m.views.top().Kind == viewServiceDetail && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
+				if kind := directServiceActionKind(message.String()); kind != "" {
+					frame := m.views.top()
+					service, ok := findServiceByKey(m.cluster.services.Value.Services, frame.ServiceKey)
+					if ok {
+						return m, m.prepareDirectServiceMutation(service, kind)
+					}
+				}
+			}
 			if m.views.top().Kind == viewServiceDetail && message.String() == "l" && m.session != nil {
 				if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
 					return m, m.openDirectServiceLogs(service)
@@ -599,6 +684,29 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if message.String() == "r" && !m.nodes.filtering && m.session != nil {
 				return m, m.refreshDirectNodes()
+			}
+			if !m.nodes.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
+				var kind application.ActionKind
+				switch message.String() {
+				case "R":
+					kind = application.ActionReboot
+				case "X":
+					kind = application.ActionShutdown
+				case "B":
+					kind = application.ActionRollback
+				}
+				if kind != "" {
+					targets := m.nodes.actionTargets(m.cluster.nodes.Value.Nodes)
+					if len(targets) > 0 {
+						operation := m.nextMutationOperation()
+						m.mutation.operation = operation
+						m.mutation.busy = true
+						m.mutation.notice = ""
+						m.mutation.results = nil
+						m.view.notice = ""
+						return m, directPrepareNodeCommand(m.session, m.sessionCtx, operation, m.generation(), application.NodeActionRequest{Kind: kind, Targets: targets})
+					}
+				}
 			}
 			if command, handled := m.handleNodeDiagnosticKey(message); handled {
 				return m, command
@@ -629,6 +737,13 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if message.String() == "l" && !m.services.filtering && m.session != nil {
 				if service, ok := m.services.selected(m.cluster.services.Value.Services); ok {
 					return m, m.openDirectServiceLogs(service)
+				}
+			}
+			if !m.services.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
+				if kind := directServiceActionKind(message.String()); kind != "" {
+					if service, ok := m.services.selected(m.cluster.services.Value.Services); ok {
+						return m, m.prepareDirectServiceMutation(service, kind)
+					}
 				}
 			}
 			m.services = m.services.update(message, m.cluster.services.Value.Services)
@@ -803,6 +918,34 @@ func (m *directModel) refreshDirectNodes() tea.Cmd {
 	)
 }
 
+func directServiceActionKind(key string) application.ServiceActionKind {
+	switch key {
+	case "S":
+		return application.ServiceActionStart
+	case "T":
+		return application.ServiceActionStop
+	case "R":
+		return application.ServiceActionRestart
+	default:
+		return ""
+	}
+}
+
+func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapshot, kind application.ServiceActionKind) tea.Cmd {
+	operation := m.nextMutationOperation()
+	m.mutation.operation = operation
+	m.mutation.busy = true
+	m.mutation.notice = ""
+	m.mutation.results = nil
+	m.view.notice = ""
+	return directPrepareServiceCommand(m.session, m.sessionCtx, operation, m.generation(), application.ServiceActionRequest{Kind: kind, Node: service.Node, Service: service.Name})
+}
+
+func (m *directModel) nextMutationOperation() uint64 {
+	m.mutationSequence++
+	return m.mutationSequence
+}
+
 func (m directModel) View() tea.View {
 	layout := layoutShell(m.width, m.height)
 	headerKind := m.views.top().Kind
@@ -868,13 +1011,20 @@ func (m directModel) View() tea.View {
 			}
 		}
 	}
-	header := renderK9sHeader(layoutK9sHeader(layout.Width), metadata, directActionHints(headerKind, m.options.WritesEnabled), m.styles.k9s)
+	writesAvailable := m.options.WritesEnabled && !m.mutation.busy && m.mutation.prompt == nil
+	header := renderK9sHeader(layoutK9sHeader(layout.Width), metadata, directActionHints(headerKind, writesAvailable), m.styles.k9s)
 	breadcrumb := m.views.breadcrumb(m.cluster.contextName)
 	if m.contexts.active {
 		breadcrumb = m.cluster.contextName + " > contexts"
 	}
 	prompt := ""
-	if m.timePrompt != nil {
+	if m.mutation.prompt != nil {
+		prompt = renderDirectMutationPrompt(m.mutation.prompt)
+	} else if m.mutation.notice != "" {
+		prompt = m.mutation.notice
+	} else if m.mutation.busy {
+		prompt = "Mutation in progress…"
+	} else if m.timePrompt != nil {
 		prompt = m.timePrompt.view()
 	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
 		prompt = "/" + m.nodes.filter
@@ -927,6 +1077,12 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.closeDirectEventFollow()
 	m.closeDirectHealth()
 	m.pendingResourceKind = ""
+	m.mutation.prompt = nil
+	m.mutation.busy = false
+	m.mutation.results = nil
+	m.mutation.notice = ""
+	m.mutation.operation = m.nextMutationOperation()
+	m.mutationWork = directMutationWork{}
 	if m.sessionCancel != nil {
 		m.sessionCancel()
 	}

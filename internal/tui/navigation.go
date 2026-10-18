@@ -1,6 +1,8 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+)
 
 type viewKind uint8
 

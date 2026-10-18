@@ -156,7 +156,13 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "r", Label: "Refresh"},
 			actionHint{Key: "q/Esc", Label: "Back"},
 		)
-	case viewNodeDetail, viewServiceDetail, viewProcessDetail, viewDiskDetail, viewLinkDetail:
+	case viewServiceDetail:
+		hints := append(global, actionHint{Key: "q/Esc", Label: "Back"})
+		if writesEnabled {
+			hints = append(hints, actionHint{Key: "S", Label: "Start"}, actionHint{Key: "T", Label: "Stop"}, actionHint{Key: "R", Label: "Restart"})
+		}
+		return hints
+	case viewNodeDetail, viewProcessDetail, viewDiskDetail, viewLinkDetail:
 		return append(global, actionHint{Key: "q/Esc", Label: "Back"})
 	case viewHelp:
 		return []actionHint{{Key: "q/Esc", Label: "Back"}}
