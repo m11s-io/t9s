@@ -173,6 +173,71 @@ func TestDirectDiagnosticPaletteNavigationCancelsViewRead(t *testing.T) {
 	assert.False(t, model.requests.current(request.stamp))
 }
 
+func TestDirectDiagnosticFilterCanTypeQThenBackAndOpenPalette(t *testing.T) {
+	for _, kind := range []viewKind{viewProcesses, viewDisks, viewNetwork} {
+		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+			model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1"}})
+			model.views = model.views.push(viewFrame{Kind: kind, Label: "worker-1 > diagnostic", NodeID: "worker-id", NodeTarget: "worker-1"})
+			switch kind {
+			case viewProcesses:
+				model.processes.values = domain.ProcessSet{Processes: []domain.ProcessSnapshot{{PID: 1, Command: "query"}}}
+			case viewDisks:
+				model.disks.values = domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "query"}}}
+			case viewNetwork:
+				model.network.values = domain.NetworkSet{Links: []domain.LinkSnapshot{{Name: "query"}}}
+			}
+			model, _ = updateDirect(model, keyPress('/'))
+			model, _ = updateDirect(model, keyPress('q'))
+			require.Equal(t, kind, model.views.top().Kind, "q is filter input while the filter editor is active")
+			filter, filtering := directDiagnosticFilter(model, kind)
+			assert.Equal(t, "q", filter)
+			assert.True(t, filtering)
+			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Equal(t, kind, model.views.top().Kind)
+			model, _ = updateDirect(model, keyPress('q'))
+			assert.Equal(t, viewNodes, model.views.top().Kind, "q returns to nodes after accepting the filter")
+			model, _ = updateDirect(model, keyPress(':'))
+			assert.True(t, model.palette.active, "a hidden accepted query must not block the global palette")
+		})
+	}
+}
+
+func directDiagnosticFilter(model directModel, kind viewKind) (string, bool) {
+	switch kind {
+	case viewProcesses:
+		return model.processes.filter, model.processes.filtering
+	case viewDisks:
+		return model.disks.filter, model.disks.filtering
+	default:
+		return model.network.filter, model.network.filtering
+	}
+}
+
+func TestDirectNodesEmptyFilterEscClearsAndAllowsRefiltering(t *testing.T) {
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	defer session.Close()
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1"}})
+	model.session = session
+	model, _ = updateDirect(model, keyPress('/'))
+	for _, character := range "missing" {
+		model, _ = updateDirect(model, keyPress(character))
+	}
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Contains(t, model.View().Content, "No nodes")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.Empty(t, model.nodes.filter)
+	model, _ = updateDirect(model, keyPress('/'))
+	for _, character := range "worker" {
+		model, _ = updateDirect(model, keyPress(character))
+	}
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Contains(t, model.View().Content, "worker-1")
+}
+
 func TestDirectProcessReadsDiscardLateResultAfterNodeABASwitch(t *testing.T) {
 	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
 		return &testkit.FakeSession{ProcessReader: &testkit.FakeProcessReader{ListFunc: func(_ context.Context, node string) (domain.ProcessSet, error) {

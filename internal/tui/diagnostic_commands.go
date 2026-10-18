@@ -86,7 +86,7 @@ func (m *directModel) handleNodeDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd,
 	}
 	node, ok := m.nodes.selected(m.cluster.nodes.Value.Nodes)
 	if !ok {
-		return nil, true
+		return nil, false
 	}
 	switch message.String() {
 	case "p":
@@ -117,7 +117,7 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 		if frame.Kind == viewNetwork {
 			filtering = m.network.filtering
 		}
-		if message.String() == "q" || (message.String() == "esc" && !filtering) {
+		if !filtering && (message.String() == "q" || message.String() == "esc") {
 			m.popDirectView()
 			return nil, true
 		}
