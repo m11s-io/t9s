@@ -35,47 +35,58 @@ Dependencies point inward:
 - `internal/domain` contains small normalized values and imports no Talos SDK
   or terminal packages.
 - `internal/ports` defines narrow capabilities in terms of domain values.
-- `internal/application` owns typed messages, screen transitions, session
-  generations, request identities, and cancellable effects. `Update` coordinates
-  the session request owner and dispatches to `updateModel` for screen state
-  transitions; it can cancel superseded work. Backend calls run inside effects.
+- `internal/application` is a frontend-independent backend API. A `Client`
+  discovers contexts and opens a `Session`; callers pass contexts to explicit
+  typed reads and stream operations. The context passed to `Open` bounds the
+  persistent session lifetime, while each operation also accepts its own
+  context. `Session.Close` cancels that lifetime and releases its adapter.
+  Application public values contain normalized domain and port types, not
+  screen state or Talos SDK credentials.
 - `internal/adapters/talos` is the only Talos SDK boundary. SDK, protobuf, COSI,
   and credential-bearing configuration types must be converted there and must
   not enter application or TUI state.
-- `internal/tui` renders application state and translates user input into typed
-  messages. `View` must remain a pure, network-independent projection; effects
-  run only from Bubble Tea commands.
+- `internal/tui` owns prompts, navigation, request identities, status, and
+  viewport state. Its Tea commands make explicit application calls and return
+  results to the TUI update loop; they do not invoke a shared UI engine. Keep
+  useful Bubbles components for inputs and viewports. `View` remains a pure,
+  network-independent projection.
 - `cmd/t9s` and `internal/cli` are the composition and process-lifecycle roots.
 
-Application `Model` exposes normalized screen data. Its private session runtime
-holds port readers, controllers, streams, and request ownership; those handles
-are not presentation data. A session owns cancellation, each replaceable read
-has its own request identity, and unary reads have timeouts. Leaving a diagnostic
-or changing context releases its work. Generation and request checks reject late results.
+The session stores its adapter handles privately. Reads return normalized data;
+streams are session-bound, cancellable, and idempotently closable. A session
+admits at most one mutation at a time, independently of any frontend prompt.
+Prepare node, service, and etcd actions before showing confirmation: the
+returned prepared plan keeps its canonical request private and one-shot, and
+`Assessment()` returns a deep copy for display. Execute rechecks current target
+identity, scope, risk facts, and confirmation against the prepared assessment.
+Write permission comes from trusted `application.Options` when opening the
+session; a mutation request cannot enable writes itself.
 
-`EffectBatch` describes independent work that the frontend must schedule as
-separate effects. The TUI maps its children to Bubble Tea commands, so a blocked
-read does not hold up another snapshot. Node health and detailed services share
-one uncapped service observation per refresh; only the detailed table is capped.
+Mutation results preserve per-target outcomes, including when the call returns
+an error after dispatch. `accepted` means the remote RPC acknowledged the
+request, not that remote completion was independently observed; `unconfirmed`
+means the response or outcome is uncertain; completed local snapshots report
+`completed`, and upgrade cleanup can report `recovery-incomplete`. Cancellation
+stops local work but does not roll back a remote request. Never retry a mutation
+only because its response was lost. Upgrade streams retain their terminal result
+and release the mutation lease after terminal cleanup. `Wait(ctx)` returning
+`ctx.Err()` only means that caller stopped waiting; a later `Wait` can still
+return the retained operation result and its separate error.
 
-Confirmation messages produce execution effects after application policy checks.
-Operation identities isolate mutation results from older operations. The TUI
-disables new write prompts while an accepted mutation is active. Application
-dispatch enforces the same rule independently of the frontend, retaining activity
-through every bulk target and the snapshot-to-membership pipeline. Prompt
-cancellation cannot discard an accepted operation. Context exit still cancels
-session-owned work and does not promise remote rollback. The TUI
-owns prompts, navigation, filters, and selection; it does not construct backend
-actions from display text. Port operations and SDK adapters can be reused by a
-future API frontend. This application does not add a web server.
+Bulk node execution invokes its optional per-target observer serially as results
+arrive. Callbacks must return promptly; callers that forward events to another
+goroutine should use a buffer sized for the targets or otherwise ensure the
+observer cannot block result collection. The TUI owns operation stamps and
+checks them before applying late results, so a superseded request cannot replace
+current presentation state. The TUI also owns any shared cluster snapshot it
+passes among views. A future web frontend must define its own transport and
+policy for local snapshot paths; no React frontend, HTTP server, authentication,
+or download transport is provided here.
 
-Mutation leaf effects own their client deadlines; bulk targets do not share a
+Application operations own their client deadlines; bulk targets do not share a
 deadline. The initial budgets live in `application/operation_policy.go`, with
-upgrade stage budgets in the Talos adapter. Normalized operation outcomes
-distinguish acceptance, observed completion, an unconfirmed remote result, and
-incomplete recovery. Keep raw RPC errors out of presentation state. Cancellation
-does not establish that remote work was undone; never retry a mutation solely
-because its response was lost.
+upgrade stage budgets in the Talos adapter. Keep raw RPC errors out of
+presentation state.
 
 Normal tests use `internal/testkit` fakes at port boundaries. A test that needs
 a live Talos endpoint is a manual smoke test and must be explicitly separated

@@ -32,6 +32,35 @@ validation. A successful control RPC is reported as accepted, not independently
 verified remote completion; a failed submitted RPC reports an unconfirmed
 outcome. t9s does not automatically retry mutations or display raw RPC errors.
 
+The same policy is enforced by the backend API without constructing the TUI. A
+trusted caller opens an `application.Session` with immutable write options and
+uses its typed read, stream, prepare, and execute methods directly. The
+`WritesEnabled` option is caller configuration at session creation; it is not a
+per-request switch. Prepared node, service, and etcd plans keep their canonical
+request private, can be consumed only once, and expose a deep-copied assessment
+for a confirmation interface. Execution verifies the plan belongs to that
+session, then refreshes target identity, scope, risk facts, and confirmation
+before dispatch. The session enforces one active mutation at a time across all
+callers. For bulk node operations, results retain each target's accepted,
+unconfirmed, completed, or recovery-incomplete outcome even when execution also
+returns an error.
+
+Cancellation ends local waiting or work; it cannot prove that a dispatched
+remote action was undone. For an upgrade stream, terminal results and errors
+remain available through `Wait` after cleanup releases the session's mutation
+slot. If a particular `Wait(ctx)` returns `ctx.Err()`, that is the waiter's local
+wait error; it is separate from the operation result and error retained for a
+later wait. Bulk node result observers run as results are collected, so observer
+callbacks must return promptly. A caller forwarding observations should provide
+buffer capacity for all targets or otherwise ensure callbacks cannot block
+collection.
+
+Etcd snapshot paths name local files. A future web transport must define how
+those paths map to server-side storage, who may choose them, and how a completed
+snapshot is delivered to the caller. This application has no web authentication,
+React frontend, HTTP endpoint, or download transport. Preserve the existing
+local-file protections and treat snapshot contents as cluster data.
+
 Reset/wipe (`W`) is the most destructive node action, so it layers two
 confirmation steps on top of the gate. First the operator types an exact token
 — the single target's node name, or `wipe N nodes` for a bulk reset — in a
