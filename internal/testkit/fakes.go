@@ -25,10 +25,19 @@ func (f *FakeNodeReader) List(ctx context.Context) (domain.NodeSet, error) {
 	return f.ListFunc(ctx)
 }
 
-type fakeUpgradeStream struct{ results chan ports.UpgradeResult }
+type fakeUpgradeStream struct {
+	results  chan ports.UpgradeResult
+	terminal ports.UpgradeResult
+}
 
 func (s *fakeUpgradeStream) Results() <-chan ports.UpgradeResult { return s.results }
 func (s *fakeUpgradeStream) Cancel()                             {}
+func (s *fakeUpgradeStream) Wait(ctx context.Context) (ports.UpgradeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.UpgradeResult{}, err
+	}
+	return s.terminal, nil
+}
 
 type FakeNodeController struct {
 	RebootFunc              func(ctx context.Context, target string, mode ports.RebootMode) error
@@ -77,9 +86,10 @@ func (f *FakeNodeController) UpgradeStream(ctx context.Context, target, image st
 	}
 	results := make(chan ports.UpgradeResult, 1)
 	err := f.UpgradeFunc(ctx, target, image)
-	results <- ports.UpgradeResult{Err: err, Done: true}
+	terminal := ports.UpgradeResult{Err: err, Done: true}
+	results <- terminal
 	close(results)
-	return &fakeUpgradeStream{results: results}
+	return &fakeUpgradeStream{results: results, terminal: terminal}
 }
 
 func (f *FakeNodeController) CurrentInstallImage(ctx context.Context, target string) (string, error) {

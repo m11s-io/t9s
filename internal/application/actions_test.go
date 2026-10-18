@@ -115,7 +115,7 @@ func TestBuildActionEffectsUsesUpgradeWithImageForUpgradeKind(t *testing.T) {
 			results := make(chan ports.UpgradeResult, 1)
 			results <- ports.UpgradeResult{Done: true}
 			close(results)
-			return &controlledUpgradeStream{results: results}
+			return &controlledUpgradeStream{results: results, terminal: ports.UpgradeResult{Done: true}}
 		},
 	}
 	model, _ := application.NewModel("prod")

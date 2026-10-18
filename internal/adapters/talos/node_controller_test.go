@@ -452,14 +452,16 @@ func TestMachineryLifecycleUpgradeRejectsEOFBeforeExitCode(t *testing.T) {
 
 type fakeLifecycleMaintenanceClient struct {
 	*fakeNodeControlClient
-	version         string
-	versionErr      error
-	versionTarget   string
-	lifecycleTarget string
-	steps           []string
-	lifecycleErr    error
-	prepareErr      error
-	maintenance     *fakeUpgradeMaintenance
+	version          string
+	versionErr       error
+	versionTarget    string
+	lifecycleTarget  string
+	steps            []string
+	lifecycleErr     error
+	prepareErr       error
+	maintenance      *fakeUpgradeMaintenance
+	lifecycleStarted chan struct{}
+	lifecycleGate    <-chan struct{}
 }
 
 type deadlineVersionClient struct {
@@ -492,6 +494,9 @@ func (c *fakeLifecycleMaintenanceClient) upgradeVersion(ctx context.Context) (st
 }
 
 func (c *fakeLifecycleMaintenanceClient) lifecycleUpgrade(ctx context.Context, _ string, progress func(ports.UpgradeEvent)) error {
+	if c.lifecycleStarted != nil {
+		close(c.lifecycleStarted)
+	}
 	if outgoing, ok := metadata.FromOutgoingContext(ctx); ok {
 		nodes := outgoing.Get("node")
 		if len(nodes) > 0 {
@@ -504,6 +509,13 @@ func (c *fakeLifecycleMaintenanceClient) lifecycleUpgrade(ctx context.Context, _
 	c.steps = append(c.steps, "lifecycle")
 	progress(ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulled"})
 	progress(ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: "installed"})
+	if c.lifecycleGate != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.lifecycleGate:
+		}
+	}
 
 	return c.lifecycleErr
 }
@@ -524,6 +536,8 @@ type fakeUpgradeMaintenance struct {
 	waitTalosErr    error
 	waitKubeErr     error
 	uncordonErr     error
+	uncordonStarted chan struct{}
+	uncordonGate    <-chan struct{}
 }
 
 func (m *fakeUpgradeMaintenance) Cordon(context.Context) (bool, error) {
@@ -556,8 +570,18 @@ func (m *fakeUpgradeMaintenance) WaitKubernetesReady(context.Context, time.Durat
 	return m.waitKubeErr
 }
 
-func (m *fakeUpgradeMaintenance) Uncordon(context.Context) error {
+func (m *fakeUpgradeMaintenance) Uncordon(ctx context.Context) error {
 	*m.steps = append(*m.steps, "uncordon")
+	if m.uncordonStarted != nil {
+		close(m.uncordonStarted)
+	}
+	if m.uncordonGate != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-m.uncordonGate:
+		}
+	}
 
 	return m.uncordonErr
 }
@@ -589,6 +613,123 @@ func TestNodeControllerUpgradeStreamTargetsLifecycleThenSafelyMaintainsNode(t *t
 	assert.Equal(t, "10.0.0.12", client.lifecycleTarget)
 	assert.Equal(t, []string{"lifecycle", "cordon", "drain", "reboot", "wait-talos", "wait-kubernetes", "uncordon"}, client.steps)
 	assert.Equal(t, ports.UpgradeComplete, results[len(results)-1].Event.Phase)
+}
+
+func TestNodeControllerUpgradeWaitCompletesWithProgressUnread(t *testing.T) {
+	steps := []string{}
+	cleanupStarted := make(chan struct{})
+	cleanupGate := make(chan struct{})
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		steps:                 steps,
+	}
+	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps, uncordonStarted: cleanupStarted, uncordonGate: cleanupGate}
+
+	stream := newNodeController(client).UpgradeStream(t.Context(), "10.0.0.12", "image:v1.13.4")
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upgrade cleanup did not start")
+	}
+	assert.Equal(t, 1, len(stream.Results()), "unread checking progress should fill the bounded progress channel")
+	waited := make(chan struct {
+		result ports.UpgradeResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := stream.Wait(t.Context())
+		waited <- struct {
+			result ports.UpgradeResult
+			err    error
+		}{result: result, err: err}
+	}()
+	select {
+	case <-waited:
+		t.Fatal("Wait returned before recovery cleanup completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(cleanupGate)
+	got := <-waited
+	result, err := got.result, got.err
+
+	require.NoError(t, err)
+	assert.True(t, result.Done)
+	assert.Equal(t, ports.UpgradeOutcomeApplied, result.Outcome)
+	assert.Equal(t, []string{"lifecycle", "cordon", "drain", "reboot", "wait-talos", "wait-kubernetes", "uncordon"}, client.steps)
+	legacy := upgradeResults(stream)
+	require.NotEmpty(t, legacy)
+	assert.True(t, legacy[len(legacy)-1].Done)
+}
+
+func TestNodeControllerUpgradeWaitIsRepeatableAndConcurrent(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}},
+	}
+	stream := newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4")
+	type waitResult struct {
+		result ports.UpgradeResult
+		err    error
+	}
+	results := make(chan waitResult, 2)
+	for range 2 {
+		go func() {
+			result, err := stream.Wait(t.Context())
+			results <- waitResult{result: result, err: err}
+		}()
+	}
+	for range 2 {
+		got := <-results
+		require.NoError(t, got.err)
+		assert.True(t, got.result.Done)
+		assert.Equal(t, ports.UpgradeOutcomeApplied, got.result.Outcome)
+	}
+	result, err := stream.Wait(t.Context())
+	require.NoError(t, err)
+	assert.True(t, result.Done)
+}
+
+func TestNodeControllerUpgradeWaitContextDoesNotConsumeTerminal(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}},
+	}
+	stream := newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4")
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := stream.Wait(canceled)
+	require.ErrorIs(t, err, context.Canceled)
+
+	result, err := stream.Wait(t.Context())
+	require.NoError(t, err)
+	assert.True(t, result.Done)
+	assert.Equal(t, ports.UpgradeOutcomeApplied, result.Outcome)
+}
+
+func TestNodeControllerUpgradeWaitRetainsCancellationResultWithProgressUnread(t *testing.T) {
+	entered := make(chan struct{})
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		lifecycleErr:          context.Canceled,
+		steps:                 []string{},
+		lifecycleStarted:      entered,
+	}
+	stream := newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4")
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("lifecycle upgrade did not start")
+	}
+	stream.Cancel()
+
+	result, err := stream.Wait(t.Context())
+	require.NoError(t, err)
+	require.True(t, result.Done)
+	assert.ErrorIs(t, result.Err, context.Canceled)
 }
 
 func TestSafeUpgradeMaintenanceLeavesPreexistingCordonInPlace(t *testing.T) {
@@ -626,33 +767,27 @@ func TestMachineryCordonPreservesPreexistingUnschedulableNode(t *testing.T) {
 func TestNodeControllerUpgradeStreamCancellationDoesNotDrainOrBlockOnEvents(t *testing.T) {
 	steps := []string{}
 	entered := make(chan struct{})
+	gate := make(chan struct{})
 	client := &fakeLifecycleMaintenanceClient{
 		fakeNodeControlClient: &fakeNodeControlClient{},
 		version:               "v1.13.3",
 		steps:                 steps,
+		lifecycleStarted:      entered,
+		lifecycleGate:         gate,
 	}
 	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps}
-	client.lifecycleErr = nil
 
 	stream := newNodeController(client).UpgradeStream(t.Context(), "10.0.0.12", "image:v1.13.4")
-	go func() {
-		<-stream.Results() // checking fills the buffer, leaving lifecycle progress blocked until cancellation-aware.
-		close(entered)
-	}()
-	require.Eventually(t, func() bool {
-		select {
-		case <-entered:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("lifecycle upgrade did not start")
+	}
 	stream.Cancel()
 
-	require.Eventually(t, func() bool {
-		_, ok := <-stream.Results()
-		return !ok
-	}, time.Second, time.Millisecond)
+	result, err := stream.Wait(t.Context())
+	require.NoError(t, err)
+	assert.ErrorIs(t, result.Err, context.Canceled)
 	assert.NotContains(t, client.steps, "cordon")
 	assert.NotContains(t, client.steps, "drain")
 }

@@ -113,5 +113,6 @@ type UpgradeResult struct {
 
 type UpgradeStream interface {
 	Results() <-chan UpgradeResult
+	Wait(context.Context) (UpgradeResult, error)
 	Cancel()
 }

@@ -17,12 +17,19 @@ import (
 )
 
 type controlledUpgradeStream struct {
-	results <-chan ports.UpgradeResult
-	cancel  func()
-	once    sync.Once
+	results  <-chan ports.UpgradeResult
+	terminal ports.UpgradeResult
+	cancel   func()
+	once     sync.Once
 }
 
 func (s *controlledUpgradeStream) Results() <-chan ports.UpgradeResult { return s.results }
+func (s *controlledUpgradeStream) Wait(ctx context.Context) (ports.UpgradeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.UpgradeResult{}, err
+	}
+	return s.terminal, nil
+}
 func (s *controlledUpgradeStream) Cancel() {
 	s.once.Do(func() {
 		if s.cancel != nil {
@@ -40,7 +47,7 @@ func TestUpgradeBridgeStreamsProgressAndRefreshesNodesOnSuccess(t *testing.T) {
 	var nodeLoads int
 	model, _ := application.NewModel("prod")
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { nodeLoads++; return domain.NodeSet{}, nil }}, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
-		return &controlledUpgradeStream{results: results}
+		return &controlledUpgradeStream{results: results, terminal: ports.UpgradeResult{Done: true}}
 	}}}})
 
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
@@ -126,7 +133,7 @@ func TestUpgradeBridgeFailsWhenStreamClosesWithoutTerminalResult(t *testing.T) {
 	close(results)
 	model, _ := application.NewModel("prod")
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
-		return &controlledUpgradeStream{results: results}
+		return &controlledUpgradeStream{results: results, terminal: ports.UpgradeResult{Done: true}}
 	}}}})
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
 	model, next := application.Update(model, started)
@@ -151,7 +158,7 @@ func TestUpgradeBridgeGatesCompetingWriteRequestsWhileActive(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
-		return &controlledUpgradeStream{results: results}
+		return &controlledUpgradeStream{results: results, terminal: ports.UpgradeResult{Done: true}}
 	}}}})
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
 	model, _ = application.Update(model, started)
@@ -171,7 +178,7 @@ func TestUpgradeBridgeCancellationFailsAndCancelsControllerStream(t *testing.T) 
 	canceled := make(chan struct{})
 	model, _ := application.NewModel("prod")
 	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
-		return &controlledUpgradeStream{results: results, cancel: func() { close(canceled); close(results) }}
+		return &controlledUpgradeStream{results: results, terminal: ports.UpgradeResult{Err: context.Canceled, Done: true}, cancel: func() { close(canceled); close(results) }}
 	}}}})
 	ctx, cancel := context.WithCancel(t.Context())
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](ctx, application.Dependencies{})
@@ -221,7 +228,7 @@ func TestUpgradeBridgeReturnsStartedBeforeBlockingStreamConstruction(t *testing.
 		results := make(chan ports.UpgradeResult, 1)
 		results <- ports.UpgradeResult{Done: true}
 		close(results)
-		return &controlledUpgradeStream{results: results}
+		return &controlledUpgradeStream{results: results, terminal: ports.UpgradeResult{Done: true}}
 	}}}})
 
 	returned := make(chan application.Message, 1)

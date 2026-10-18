@@ -297,12 +297,55 @@ const (
 )
 
 type upgradeStream struct {
-	results chan ports.UpgradeResult
-	cancel  context.CancelFunc
+	results  chan ports.UpgradeResult
+	cancel   context.CancelFunc
+	done     chan struct{}
+	terminal ports.UpgradeResult
 }
 
 func (s *upgradeStream) Results() <-chan ports.UpgradeResult { return s.results }
 func (s *upgradeStream) Cancel()                             { s.cancel() }
+
+func (s *upgradeStream) Wait(ctx context.Context) (ports.UpgradeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.UpgradeResult{}, err
+	}
+	select {
+	case <-ctx.Done():
+		return ports.UpgradeResult{}, ctx.Err()
+	case <-s.done:
+		return s.terminal, nil
+	}
+}
+
+func (s *upgradeStream) finish() {
+	close(s.results)
+	close(s.done)
+}
+
+func (s *upgradeStream) publishProgress(result ports.UpgradeResult) {
+	select {
+	case s.results <- result:
+	default:
+	}
+}
+
+func (s *upgradeStream) publishTerminal(result ports.UpgradeResult) {
+	s.terminal = result
+	// Keep the terminal result available to legacy Results consumers even if
+	// unread progress filled the bounded channel.
+	for {
+		select {
+		case s.results <- result:
+			return
+		default:
+			select {
+			case <-s.results:
+			default:
+			}
+		}
+	}
+}
 
 func newNodeController(client nodeControlClient) ports.NodeController {
 	return &nodeController{client: client}
@@ -371,14 +414,18 @@ func (c *nodeController) Upgrade(ctx context.Context, target, image string) erro
 
 func (c *nodeController) UpgradeStream(ctx context.Context, target, image string) ports.UpgradeStream {
 	streamCtx, cancel := context.WithCancel(ctx)
-	stream := &upgradeStream{results: make(chan ports.UpgradeResult, 1), cancel: cancel}
+	stream := &upgradeStream{results: make(chan ports.UpgradeResult, 1), cancel: cancel, done: make(chan struct{})}
 	go func() {
-		defer close(stream.results)
+		defer stream.finish()
 		defer cancel()
-		emit := func(result ports.UpgradeResult) bool { return sendUpgradeResult(streamCtx, stream.results, result) }
-		if !emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeChecking, Message: "checking Talos upgrade API"}}) {
-			return
+		emit := func(result ports.UpgradeResult) {
+			if result.Done {
+				stream.publishTerminal(result)
+			} else {
+				stream.publishProgress(result)
+			}
 		}
+		emit(ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradeChecking, Message: "checking Talos upgrade API"}})
 		versioned, ok := c.client.(versionedUpgradeClient)
 		if !ok {
 			emit(ports.UpgradeResult{Err: errors.New("Talos client cannot determine upgrade API version"), Done: true})
@@ -445,15 +492,6 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 		}
 	}()
 	return stream
-}
-
-func sendUpgradeResult(ctx context.Context, results chan<- ports.UpgradeResult, result ports.UpgradeResult) bool {
-	select {
-	case results <- result:
-		return true
-	case <-ctx.Done():
-		return false
-	}
 }
 
 func (c *nodeController) CurrentInstallImage(ctx context.Context, target string) (string, error) {
