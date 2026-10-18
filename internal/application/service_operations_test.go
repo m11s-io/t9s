@@ -159,10 +159,11 @@ func TestConcurrentActionFamiliesShareExclusion(t *testing.T) {
 
 func TestServiceCanceledAfterDispatchIsUnconfirmed(t *testing.T) {
 	started := make(chan struct{})
+	transportErr := errors.New("service transport lost acknowledgement")
 	controller := &testkit.FakeServiceController{StopFunc: func(ctx context.Context, _, _ string) error {
 		close(started)
 		<-ctx.Done()
-		return ctx.Err()
+		return transportErr
 	}}
 	session := serviceOperationSession(true, serviceOperationAdapter(controller))
 	defer session.Close()
@@ -185,10 +186,72 @@ func TestServiceCanceledAfterDispatchIsUnconfirmed(t *testing.T) {
 	<-started
 	cancel()
 	got := <-finished
-	if !errors.Is(got.err, context.Canceled) {
-		t.Fatalf("execution error = %v, want context.Canceled", got.err)
+	if !errors.Is(got.err, context.Canceled) || !errors.Is(got.err, transportErr) {
+		t.Fatalf("execution error = %v, want context.Canceled and the transport error", got.err)
 	}
-	if len(got.result.Targets) != 1 || got.result.Targets[0].Outcome != domain.OperationUnconfirmed || !errors.Is(got.result.Targets[0].Err, context.Canceled) {
-		t.Fatalf("target result = %#v, want one unconfirmed canceled target", got.result.Targets)
+	if len(got.result.Targets) != 1 || got.result.Targets[0].Outcome != domain.OperationUnconfirmed || !errors.Is(got.result.Targets[0].Err, context.Canceled) || !errors.Is(got.result.Targets[0].Err, transportErr) {
+		t.Fatalf("target result = %#v, want one unconfirmed target preserving cancellation and transport errors", got.result.Targets)
+	}
+}
+
+func TestServicePreparationPropagatesCanceledEtcdRead(t *testing.T) {
+	controller := &testkit.FakeServiceController{RestartFunc: func(context.Context, string, string) error { return nil }}
+	adapter := serviceOperationAdapter(controller)
+	etcdReadStarted := make(chan struct{})
+	readErr := errors.New("etcd read stopped during cancellation")
+	adapter.EtcdReader = &testkit.FakeEtcdReader{ListFunc: func(ctx context.Context, _ []string) (domain.EtcdSet, error) {
+		close(etcdReadStarted)
+		<-ctx.Done()
+		return domain.EtcdSet{}, readErr
+	}}
+	session := serviceOperationSession(true, adapter)
+	defer session.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		_, prepareErr := session.PrepareServiceAction(ctx, ServiceActionRequest{Kind: ServiceActionRestart, Node: "cp-1", Service: "etcd"})
+		finished <- prepareErr
+	}()
+	<-etcdReadStarted
+	cancel()
+	if err := <-finished; !errors.Is(err, context.Canceled) || !errors.Is(err, readErr) {
+		t.Fatalf("prepare with canceled etcd read = %v, want cancellation and the read error", err)
+	}
+}
+
+func TestServiceExecutionDoesNotDispatchAfterCanceledFreshEtcdRead(t *testing.T) {
+	var reads atomic.Int32
+	started := make(chan struct{})
+	var calls atomic.Int32
+	controller := &testkit.FakeServiceController{RestartFunc: func(context.Context, string, string) error { calls.Add(1); return nil }}
+	adapter := serviceOperationAdapter(controller)
+	adapter.EtcdReader = &testkit.FakeEtcdReader{ListFunc: func(ctx context.Context, _ []string) (domain.EtcdSet, error) {
+		if reads.Add(1) == 1 {
+			return domain.EtcdSet{}, errors.New("membership temporarily unavailable")
+		}
+		close(started)
+		<-ctx.Done()
+		return domain.EtcdSet{}, nil
+	}}
+	session := serviceOperationSession(true, adapter)
+	defer session.Close()
+	plan, err := session.PrepareServiceAction(context.Background(), ServiceActionRequest{Kind: ServiceActionRestart, Node: "cp-1", Service: "etcd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() {
+		_, executeErr := session.ExecuteServiceAction(ctx, plan, Confirmation{Approved: true})
+		finished <- executeErr
+	}()
+	<-started
+	cancel()
+	if err := <-finished; !errors.Is(err, context.Canceled) {
+		t.Fatalf("execution after canceled fresh etcd read = %v, want context.Canceled", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("controller calls = %d, want 0", calls.Load())
 	}
 }

@@ -53,6 +53,12 @@ func (s *Session) PrepareServiceAction(ctx context.Context, request ServiceActio
 	defer cancel()
 	nodes, err := readNodes(readCtx, s.sdkSession)
 	if err != nil {
+		if readCtx.Err() != nil {
+			return nil, errors.Join(readCtx.Err(), err)
+		}
+		return nil, err
+	}
+	if err := readCtx.Err(); err != nil {
 		return nil, err
 	}
 	node, ok := resolveNodeTarget(nodes.Nodes, request.Node)
@@ -62,6 +68,9 @@ func (s *Session) PrepareServiceAction(ctx context.Context, request ServiceActio
 	request.Node = node.Target()
 	facts, err := s.readServiceActionFacts(readCtx, nodes.Nodes, node, request)
 	if err != nil {
+		return nil, err
+	}
+	if err := readCtx.Err(); err != nil {
 		return nil, err
 	}
 	assessment := Assessment{Targets: []string{request.Node}, Warning: facts.warning, Blocked: facts.blocked}
@@ -92,6 +101,9 @@ func (s *Session) ExecuteServiceAction(ctx context.Context, plan *PreparedServic
 	defer cancel()
 	nodes, readErr := readNodes(readCtx, s.sdkSession)
 	if readErr != nil {
+		if readCtx.Err() != nil {
+			return MutationResult{}, errors.Join(readCtx.Err(), readErr)
+		}
 		return MutationResult{}, errors.Join(ErrAssessmentChanged, readErr)
 	}
 	node, ok := resolveNodeTarget(nodes.Nodes, request.Node)
@@ -100,7 +112,13 @@ func (s *Session) ExecuteServiceAction(ctx context.Context, plan *PreparedServic
 	}
 	currentFacts, readErr := s.readServiceActionFacts(readCtx, nodes.Nodes, node, request)
 	if readErr != nil {
+		if err := readCtx.Err(); err != nil {
+			return MutationResult{}, err
+		}
 		return MutationResult{}, errors.Join(ErrAssessmentChanged, readErr)
+	}
+	if err := readCtx.Err(); err != nil {
+		return MutationResult{}, err
 	}
 	preparedFacts := plan.state.serviceFacts
 	if currentFacts.blocked != "" {
@@ -108,6 +126,9 @@ func (s *Session) ExecuteServiceAction(ctx context.Context, plan *PreparedServic
 	}
 	if !sameServiceActionFacts(*preparedFacts, currentFacts) {
 		return MutationResult{}, ErrAssessmentChanged
+	}
+	if err := operationCtx.Err(); err != nil {
+		return MutationResult{}, err
 	}
 
 	target := request.Service + "@" + request.Node
@@ -141,6 +162,9 @@ func readNodes(ctx context.Context, session ports.Session) (domain.NodeSet, erro
 
 func (s *Session) readServiceActionFacts(ctx context.Context, nodes []domain.NodeSnapshot, node domain.NodeSnapshot, request ServiceActionRequest) (serviceActionFacts, error) {
 	facts := serviceActionFacts{nodeID: node.ID, nodeName: node.Name, target: node.Target(), role: node.Role}
+	if err := ctx.Err(); err != nil {
+		return facts, err
+	}
 	if request.Service != "etcd" || request.Kind == ServiceActionStart {
 		return facts, nil
 	}
@@ -158,7 +182,14 @@ func (s *Session) readServiceActionFacts(ctx context.Context, nodes []domain.Nod
 		members, etcdErr := s.sdkSession.Etcd().List(ctx, targets)
 		if etcdErr == nil {
 			etcdFacts = EtcdPolicyFacts{Available: true, Members: members.Members}
+		} else if ctx.Err() != nil {
+			return facts, errors.Join(ctx.Err(), etcdErr)
+		} else if errors.Is(etcdErr, context.Canceled) || errors.Is(etcdErr, context.DeadlineExceeded) {
+			return facts, etcdErr
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return facts, err
 	}
 
 	quorum := assessEtcdQuorumFacts(etcdFacts, []string{node.Target()})

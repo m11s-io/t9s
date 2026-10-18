@@ -21,7 +21,10 @@ const (
 // status error rather than wrapping context.Canceled/DeadlineExceeded.
 func mutationCallError(ctx context.Context, err error) error {
 	if cause := ctx.Err(); cause != nil {
-		return cause
+		if errors.Is(err, cause) {
+			return err
+		}
+		return errors.Join(cause, err)
 	}
 	return err
 }
