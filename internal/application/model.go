@@ -108,18 +108,6 @@ type EtcdSnapshotState struct {
 	MemberNode string
 }
 
-// EtcdActionKind identifies a write action on the :etcd view.
-type EtcdActionKind string
-
-const (
-	EtcdActionSnapshot          EtcdActionKind = "snapshot"
-	EtcdActionDefragment        EtcdActionKind = "defragment"
-	EtcdActionDisarmAlarms      EtcdActionKind = "disarm-alarms"
-	EtcdActionRemoveMember      EtcdActionKind = "remove-member"
-	EtcdActionLeaveCluster      EtcdActionKind = "leave-cluster"
-	EtcdActionForfeitLeadership EtcdActionKind = "forfeit-leadership"
-)
-
 // EtcdActionStage tracks where a pending :etcd action is in its lifecycle.
 // Destructive membership actions move Idle -> Snapshot -> Operation so the
 // membership RPC cannot run before a snapshot of the target has succeeded.
@@ -353,17 +341,6 @@ type SelectContext struct {
 
 func (SelectContext) applicationMessage() {}
 
-type ActionKind string
-
-const (
-	ActionReboot     ActionKind = "reboot"
-	ActionShutdown   ActionKind = "shutdown"
-	ActionRollback   ActionKind = "rollback"
-	ActionUpgrade    ActionKind = "upgrade"
-	ActionReset      ActionKind = "reset"
-	ActionWipeDevice ActionKind = "wipe-device"
-)
-
 type PendingAction struct {
 	Kind    ActionKind
 	Targets []string
@@ -454,14 +431,6 @@ func (ConfirmPendingAction) applicationMessage() {}
 type CancelPendingAction struct{}
 
 func (CancelPendingAction) applicationMessage() {}
-
-type ServiceActionKind string
-
-const (
-	ServiceActionStart   ServiceActionKind = "start"
-	ServiceActionStop    ServiceActionKind = "stop"
-	ServiceActionRestart ServiceActionKind = "restart"
-)
 
 type PendingServiceAction struct {
 	Kind    ServiceActionKind

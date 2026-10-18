@@ -14,17 +14,6 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
-// ResetPreview classifies a node's disks for the reset overlay. Known is
-// false when the disks reader returned no inventory for the node, in which
-// case the caller must never guess at the wipe scope.
-type ResetPreview struct {
-	Node       string
-	SystemDisk string   // device name of the system disk, "" if none/unknown
-	UserDisks  []string // non-system device names
-	Known      bool
-	Err        string
-}
-
 // BuildResetPreview classifies a disk set into system and user disks. It is
 // pure so the classification is unit-testable and the reducer stays clock-free.
 func BuildResetPreview(node string, set domain.DiskSet) ResetPreview {

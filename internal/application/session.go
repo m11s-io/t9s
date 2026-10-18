@@ -22,9 +22,10 @@ type Session struct {
 	lifetimeCancel  context.CancelFunc
 	writesEnabled   bool
 
-	mu        sync.Mutex
-	closed    bool
-	closeOnce sync.Once
+	mu           sync.Mutex
+	closed       bool
+	mutationBusy bool
+	closeOnce    sync.Once
 }
 
 func (s *Session) Close() error {
@@ -59,6 +60,14 @@ func (s *Session) operationContext(ctx context.Context, timeout time.Duration) (
 		s.mu.Unlock()
 		return nil, nil, ErrSessionClosed
 	}
+	operationCtx, cancel := s.operationContextLocked(ctx, timeout)
+	s.mu.Unlock()
+	return operationCtx, cancel, nil
+}
+
+// operationContextLocked creates a caller-scoped context linked to the
+// session lifetime. The caller must hold s.mu.
+func (s *Session) operationContextLocked(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	var operationCtx context.Context
 	var cancel context.CancelFunc
 	if timeout > 0 {
@@ -67,9 +76,8 @@ func (s *Session) operationContext(ctx context.Context, timeout time.Duration) (
 		operationCtx, cancel = context.WithCancel(ctx)
 	}
 	stop := context.AfterFunc(s.lifetimeCtx, cancel)
-	s.mu.Unlock()
 	return operationCtx, func() {
 		stop()
 		cancel()
-	}, nil
+	}
 }
