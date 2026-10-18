@@ -71,7 +71,7 @@ func TestSessionCloseUnblocksStreamNext(t *testing.T) {
 
 	select {
 	case err := <-nextDone:
-		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(time.Second):
 		t.Fatal("Next remained blocked after session close")
 	}
@@ -155,6 +155,150 @@ func TestCancelOneStreamKeepsOthersAlive(t *testing.T) {
 	_ = secondStream.Close()
 	_ = session.Close()
 }
+
+func TestTerminalStreamPayloadKeepsOriginalResult(t *testing.T) {
+	t.Run("service logs EOF", func(t *testing.T) {
+		underlying := &terminalLogStream{batch: domain.LogBatch{Lines: []string{"last"}, EOF: true}}
+		session := newStreamTestSession(&testkit.FakeSession{LogReader: terminalLogReader{stream: underlying}})
+		stream, err := session.OpenServiceLogs(context.Background(), domain.LogRequest{})
+		require.NoError(t, err)
+		batch, err := stream.Next(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []string{"last"}, batch.Lines)
+		require.True(t, batch.EOF)
+		require.Equal(t, 1, underlying.closeCount())
+		_ = session.Close()
+	})
+
+	t.Run("dmesg terminal error payload", func(t *testing.T) {
+		underlying := &terminalDmesgStream{batch: domain.DmesgBatch{Lines: []string{"partial"}, Err: "receive failed"}}
+		session := newStreamTestSession(&testkit.FakeSession{DmesgReader: &testkit.FakeDmesgReader{OpenFunc: func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error) {
+			return underlying, nil
+		}}})
+		stream, err := session.OpenDmesg(context.Background(), domain.DmesgRequest{})
+		require.NoError(t, err)
+		batch, err := stream.Next(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []string{"partial"}, batch.Lines)
+		require.Equal(t, "receive failed", batch.Err)
+		require.Equal(t, 1, underlying.closeCount())
+		_ = session.Close()
+	})
+
+	t.Run("cluster health EOF", func(t *testing.T) {
+		underlying := &terminalHealthStream{progress: domain.ClusterHealthProgress{Message: "healthy", EOF: true}}
+		session := newStreamTestSession(&testkit.FakeSession{ClusterHealthReader: &testkit.FakeClusterHealthReader{OpenFunc: func(context.Context, domain.ClusterHealthRequest) (ports.ClusterHealthStream, error) {
+			return underlying, nil
+		}}})
+		stream, err := session.OpenClusterHealth(context.Background(), domain.ClusterHealthRequest{})
+		require.NoError(t, err)
+		progress, err := stream.Next(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, "healthy", progress.Message)
+		require.True(t, progress.EOF)
+		require.Equal(t, 1, underlying.closeCount())
+		_ = session.Close()
+	})
+}
+
+func TestStreamOpenPreservesAdapterError(t *testing.T) {
+	wantErr := errors.New("adapter open failure")
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	reader := blockingEventReaderFunc(func(ctx context.Context) (ports.EventStream, error) {
+		cancelCaller()
+		return nil, wantErr
+	})
+	session := newStreamTestSession(&testkit.FakeSession{EventReader: reader})
+	_, err := session.FollowEvents(callerCtx)
+	require.ErrorIs(t, err, wantErr)
+	require.NotErrorIs(t, err, context.Canceled)
+	_ = session.Close()
+}
+
+func TestNextContextCancellationClosesStream(t *testing.T) {
+	underlying := newBlockingEventStream()
+	session := newStreamTestSession(&testkit.FakeSession{EventReader: blockingEventReader{stream: underlying}})
+	stream, err := session.FollowEvents(context.Background())
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	nextDone := make(chan error, 1)
+	go func() { _, err := stream.Next(ctx); nextDone <- err }()
+	cancel()
+	select {
+	case err := <-nextDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Next remained blocked after its context was canceled")
+	}
+	require.Equal(t, 1, underlying.closeCount())
+	_ = session.Close()
+}
+
+func TestStreamCancellationDuringCallbackRegistrationAndClose(t *testing.T) {
+	for range 1000 {
+		underlying := newBlockingEventStream()
+		ctx, cancel := context.WithCancel(context.Background())
+		openReturned := make(chan struct{})
+		reader := blockingEventReaderFunc(func(context.Context) (ports.EventStream, error) {
+			close(openReturned)
+			return underlying, nil
+		})
+		session := newStreamTestSession(&testkit.FakeSession{EventReader: reader})
+		opened := make(chan ports.EventStream, 1)
+		openErr := make(chan error, 1)
+		go func() {
+			stream, err := session.FollowEvents(ctx)
+			opened <- stream
+			openErr <- err
+		}()
+		<-openReturned
+		cancel()
+		stream := <-opened
+		if err := <-openErr; err == nil {
+			_ = stream.Close()
+		}
+		require.NoError(t, session.Close())
+		require.Equal(t, 1, underlying.closeCount())
+	}
+}
+
+type terminalLogReader struct{ stream ports.ServiceLogStream }
+
+func (r terminalLogReader) Open(context.Context, domain.LogRequest) (ports.ServiceLogStream, error) {
+	return r.stream, nil
+}
+
+type terminalLogStream struct {
+	batch  domain.LogBatch
+	mu     sync.Mutex
+	closes int
+}
+
+func (s *terminalLogStream) Next(context.Context) (domain.LogBatch, error) { return s.batch, nil }
+func (s *terminalLogStream) Close() error                                  { s.mu.Lock(); s.closes++; s.mu.Unlock(); return nil }
+func (s *terminalLogStream) closeCount() int                               { s.mu.Lock(); defer s.mu.Unlock(); return s.closes }
+
+type terminalDmesgStream struct {
+	batch  domain.DmesgBatch
+	mu     sync.Mutex
+	closes int
+}
+
+func (s *terminalDmesgStream) Next(context.Context) (domain.DmesgBatch, error) { return s.batch, nil }
+func (s *terminalDmesgStream) Close() error                                    { s.mu.Lock(); s.closes++; s.mu.Unlock(); return nil }
+func (s *terminalDmesgStream) closeCount() int                                 { s.mu.Lock(); defer s.mu.Unlock(); return s.closes }
+
+type terminalHealthStream struct {
+	progress domain.ClusterHealthProgress
+	mu       sync.Mutex
+	closes   int
+}
+
+func (s *terminalHealthStream) Next(context.Context) (domain.ClusterHealthProgress, error) {
+	return s.progress, nil
+}
+func (s *terminalHealthStream) Close() error    { s.mu.Lock(); s.closes++; s.mu.Unlock(); return nil }
+func (s *terminalHealthStream) closeCount() int { s.mu.Lock(); defer s.mu.Unlock(); return s.closes }
 
 type blockingEventReaderFunc func(context.Context) (ports.EventStream, error)
 

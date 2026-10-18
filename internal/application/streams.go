@@ -105,7 +105,9 @@ type lifecycleStream[T any] struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	terminal func(T, error) bool
+	stopMu   sync.Mutex
 	stop     func() bool
+	closed   bool
 	once     sync.Once
 	closeErr error
 }
@@ -117,11 +119,13 @@ func openLifecycleStream[S, T any](session *Session, ctx context.Context, open f
 	}
 	stream, err := open(streamCtx)
 	if err != nil {
+		openErr := err
+		contextErr := streamCtx.Err()
 		cancel()
-		if streamCtx.Err() != nil {
-			return nil, streamCtx.Err()
+		if contextErr != nil && errors.Is(openErr, contextErr) {
+			return nil, contextErr
 		}
-		return nil, err
+		return nil, openErr
 	}
 	if err := streamCtx.Err(); err != nil {
 		_ = closeStream(stream)
@@ -132,7 +136,7 @@ func openLifecycleStream[S, T any](session *Session, ctx context.Context, open f
 		next: next(stream), close: func() error { return closeStream(stream) },
 		ctx: streamCtx, cancel: cancel, terminal: terminal,
 	}
-	wrapped.stop = context.AfterFunc(streamCtx, func() { _ = wrapped.Close() })
+	wrapped.setStop(context.AfterFunc(streamCtx, wrapped.closeCore))
 	return wrapped, nil
 }
 
@@ -147,25 +151,58 @@ func (s *lifecycleStream[T]) Next(ctx context.Context) (T, error) {
 	stopLifetime()
 	stopCall()
 	cancel()
-	if errors.Is(err, io.EOF) || s.terminal(value, err) {
+	terminalPayload := s.terminal(value, nil)
+	if terminalPayload || errors.Is(err, io.EOF) {
 		_ = s.Close()
-	}
-	if err != nil {
 		return value, err
 	}
-	if s.ctx.Err() != nil {
-		return value, s.ctx.Err()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		_ = s.Close()
+		return value, ctxErr
+	}
+	if streamErr := s.ctx.Err(); streamErr != nil {
+		_ = s.Close()
+		return value, streamErr
+	}
+	if err != nil {
+		if s.terminal(value, err) {
+			_ = s.Close()
+		}
+		return value, err
 	}
 	return value, nil
 }
 
 func (s *lifecycleStream[T]) Close() error {
+	s.stopMu.Lock()
+	s.closed = true
+	stop := s.stop
+	s.stop = nil
+	s.stopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	s.closeCore()
+	return s.closeErr
+}
+
+func (s *lifecycleStream[T]) setStop(stop func() bool) {
+	s.stopMu.Lock()
+	if s.closed {
+		s.stopMu.Unlock()
+		stop()
+		return
+	}
+	s.stop = stop
+	s.stopMu.Unlock()
+}
+
+func (s *lifecycleStream[T]) closeCore() {
+	s.stopMu.Lock()
+	s.closed = true
+	s.stopMu.Unlock()
 	s.once.Do(func() {
-		if s.stop != nil {
-			s.stop()
-		}
 		s.cancel()
 		s.closeErr = s.close()
 	})
-	return s.closeErr
 }
