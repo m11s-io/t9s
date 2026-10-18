@@ -33,6 +33,49 @@ func TestDirectNodesFilterUsesCurrentSharedSnapshot(t *testing.T) {
 	content := ansi.Strip(model.View().Content)
 	assert.Contains(t, content, "worker-1")
 	assert.NotContains(t, content, "control-plane")
+	assert.Contains(t, content, "/worker", "the active filter query stays visible in the footer")
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Contains(t, ansi.Strip(model.View().Content), "/worker", "the accepted filter remains visible")
+}
+
+func TestDirectNodesShowsUnmatchedFilterQuery(t *testing.T) {
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{
+		{ID: "worker-id", Name: "worker-1"},
+	})
+	model, _ = updateDirect(model, keyPress('/'))
+	for _, character := range "missing" {
+		model, _ = updateDirect(model, keyPress(character))
+	}
+
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "No nodes")
+	assert.Contains(t, content, "/missing", "the query remains visible when it matches no rows")
+}
+
+func TestDirectNodeDetailPaletteRoutesContextsAndNodes(t *testing.T) {
+	for _, value := range []string{"ctx", "nodes"} {
+		t.Run(value, func(t *testing.T) {
+			model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "node-1", Name: "worker-1"}})
+			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.Equal(t, viewNodeDetail, model.views.top().Kind)
+
+			model, _ = updateDirect(model, keyPress(':'))
+			require.True(t, model.palette.active, "the command palette opens from node detail")
+			for _, character := range value {
+				model, _ = updateDirect(model, keyPress(character))
+			}
+			model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.NotNil(t, command)
+			model, _ = updateDirect(model, command())
+
+			if value == "ctx" {
+				assert.True(t, model.contexts.active)
+			} else {
+				assert.Equal(t, viewNodes, model.views.top().Kind)
+			}
+		})
+	}
 }
 
 func TestDirectNodesEnterShowsSelectedNodeDetailAndEscapeReturns(t *testing.T) {

@@ -257,16 +257,16 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
+		if message.String() == ":" && !m.nodes.filtering {
+			var command tea.Cmd
+			m.palette, command = m.palette.open()
+			return m, command
+		}
 		if m.views.top().Kind == viewNodeDetail {
 			if message.String() == "esc" || message.String() == "q" {
 				m.views, _ = m.views.pop()
 			}
 			return m, nil
-		}
-		if message.String() == ":" {
-			var command tea.Cmd
-			m.palette, command = m.palette.open()
-			return m, command
 		}
 		if m.views.top().Kind == viewNodes {
 			if message.String() == "q" && !m.nodes.filtering {
@@ -404,7 +404,11 @@ func (m directModel) View() tea.View {
 	if m.contexts.active {
 		breadcrumb = m.cluster.contextName + " > contexts"
 	}
-	footer := renderK9sFooter(layout.Width, breadcrumb, "", flash, m.styles.k9s)
+	prompt := ""
+	if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
+		prompt = "/" + m.nodes.filter
+	}
+	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
 	result.AltScreen = true
 	result.BackgroundColor = color.Black
