@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -65,10 +66,32 @@ func TestDirectEventsKeepSelectedIdentityAcrossRefreshAndClearWhenMissing(t *tes
 	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{Events: []domain.EventSnapshot{selected, first}}})
 	assert.Equal(t, eventKey(selected), model.events.selectedKey)
 
+	refreshedSelected := selected
+	refreshedSelected.ObservedAt = time.Unix(30, 0)
+	refreshedFirst := first
+	refreshedFirst.ObservedAt = time.Unix(40, 0)
 	request, _ = model.requests.begin("cluster-events", model.generation())
-	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{Events: []domain.EventSnapshot{first}}})
-	assert.NotEqual(t, eventKey(selected), model.events.selectedKey)
-	assert.Equal(t, eventKey(first), model.events.selectedKey)
+	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{Events: []domain.EventSnapshot{refreshedFirst, refreshedSelected}}})
+	assert.Equal(t, eventKey(refreshedSelected), model.events.selectedKey)
+
+	request, _ = model.requests.begin("cluster-events", model.generation())
+	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{Events: []domain.EventSnapshot{refreshedFirst}}})
+	assert.NotEqual(t, eventKey(refreshedSelected), model.events.selectedKey)
+	assert.Equal(t, eventKey(refreshedFirst), model.events.selectedKey)
+}
+
+func TestEventKeysIgnoreObservationTimeAndDisambiguateDuplicatesByOrder(t *testing.T) {
+	first := domain.EventSnapshot{Node: "node-a", Kind: "Sequence", Message: "same", ObservedAt: time.Unix(10, 0)}
+	second := first
+	second.ObservedAt = time.Unix(20, 0)
+	keys := eventKeys([]domain.EventSnapshot{first, second})
+	assert.Len(t, keys, 2)
+	assert.NotEqual(t, keys[0], keys[1])
+
+	first.ObservedAt = time.Unix(30, 0)
+	second.ObservedAt = time.Unix(40, 0)
+	refreshedKeys := eventKeys([]domain.EventSnapshot{first, second})
+	assert.Equal(t, keys, refreshedKeys)
 }
 
 func TestDirectEventsIgnoresStaleRefreshResults(t *testing.T) {
@@ -96,6 +119,48 @@ func TestDirectEventsPartialProblemsSurviveWithoutAggregateError(t *testing.T) {
 	assert.Contains(t, content, "still visible")
 	assert.Contains(t, content, "failed")
 	assert.Contains(t, content, "StreamError")
+}
+
+func TestDirectEventsPartialWarningStaysVisibleWhenFilterHidesProblems(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "healthy", Name: "healthy"}}}}
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
+	request, _ := model.requests.begin("cluster-events", model.generation())
+	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{
+		Events:   []domain.EventSnapshot{{Node: "healthy", Kind: "Sequence", Message: "healthy event"}},
+		Problems: []domain.EventProblem{{Node: "failed", Message: "stream unavailable"}},
+	}})
+	rows := eventRows(model.cluster.events.Value)
+	model.events = model.events.update(keyPress('/'), rows)
+	for _, key := range []rune{'h', 'e', 'a', 'l', 't', 'h', 'y'} {
+		model.events = model.events.update(keyPress(key), rows)
+	}
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "Health:    Healthy")
+	assert.Contains(t, content, "EVENTS PARTIAL")
+	assert.Contains(t, content, "healthy event")
+	assert.NotContains(t, content, "StreamError")
+	model.events = model.events.update(tea.KeyPressMsg{Code: tea.KeyEnter}, rows)
+	content = ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "EVENTS PARTIAL")
+	assert.Contains(t, content, "/healthy")
+}
+
+func TestDirectEventsAggregateErrorKeepsUsefulRowsVisible(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
+	request, _ := model.requests.begin("cluster-events", model.generation())
+	model, _ = updateDirect(model, directEventsLoaded{
+		request: request.stamp,
+		events:  domain.EventSet{Events: []domain.EventSnapshot{{Node: "node-a", Kind: "Sequence", Message: "useful event"}}},
+		err:     errors.New("partial read"),
+	})
+	assert.Equal(t, directPartial, model.cluster.events.Status)
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "EVENTS PARTIAL")
+	assert.Contains(t, content, "useful event")
 }
 
 func TestDirectEventsRefreshUsesOnlyEventsRequestSlot(t *testing.T) {

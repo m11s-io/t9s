@@ -2,8 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -21,24 +21,25 @@ type eventsModel struct {
 func newEventsModel() eventsModel { return eventsModel{} }
 
 func (m eventsModel) normalizeSelection(all []domain.EventSnapshot, closest int) eventsModel {
-	visible := m.visibleEvents(all)
-	m.control.SetCount(len(visible))
-	if len(visible) == 0 {
+	keys := eventKeys(all)
+	visibleIndexes := m.visibleEventIndexes(all)
+	m.control.SetCount(len(visibleIndexes))
+	if len(visibleIndexes) == 0 {
 		m.control.SetCursor(0)
-		if !eventKeyExists(all, m.selectedKey) {
+		if !eventKeyExists(keys, m.selectedKey) {
 			m.selectedKey = ""
 		}
 		return m
 	}
-	for index, event := range visible {
-		if eventKey(event) == m.selectedKey {
+	for index, sourceIndex := range visibleIndexes {
+		if keys[sourceIndex] == m.selectedKey {
 			m.control.SetCursor(index)
 			return m
 		}
 	}
-	m.control.SetCursor(min(max(closest, 0), len(visible)-1))
-	if !eventKeyExists(all, m.selectedKey) {
-		m.selectedKey = eventKey(visible[m.control.Cursor()])
+	m.control.SetCursor(min(max(closest, 0), len(visibleIndexes)-1))
+	if !eventKeyExists(keys, m.selectedKey) {
+		m.selectedKey = keys[visibleIndexes[m.control.Cursor()]]
 	}
 	return m
 }
@@ -94,23 +95,37 @@ func (m eventsModel) update(message tea.KeyPressMsg, all []domain.EventSnapshot)
 }
 
 func (m eventsModel) rememberSelection(all []domain.EventSnapshot) eventsModel {
-	visible := m.visibleEvents(all)
-	if len(visible) > 0 {
-		m.selectedKey = eventKey(visible[m.control.Cursor()])
+	visibleIndexes := m.visibleEventIndexes(all)
+	keys := eventKeys(all)
+	if len(visibleIndexes) > 0 {
+		m.selectedKey = keys[visibleIndexes[m.control.Cursor()]]
 	}
 	return m
 }
 
 func eventKey(event domain.EventSnapshot) string {
-	return event.Node + "\x00" + event.Kind + "\x00" + event.Message + "\x00" + event.ObservedAt.UTC().Format(time.RFC3339Nano)
+	return event.Node + "\x00" + event.Kind + "\x00" + event.Message + "\x00" + "0"
 }
 
-func eventKeyExists(events []domain.EventSnapshot, key string) bool {
+// eventKeys assigns duplicate rows a stable occurrence suffix based on their
+// order in the current snapshot. Event snapshots expose no immutable event ID.
+func eventKeys(events []domain.EventSnapshot) []string {
+	seen := make(map[string]int, len(events))
+	keys := make([]string, len(events))
+	for index, event := range events {
+		base := event.Node + "\x00" + event.Kind + "\x00" + event.Message
+		keys[index] = base + "\x00" + strconv.Itoa(seen[base])
+		seen[base]++
+	}
+	return keys
+}
+
+func eventKeyExists(keys []string, key string) bool {
 	if key == "" {
 		return false
 	}
-	for _, event := range events {
-		if eventKey(event) == key {
+	for _, candidate := range keys {
+		if candidate == key {
 			return true
 		}
 	}
@@ -127,15 +142,28 @@ func (m eventsModel) selected(all []domain.EventSnapshot) (domain.EventSnapshot,
 }
 
 func (m eventsModel) visibleEvents(events []domain.EventSnapshot) []domain.EventSnapshot {
+	indexes := m.visibleEventIndexes(events)
+	visible := make([]domain.EventSnapshot, 0, len(indexes))
+	for _, index := range indexes {
+		visible = append(visible, events[index])
+	}
+	return visible
+}
+
+func (m eventsModel) visibleEventIndexes(events []domain.EventSnapshot) []int {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return events
+		indexes := make([]int, len(events))
+		for index := range events {
+			indexes[index] = index
+		}
+		return indexes
 	}
-	filtered := make([]domain.EventSnapshot, 0, len(events))
-	for _, event := range events {
+	filtered := make([]int, 0, len(events))
+	for index, event := range events {
 		for _, value := range []string{event.Node, event.Kind, event.Message} {
 			if strings.Contains(strings.ToLower(value), query) {
-				filtered = append(filtered, event)
+				filtered = append(filtered, index)
 				break
 			}
 		}
@@ -175,7 +203,18 @@ func (m eventsModel) syncLegacySelection(state application.EventState) eventsMod
 }
 
 func (m eventsModel) viewSized(size contentSize, state directEventState) string {
-	return m.tableViewSized(size, state.Value, state.Status == directLoading || state.Status == "", state.Status == directFailed, state.Err)
+	if state.Status != directPartial {
+		return m.tableViewSized(size, state.Value, state.Status == directLoading || state.Status == "", state.Status == directFailed, state.Err)
+	}
+	warning := "EVENTS PARTIAL"
+	if state.Err != "" {
+		warning += " — " + state.Err
+	}
+	if size.Height <= 1 {
+		return warning
+	}
+	size.Height--
+	return warning + "\n" + m.tableViewSized(size, state.Value, false, false, state.Err)
 }
 
 func (m eventsModel) tableViewSized(size contentSize, eventSet domain.EventSet, loading, failed bool, err string) string {
