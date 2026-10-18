@@ -310,25 +310,6 @@ func assessEtcdMembership(etcd EtcdState, memberID uint64, memberHostname string
 		return etcdMembershipAssessment{reason: "etcd membership unknown (etcd data unavailable)"}
 	}
 	member, ok := resolveEtcdMember(etcd.Value.Members, memberID, memberHostname)
-	// Compatibility for the legacy reducer wrapper: its historical request
-	// shape treats an exact hostname as authoritative, then falls back to ID.
-	// Prepared-plan callers use resolveEtcdMember directly and reject conflict.
-	if !ok {
-		for _, candidate := range etcd.Value.Members {
-			if memberHostname != "" && candidate.Hostname == memberHostname {
-				member, ok = candidate, true
-				break
-			}
-		}
-		if !ok && memberID != 0 {
-			for _, candidate := range etcd.Value.Members {
-				if candidate.MemberID == memberID {
-					member, ok = candidate, true
-					break
-				}
-			}
-		}
-	}
 	if ok {
 		return etcdMembershipAssessment{
 			found:   true,

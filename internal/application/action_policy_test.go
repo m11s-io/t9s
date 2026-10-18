@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 func TestUnknownNodeCannotBecomeWorker(t *testing.T) {
@@ -13,6 +14,16 @@ func TestUnknownNodeCannotBecomeWorker(t *testing.T) {
 	}
 	if _, ok := resolveNodeTarget([]domain.NodeSnapshot{{ID: "n-1", Name: "worker-1", Role: domain.NodeRoleWorker}}, "worker-1"); !ok {
 		t.Fatal("resolved worker identity should be accepted")
+	}
+}
+
+func TestNodeTargetRejectsNonUniqueCanonicalTarget(t *testing.T) {
+	nodes := []domain.NodeSnapshot{
+		{ID: "control-id", Name: "shared", Role: domain.NodeRoleControl},
+		{ID: "worker-id", Name: "shared", Role: domain.NodeRoleWorker},
+	}
+	if _, ok := resolveNodeTarget(nodes, "worker-id"); ok {
+		t.Fatal("a unique alias must not resolve to a target shared with another node")
 	}
 }
 
@@ -56,5 +67,17 @@ func TestActionPolicyDiskIdentityAndAvailability(t *testing.T) {
 	facts.Available = false
 	if reason := assessDeviceWipeFacts(facts, "worker-1", diskIdentityOf(disk)); reason == "" {
 		t.Fatal("unavailable disk inventory must refuse the wipe")
+	}
+}
+
+func TestResetScopeFactsPreservesAvailableEmptyInventory(t *testing.T) {
+	facts := DiskPolicyFacts{Available: true, Node: "worker-1", Disks: []domain.DiskSnapshot{}}
+	_, userDiskBlock := resetScopeFacts([]string{"worker-1"}, ports.WipeModeUserDisks, facts)
+	if userDiskBlock != "refusing: no user disks discovered" {
+		t.Fatalf("available-empty inventory lost its known state: %q", userDiskBlock)
+	}
+	_, allDiskBlock := resetScopeFacts([]string{"worker-1"}, ports.WipeModeAll, facts)
+	if allDiskBlock != "" {
+		t.Fatalf("all-disk mode should preserve the known-empty inventory behavior, got %q", allDiskBlock)
 	}
 }

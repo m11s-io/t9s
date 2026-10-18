@@ -47,27 +47,44 @@ func resolveNodeTarget(nodes []domain.NodeSnapshot, requested string) (domain.No
 	if requested == "" {
 		return domain.NodeSnapshot{}, false
 	}
-	var found domain.NodeSnapshot
-	count := 0
-	for _, node := range nodes {
-		matches := node.Name == requested || node.ID == requested || node.Target() == requested
-		if !matches {
-			for _, address := range node.Addresses {
-				if address == requested {
-					matches = true
-					break
-				}
+	matchedIndex := -1
+	for i, node := range nodes {
+		if nodeMatchesIdentity(node, requested) {
+			if matchedIndex != -1 {
+				return domain.NodeSnapshot{}, false
 			}
-		}
-		if matches {
-			found = node
-			count++
+			matchedIndex = i
 		}
 	}
-	if count != 1 || found.Target() == "" {
+	if matchedIndex == -1 {
 		return domain.NodeSnapshot{}, false
 	}
+	found := nodes[matchedIndex]
+	canonical := found.Target()
+	if canonical == "" {
+		return domain.NodeSnapshot{}, false
+	}
+	for i, node := range nodes {
+		if i != matchedIndex && nodeMatchesIdentity(node, canonical) {
+			return domain.NodeSnapshot{}, false
+		}
+	}
 	return found, true
+}
+
+func nodeMatchesIdentity(node domain.NodeSnapshot, identity string) bool {
+	if identity == "" {
+		return false
+	}
+	if node.Name == identity || node.ID == identity || node.Target() == identity {
+		return true
+	}
+	for _, address := range node.Addresses {
+		if address == identity {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveEtcdMember requires all supplied identity parts to identify the same
@@ -207,6 +224,9 @@ func resetScopeFacts(targets []string, mode ports.WipeMode, inventory DiskPolicy
 	var preview *ResetPreview
 	if inventory.Available && len(targets) == 1 && inventory.Node == targets[0] {
 		classified := BuildResetPreview(inventory.Node, domain.DiskSet{Disks: inventory.Disks})
+		// The facts say this inventory read completed. BuildResetPreview alone
+		// cannot distinguish that known-empty result from a missing read.
+		classified.Known = true
 		preview = &classified
 	}
 	return resetScopeForPreview(targets, mode, preview)

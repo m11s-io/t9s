@@ -89,13 +89,12 @@ func TestEtcdMembershipBlockReasonRefusesWhenAnotherVoterHealthUnknown(t *testin
 	assert.Contains(t, block, "below quorum", "a removal with an unknown peer must be refused, not merely warned")
 }
 
-func TestEtcdMembershipBlockReasonMatchesByIDWhenHostnameIsStale(t *testing.T) {
-	// The caller's hostname does not match the member, but the ID does; the
-	// matched member's hostname must be used so the target is actually counted
-	// at-risk and the quorum-losing leave is refused.
+func TestEtcdMembershipBlockReasonMatchesByIDWhenHostnameIsOmitted(t *testing.T) {
+	// When the caller supplies only the numeric identity, the matched member's
+	// canonical hostname must be counted at-risk for quorum assessment.
 	etcd := readyEtcd(voter(1, "cp-1"), voter(2, "cp-2"))
 
-	block := etcdMembershipBlockReason(etcd, EtcdActionLeaveCluster, 1, "stale-name")
+	block := etcdMembershipBlockReason(etcd, EtcdActionLeaveCluster, 1, "")
 
 	assert.Contains(t, block, "below quorum")
 }

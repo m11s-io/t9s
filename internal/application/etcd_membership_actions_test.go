@@ -101,6 +101,39 @@ func TestConfirmEtcdActionRemoveRunsSnapshotFirst(t *testing.T) {
 	assert.Equal(t, model.PendingEtcdAction.SnapshotNode, removeNode)
 }
 
+func TestConflictingMemberIdentityNeverCallsRemovalRPC(t *testing.T) {
+	removeCalled := false
+	operations := &testkit.FakeEtcdOperations{
+		SnapshotFunc: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+			return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 544}, nil
+		},
+		RemoveMemberByIDFunc: func(_ context.Context, _ string, _ uint64) error {
+			removeCalled = true
+			return nil
+		},
+	}
+	model := application.Model{Generation: 1, WritesEnabled: true, ContextName: "prod", Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		{MemberID: 1, Hostname: "host-a", StatusKnown: true},
+		{MemberID: 2, Hostname: "host-b", IsLearner: true, StatusKnown: false},
+	}}}}
+	model = withEtcdOperations(model, operations)
+
+	model, _ = application.Update(model, application.RequestEtcdAction{Kind: application.EtcdActionRemoveMember, MemberID: 1, MemberHostname: "host-b", Node: "host-b"})
+	require.NotNil(t, model.PendingEtcdAction)
+
+	model, effect := application.Update(model, application.ConfirmEtcdAction{})
+	if effect != nil {
+		message := effect(t.Context(), application.Dependencies{})
+		if snapshot, ok := message.(application.EtcdSnapshotSucceeded); ok {
+			model, effect = application.Update(model, snapshot)
+			if effect != nil {
+				effect(t.Context(), application.Dependencies{})
+			}
+		}
+	}
+	assert.False(t, removeCalled, "conflicting policy and execution identities must never schedule removal by ID")
+}
+
 func TestEtcdSnapshotFailedAbortsMembershipAction(t *testing.T) {
 	removeCalled := false
 	operations := &testkit.FakeEtcdOperations{
