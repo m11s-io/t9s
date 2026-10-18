@@ -157,3 +157,49 @@ func TestDirectEtcdPaletteWorksGloballyAndReadOnlyKeysAreInert(t *testing.T) {
 	model, _ = updateDirect(model, command())
 	assert.Equal(t, viewNodes, model.views.top().Kind)
 }
+
+func TestDirectEtcdAcceptedFilterUsesVisibleFallbackForRefreshIdentity(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	members := []domain.EtcdMemberSnapshot{
+		{Hostname: "cp-1", MemberID: 1, StatusKnown: true},
+		{Hostname: "worker2", MemberID: 2, StatusKnown: true},
+		{Hostname: "worker3", MemberID: 3, StatusKnown: true},
+	}
+	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: members}}
+	model.etcd = model.etcd.normalizeSelection(members, 0)
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
+
+	model, _ = updateDirect(model, keyPress('/'))
+	for _, key := range []rune("worker") {
+		model, _ = updateDirect(model, keyPress(key))
+	}
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Contains(t, ansi.Strip(model.View().Content), "/worker")
+
+	request, _ := model.requests.begin("cluster-etcd", model.generation())
+	reordered := []domain.EtcdMemberSnapshot{members[2], members[1], members[0]}
+	model, _ = updateDirect(model, directEtcdLoaded{request: request.stamp, etcd: domain.EtcdSet{Members: reordered}})
+	assert.Equal(t, etcdMemberKey(members[1]), model.etcd.selectedKey)
+	assert.Equal(t, 1, model.etcd.control.Cursor())
+	selected, ok := model.etcd.selected(model.cluster.etcd.Value.Members)
+	require.True(t, ok)
+	assert.Equal(t, "worker2", selected.Hostname)
+	assert.Contains(t, ansi.Strip(model.View().Content), "worker2")
+}
+
+func TestDirectEtcdHostnameFallbackIdentitySurvivesRefresh(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	members := []domain.EtcdMemberSnapshot{{Hostname: "worker-a"}, {Hostname: "worker-b"}}
+	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: members}}
+	model.etcd = model.etcd.normalizeSelection(members, 0)
+	model.etcd = model.etcd.update(keyPress('j'), members)
+	assert.Equal(t, "hostname:worker-b", model.etcd.selectedKey)
+
+	reordered := []domain.EtcdMemberSnapshot{members[1], members[0]}
+	model.cluster.etcd.Value.Members = reordered
+	model.etcd = model.etcd.normalizeSelection(reordered, model.etcd.control.Cursor())
+	selected, ok := model.etcd.selected(reordered)
+	require.True(t, ok)
+	assert.Equal(t, "worker-b", selected.Hostname)
+}

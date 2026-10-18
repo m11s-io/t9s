@@ -32,9 +32,7 @@ func (m etcdModel) normalizeSelection(all []domain.EtcdMemberSnapshot, closest i
 	m.control.SetCount(len(visible))
 	if len(visible) == 0 {
 		m.control.SetCursor(0)
-		if !etcdMemberExists(all, m.selectedKey) {
-			m.selectedKey = ""
-		}
+		m.selectedKey = ""
 		return m
 	}
 	for index, member := range visible {
@@ -44,22 +42,8 @@ func (m etcdModel) normalizeSelection(all []domain.EtcdMemberSnapshot, closest i
 		}
 	}
 	m.control.SetCursor(min(max(closest, 0), len(visible)-1))
-	if !etcdMemberExists(all, m.selectedKey) {
-		m.selectedKey = etcdMemberKey(visible[m.control.Cursor()])
-	}
+	m.selectedKey = etcdMemberKey(visible[m.control.Cursor()])
 	return m
-}
-
-func etcdMemberExists(members []domain.EtcdMemberSnapshot, key string) bool {
-	if key == "" {
-		return false
-	}
-	for _, member := range members {
-		if etcdMemberKey(member) == key {
-			return true
-		}
-	}
-	return false
 }
 
 func (m etcdModel) rememberSelection(all []domain.EtcdMemberSnapshot) etcdModel {
