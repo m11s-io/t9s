@@ -354,6 +354,7 @@ func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []d
 	}
 	if request.Kind == ActionUpgrade {
 		facts.Warning = upgradeActionWarningFacts(allNodes, etcdFacts, targetNames, request.Image)
+		facts.Blocked = etcdQuorumBlockReasonFacts(etcdFacts, targetNames)
 	} else if request.Kind == ActionReset {
 		facts.Warning = etcdQuorumWarningFacts(etcdFacts, targetNames)
 		if request.Reset.Graceful {

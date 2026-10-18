@@ -383,6 +383,27 @@ func TestWorkerUpgradePreparationKeepsMinorSkipWarning(t *testing.T) {
 	}
 }
 
+func TestUpgradePreparationBlocksConfirmedBelowQuorum(t *testing.T) {
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleControl, Version: "v1.14.0"}}}, nil
+	}}, &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
+		return domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+			{MemberID: 1, Hostname: "cp-1", StatusKnown: true},
+			{MemberID: 2, Hostname: "cp-2", StatusKnown: true, Errors: []string{"unhealthy"}},
+			{MemberID: 3, Hostname: "cp-3", StatusKnown: true},
+		}}, nil
+	}}, &testkit.FakeNodeController{})
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionUpgrade, Targets: []string{"cp-1"}, Image: "installer:v1.15.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Assessment().Blocked; got == "" {
+		t.Fatal("upgrade of cp-1 was not blocked when only one healthy voter would remain")
+	}
+}
+
 func TestResetNeverExpandsConfirmedDiskScope(t *testing.T) {
 	var calls atomic.Int32
 	var reads atomic.Int32
