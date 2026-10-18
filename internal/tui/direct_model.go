@@ -69,16 +69,16 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.requests.cancelSlot("contexts")
 		m.cluster.contexts = append([]domain.ClusterContext(nil), message.contexts...)
 		if message.err != nil {
-			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: message.err.Error()}
+			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Context discovery failed"}
 			m.nodes = m.nodes.setState(m.cluster.nodes)
-			m.view.notice = "context discovery failed: " + message.err.Error()
+			m.view.notice = "Unable to discover contexts"
 			return m, nil
 		}
 		selected, err := directResolveContext(message.contexts, m.options.ContextName)
 		if err != nil {
-			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: err.Error()}
+			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Selected context is unavailable"}
 			m.nodes = m.nodes.setState(m.cluster.nodes)
-			m.view.notice = err.Error()
+			m.view.notice = "Selected context is unavailable"
 			return m, nil
 		}
 		m.cluster.contextName = selected
@@ -86,9 +86,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.contexts = newContextsModel(message.contexts, selected)
 			m.options.OpenContextPicker = false
 		}
-		return m, m.beginSessionOpen(selected)
+		command := m.beginSessionOpen(selected)
+		return m, command
 	case directSelectContext:
-		return m, m.beginSessionOpen(message.name)
+		command := m.beginSessionOpen(message.name)
+		return m, command
 	case directSessionOpened:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
 			if message.session != nil {
@@ -97,9 +99,9 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if message.err != nil {
-			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: message.err.Error()}
+			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Session unavailable"}
 			m.nodes = m.nodes.setState(m.cluster.nodes)
-			m.view.notice = "session open failed: " + message.err.Error()
+			m.view.notice = "Unable to open session"
 			return m, nil
 		}
 		m.session = message.session
@@ -113,7 +115,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		state := application.NodeState{Status: application.Ready, Value: message.nodes}
 		if message.err != nil {
 			state.Status = application.Failed
-			state.Err = message.err.Error()
+			state.Err = "Node data is unavailable"
+			if len(message.nodes.Nodes) > 0 {
+				state.Status = application.Partial
+				state.Err = "Some node data is unavailable"
+			}
 		}
 		m.cluster.nodes = state
 		m.nodes = m.nodes.setState(state)
@@ -197,7 +203,7 @@ func (m directModel) View() tea.View {
 	return result
 }
 
-func (m directModel) beginSessionOpen(contextName string) tea.Cmd {
+func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	if m.sessionCancel != nil {
 		m.sessionCancel()
 	}

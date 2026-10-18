@@ -95,6 +95,111 @@ func TestDirectContextSwitchClosesLateSessionOpen(t *testing.T) {
 	require.Eventually(t, func() bool { return adapter.CloseCount() == 1 }, time.Second, time.Millisecond)
 }
 
+func TestDirectStartupAndContextSwitchLoadRows(t *testing.T) {
+	opened := make([]string, 0, 2)
+	adapters := make(map[string]*testkit.FakeSession)
+	client := application.NewClient(application.Dependencies{
+		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "dev"}}, nil
+		}},
+		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(_ context.Context, contextName string) (ports.Session, error) {
+			opened = append(opened, contextName)
+			adapter := &testkit.FakeSession{
+				NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+					return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: contextName + "-worker", Name: contextName + "-worker", Role: domain.NodeRoleWorker}}}, nil
+				}},
+				ServiceReader: &testkit.FakeServiceReader{ListFunc: func(context.Context) (domain.ServiceSet, error) {
+					return domain.ServiceSet{}, nil
+				}},
+			}
+			adapters[contextName] = adapter
+			return adapter, nil
+		}},
+	})
+	model := newDirectModel(context.Background(), client, LaunchOptions{})
+
+	model, command := applyDirectCommand(t, model, model.Init())
+	model, command = applyDirectCommand(t, model, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.Equal(t, uint64(1), model.generation())
+	assert.NotNil(t, model.session)
+	assert.Contains(t, model.View().Content, "prod-worker")
+
+	updated, command := model.Update(directSelectContext{name: "dev"})
+	model = updated.(directModel)
+	model, command = applyDirectCommand(t, model, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.Equal(t, []string{"prod", "dev"}, opened)
+	assert.Equal(t, uint64(2), model.generation())
+	assert.NotNil(t, model.session)
+	assert.Contains(t, model.View().Content, "dev-worker")
+	assert.NotContains(t, model.View().Content, "prod-worker")
+	require.Eventually(t, func() bool { return adapters["prod"].CloseCount() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestDirectStartupErrorsDoNotRenderBackendDetails(t *testing.T) {
+	const secret = "credential-like backend detail"
+	t.Run("context catalog", func(t *testing.T) {
+		client := application.NewClient(application.Dependencies{ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return nil, errors.New(secret)
+		}}})
+		model := newDirectModel(context.Background(), client, LaunchOptions{})
+		model, _ = applyDirectCommand(t, model, model.Init())
+		assert.NotContains(t, model.View().Content, secret)
+	})
+	t.Run("session open", func(t *testing.T) {
+		client := application.NewClient(application.Dependencies{
+			ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+				return []domain.ClusterContext{{Name: "prod", Current: true}}, nil
+			}},
+			SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+				return nil, errors.New(secret)
+			}},
+		})
+		model := newDirectModel(context.Background(), client, LaunchOptions{})
+		model, command := applyDirectCommand(t, model, model.Init())
+		model, _ = applyDirectCommand(t, model, command)
+		assert.NotContains(t, model.View().Content, secret)
+	})
+}
+
+func TestDirectNodeReadFailureKeepsRowsAndHidesBackendDetail(t *testing.T) {
+	const secret = "private node and service diagnostic"
+	client := application.NewClient(application.Dependencies{
+		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return []domain.ClusterContext{{Name: "prod", Current: true}}, nil
+		}},
+		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+			return &testkit.FakeSession{
+				NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+					return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-1", Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+				}},
+				ServiceReader: &testkit.FakeServiceReader{ListFunc: func(context.Context) (domain.ServiceSet, error) {
+					return domain.ServiceSet{}, errors.New(secret)
+				}},
+			}, nil
+		}},
+	})
+	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model, command := applyDirectCommand(t, model, model.Init())
+	model, command = applyDirectCommand(t, model, command)
+	model, _ = applyDirectCommand(t, model, command)
+
+	assert.Equal(t, application.Partial, model.cluster.nodes.Status)
+	assert.Len(t, model.cluster.nodes.Value.Nodes, 1)
+	assert.Contains(t, model.View().Content, "worker-1")
+	assert.NotContains(t, model.View().Content, secret)
+}
+
+func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (directModel, tea.Cmd) {
+	t.Helper()
+	require.NotNil(t, command)
+	message := command()
+	require.NotNil(t, message)
+	updated, next := model.Update(message)
+	return updated.(directModel), next
+}
+
 func TestDirectViewExitCancelsUnstartedCommand(t *testing.T) {
 	requests := newDirectRequests()
 	request, cancel := requests.begin("node:worker-1", 1)
