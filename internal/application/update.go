@@ -3,9 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
-	"net/netip"
 	"strings"
-	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -140,7 +138,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		model.Nodes = NodeState{Status: nodeLoadStatus(message.Nodes), Value: message.Nodes}
-		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, model.Kubernetes.Nodes)
+		model.Nodes.Value = EnrichNodes(model.Nodes.Value, model.Kubernetes.Nodes)
 		model.Notice = ""
 		return startEtcdRead(model)
 
@@ -158,7 +156,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		model.Nodes = NodeState{Status: nodeLoadStatus(message.Nodes), Value: message.Nodes}
-		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, model.Kubernetes.Nodes)
+		model.Nodes.Value = EnrichNodes(model.Nodes.Value, model.Kubernetes.Nodes)
 		if message.ServicesRequestID == 0 || message.ServicesRequestID == model.requestIDs["services"] {
 			model.Services = ServiceState{Status: serviceLoadStatus(message.Services), Value: message.Services}
 		}
@@ -436,7 +434,7 @@ func updateModel(model Model, message Message) (Model, Effect) {
 		}
 		model.Kubernetes.Status = Ready
 		model.Kubernetes.Nodes = message.Nodes
-		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, message.Nodes)
+		model.Nodes.Value = EnrichNodes(model.Nodes.Value, message.Nodes)
 		return model, nil
 
 	case KubernetesNodesFailed:
@@ -1162,96 +1160,6 @@ func serviceLoadStatus(services domain.ServiceSet) LoadStatus {
 		return Partial
 	}
 	return Ready
-}
-
-func mergeKubernetesCorrelation(nodes []domain.NodeSnapshot, kubernetesNodes map[string]domain.KubernetesNodeSnapshot) []domain.NodeSnapshot {
-	merged := make([]domain.NodeSnapshot, len(nodes))
-	for index, node := range nodes {
-		merged[index] = node
-		snapshot, ok := lookupKubernetesCorrelation(node, kubernetesNodes)
-		if !ok {
-			continue
-		}
-		merged[index].KubernetesNode = &snapshot
-		merged[index].Kubernetes = kubernetesReadiness(snapshot)
-	}
-	return merged
-}
-
-func lookupKubernetesCorrelation(node domain.NodeSnapshot, kubernetesNodes map[string]domain.KubernetesNodeSnapshot) (domain.KubernetesNodeSnapshot, bool) {
-	if node.Name != "" {
-		if snapshot, ok := kubernetesNodes[node.Name]; ok {
-			return snapshot, true
-		}
-	}
-	for _, address := range node.Addresses {
-		if snapshot, ok := kubernetesNodes[address]; ok {
-			return snapshot, true
-		}
-	}
-	return domain.KubernetesNodeSnapshot{}, false
-}
-
-func kubernetesReadiness(snapshot domain.KubernetesNodeSnapshot) domain.KubernetesState {
-	for _, condition := range snapshot.Conditions {
-		if condition.Type != "Ready" {
-			continue
-		}
-		if condition.Status == "True" {
-			return domain.KubernetesReady
-		}
-		return domain.KubernetesNotReady
-	}
-	return domain.KubernetesUnknown
-}
-
-func controlPlaneHostnames(nodes []domain.NodeSnapshot) []string {
-	hostnames := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		if node.Role != domain.NodeRoleControl {
-			continue
-		}
-		target := node.Name
-		if target == "" && len(node.Addresses) > 0 {
-			target = node.Addresses[0]
-		}
-		if target == "" {
-			continue
-		}
-		hostnames = append(hostnames, target)
-	}
-	return hostnames
-}
-
-// ClusterHealthRequestFromNodes builds the ClusterInfo request from the current
-// node snapshots. Only parseable IP addresses are included: the Talos server
-// rejects hostnames, so Names are used only when they themselves parse as an
-// IP. Empty lists are tolerated — the server falls back to its own discovery.
-func ClusterHealthRequestFromNodes(nodes []domain.NodeSnapshot, timeout time.Duration) domain.ClusterHealthRequest {
-	var controlPlane, workers []string
-	for _, node := range nodes {
-		switch node.Role {
-		case domain.NodeRoleControl:
-			controlPlane = appendNodeIP(controlPlane, node)
-		case domain.NodeRoleWorker:
-			workers = appendNodeIP(workers, node)
-		}
-	}
-	return domain.ClusterHealthRequest{ControlPlaneNodes: controlPlane, WorkerNodes: workers, WaitTimeout: timeout}
-}
-
-func appendNodeIP(target []string, node domain.NodeSnapshot) []string {
-	for _, candidate := range node.Addresses {
-		if _, err := netip.ParseAddr(candidate); err == nil {
-			return append(target, candidate)
-		}
-	}
-	if node.Name != "" {
-		if _, err := netip.ParseAddr(node.Name); err == nil {
-			return append(target, node.Name)
-		}
-	}
-	return target
 }
 
 func safeUpgradeError(err error) string {

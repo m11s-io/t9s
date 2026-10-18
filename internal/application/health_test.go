@@ -173,3 +173,23 @@ func TestEvaluateHealthSortsBySeverityDescendingThenKindThenName(t *testing.T) {
 	assert.Equal(t, domain.SeverityWarning, diagnoses[1].Severity)
 	assert.Equal(t, domain.SeverityUnknown, diagnoses[2].Severity)
 }
+
+func TestHealthUnknownObservationsStayUnknown(t *testing.T) {
+	got := application.EvaluateObservations(application.HealthInput{
+		Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "node", Health: domain.HealthUnhealthy}}},
+		Etcd:  domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{Hostname: "cp-1", MemberID: 1, StatusKnown: false}}},
+	})
+	assert.Empty(t, got, "unknown observations must not be interpreted as healthy or unhealthy")
+
+	got = application.EvaluateObservations(application.HealthInput{
+		NodesKnown: true,
+		Nodes:      domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "node", Health: domain.HealthUnknown}}},
+		EtcdKnown:  true,
+		Etcd:       domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{Hostname: "cp-1", MemberID: 1, StatusKnown: false}}},
+	})
+	require.Len(t, got, 2)
+	assert.Equal(t, domain.SeverityUnknown, got[0].Severity)
+	assert.Equal(t, "etcd-member", got[0].ResourceKind)
+	assert.Equal(t, domain.SeverityUnknown, got[1].Severity)
+	assert.Equal(t, "node", got[1].ResourceKind)
+}

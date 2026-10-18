@@ -12,17 +12,26 @@ func evaluableStatus(status LoadStatus) bool {
 }
 
 func EvaluateHealth(model Model) []domain.Diagnosis {
+	return EvaluateObservations(HealthInput{
+		Nodes:      model.Nodes.Value,
+		NodesKnown: evaluableStatus(model.Nodes.Status),
+		Etcd:       model.Etcd.Value,
+		EtcdKnown:  evaluableStatus(model.Etcd.Status),
+	})
+}
+
+func EvaluateObservations(input HealthInput) []domain.Diagnosis {
 	var diagnoses []domain.Diagnosis
 
-	if evaluableStatus(model.Nodes.Status) {
-		for _, node := range model.Nodes.Value.Nodes {
+	if input.NodesKnown {
+		for _, node := range input.Nodes.Nodes {
 			diagnoses = append(diagnoses, evaluateNodeReadiness(node)...)
 			diagnoses = append(diagnoses, evaluateNodeServicesDegraded(node)...)
 		}
 	}
 
-	if evaluableStatus(model.Etcd.Status) {
-		for _, member := range model.Etcd.Value.Members {
+	if input.EtcdKnown {
+		for _, member := range input.Etcd.Members {
 			diagnoses = append(diagnoses, evaluateEtcdMemberUnhealthy(member)...)
 			diagnoses = append(diagnoses, evaluateEtcdMemberAlarmed(member)...)
 		}
