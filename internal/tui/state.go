@@ -20,6 +20,43 @@ type directClusterState struct {
 	contexts    []domain.ClusterContext
 	contextName string
 	nodes       directNodeState
+	services    directServiceState
+	events      directEventState
+	etcd        directEtcdState
+	kubernetes  directKubernetesState
+}
+
+type directLoadStatus string
+
+const (
+	directLoading directLoadStatus = "loading"
+	directReady   directLoadStatus = "ready"
+	directPartial directLoadStatus = "partial"
+	directFailed  directLoadStatus = "failed"
+)
+
+type directServiceState struct {
+	Status directLoadStatus
+	Value  domain.ServiceSet
+	Err    string
+}
+
+type directEventState struct {
+	Status directLoadStatus
+	Value  domain.EventSet
+	Err    string
+}
+
+type directEtcdState struct {
+	Status directLoadStatus
+	Value  domain.EtcdSet
+	Err    string
+}
+
+type directKubernetesState struct {
+	Status directLoadStatus
+	Nodes  map[string]domain.KubernetesNodeSnapshot
+	Err    string
 }
 
 // directNodeState temporarily aliases the node renderer's presentation

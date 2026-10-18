@@ -22,8 +22,27 @@ type directSessionOpened struct {
 }
 
 type directNodeServicesLoaded struct {
+	request  directRequestStamp
+	nodes    domain.NodeSet
+	services domain.ServiceSet
+	err      error
+}
+
+type directEventsLoaded struct {
 	request directRequestStamp
-	nodes   domain.NodeSet
+	events  domain.EventSet
+	err     error
+}
+
+type directEtcdLoaded struct {
+	request directRequestStamp
+	etcd    domain.EtcdSet
+	err     error
+}
+
+type directKubernetesNodesLoaded struct {
+	request directRequestStamp
+	nodes   map[string]domain.KubernetesNodeSnapshot
 	err     error
 }
 
@@ -60,7 +79,28 @@ func directOpenSessionCommand(client *application.Client, request directRequest,
 
 func directNodeServicesCommand(session *application.Session, request directRequest) tea.Cmd {
 	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
-		nodes, _, err := session.NodeServices(ctx)
-		return directNodeServicesLoaded{request: request.stamp, nodes: nodes, err: err}
+		nodes, services, err := session.NodeServices(ctx)
+		return directNodeServicesLoaded{request: request.stamp, nodes: nodes, services: services, err: err}
+	})
+}
+
+func directEventsCommand(session *application.Session, request directRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		events, err := session.Events(ctx)
+		return directEventsLoaded{request: request.stamp, events: events, err: err}
+	})
+}
+
+func directEtcdCommand(session *application.Session, request directRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		etcd, err := session.Etcd(ctx)
+		return directEtcdLoaded{request: request.stamp, etcd: etcd, err: err}
+	})
+}
+
+func directKubernetesNodesCommand(session *application.Session, request directRequest) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		nodes, err := session.KubernetesNodes(ctx)
+		return directKubernetesNodesLoaded{request: request.stamp, nodes: nodes, err: err}
 	})
 }

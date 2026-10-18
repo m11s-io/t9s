@@ -191,11 +191,179 @@ func TestDirectNodeReadFailureKeepsRowsAndHidesBackendDetail(t *testing.T) {
 	assert.NotContains(t, model.View().Content, secret)
 }
 
+func TestDirectStartupLoadsSharedSnapshotsIndependently(t *testing.T) {
+	client := application.NewClient(application.Dependencies{
+		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return []domain.ClusterContext{{Name: "prod", Current: true}}, nil
+		}},
+		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+			return &testkit.FakeSession{
+				NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+					return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-1", Name: "worker-1", Role: domain.NodeRoleControl}}}, nil
+				}},
+				ServiceReader: &testkit.FakeServiceReader{ListFunc: func(context.Context) (domain.ServiceSet, error) {
+					return domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "worker-1", Name: "uncapped"}}}, errors.New("service detail")
+				}},
+				EventReader: &testkit.FakeEventReader{ListFunc: func(context.Context) (domain.EventSet, error) {
+					return domain.EventSet{}, errors.New("events unavailable")
+				}},
+				EtcdReader: &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
+					return domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{Hostname: "cp-1"}}}, nil
+				}},
+			}, nil
+		}},
+		KubernetesResolver: &testkit.FakeKubernetesResolver{ResolveFunc: func(context.Context, string) (ports.KubernetesNodeReader, error) {
+			return &testkit.FakeKubernetesNodeReader{ListFunc: func(context.Context) (map[string]domain.KubernetesNodeSnapshot, error) {
+				return map[string]domain.KubernetesNodeSnapshot{"worker-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}}}, nil
+			}}, nil
+		}},
+	})
+	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model, command := applyDirectCommand(t, model, model.Init())
+	model, command = applyDirectCommand(t, model, command)
+	message := command()
+	batch, ok := message.(tea.BatchMsg)
+	require.True(t, ok, "session startup should launch independent snapshot commands")
+	require.Len(t, batch, 4)
+
+	updated, kubeCommand := model.Update(batch[3]())
+	model = updated.(directModel)
+	assert.Empty(t, model.cluster.nodes.Value.Nodes, "Kubernetes may complete before nodes without creating node rows")
+	updated, eventsCommand := model.Update(batch[1]())
+	model = updated.(directModel)
+	assert.Equal(t, directFailed, model.cluster.events.Status)
+	assert.Nil(t, kubeCommand)
+	assert.Nil(t, eventsCommand)
+	updated, etcdCommand := model.Update(batch[2]())
+	model = updated.(directModel)
+	assert.Equal(t, "cp-1", model.cluster.etcd.Value.Members[0].Hostname)
+	updated, nodeCommand := model.Update(batch[0]())
+	model = updated.(directModel)
+	assert.Equal(t, directPartial, model.cluster.services.Status)
+	assert.Equal(t, "uncapped", model.cluster.services.Value.Services[0].Name)
+	assert.Equal(t, "worker-1", model.cluster.nodes.Value.Nodes[0].Name)
+	assert.Equal(t, domain.KubernetesReady, model.cluster.nodes.Value.Nodes[0].Kubernetes)
+	assert.Nil(t, etcdCommand)
+	assert.Nil(t, nodeCommand)
+}
+
+func TestDirectContextPickerSelectsAndSwitchResetsSessionData(t *testing.T) {
+	opened := []string{}
+	client := application.NewClient(application.Dependencies{
+		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "dev"}}, nil
+		}},
+		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(_ context.Context, name string) (ports.Session, error) {
+			opened = append(opened, name)
+			return &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node", Name: opened[len(opened)-1]}}, ObservedAt: time.Now()}, nil
+			}}}, nil
+		}},
+	})
+	model := newDirectModel(context.Background(), client, LaunchOptions{OpenContextPicker: true})
+	model, command := applyDirectCommand(t, model, model.Init())
+	model, command = applyDirectCommand(t, model, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.True(t, model.contexts.active)
+	model.nodes.marked = map[string]struct{}{"node": {}}
+	model.nodes.filter = "old"
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	model = updated.(directModel)
+	assert.Equal(t, "dev", model.contexts.values[model.contexts.control.Cursor()].Name)
+	updated, command = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(directModel)
+	require.NotNil(t, command)
+	updated, command = model.Update(command())
+	model = updated.(directModel)
+	assert.Equal(t, "dev", model.cluster.contextName)
+	// The direct model consumes the keyboard selection and starts a new generation.
+	assert.Equal(t, uint64(2), model.generation())
+	assert.Empty(t, model.nodes.marked)
+	assert.Empty(t, model.nodes.filter)
+	assert.Equal(t, application.Loading, model.cluster.nodes.Status)
+	assert.Equal(t, directLoading, model.cluster.services.Status)
+	assert.Empty(t, model.cluster.services.Value.Services)
+	assert.NotNil(t, command)
+}
+
+func TestDirectNodesBeforeKubernetesEnrichesSharedNodeSnapshot(t *testing.T) {
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model.generationCounter = 3
+	nodeRequest, _ := model.requests.begin("cluster-nodes-services", 3)
+	kubeRequest, _ := model.requests.begin("cluster-kubernetes", 3)
+	updated, _ := model.Update(directNodeServicesLoaded{
+		request: nodeRequest.stamp,
+		nodes:   domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-1", Name: "worker-1", Kubernetes: domain.KubernetesUnknown}}},
+	})
+	model = updated.(directModel)
+	assert.Equal(t, domain.KubernetesUnknown, model.cluster.nodes.Value.Nodes[0].Kubernetes)
+	updated, _ = model.Update(directKubernetesNodesLoaded{
+		request: kubeRequest.stamp,
+		nodes:   map[string]domain.KubernetesNodeSnapshot{"worker-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}}},
+	})
+	model = updated.(directModel)
+	assert.Equal(t, domain.KubernetesReady, model.cluster.nodes.Value.Nodes[0].Kubernetes)
+}
+
+func TestDirectClusterCommandAliasesRouteSharedViews(t *testing.T) {
+	for _, test := range []struct {
+		alias string
+		view  viewKind
+	}{
+		{alias: "no", view: viewNodes},
+		{alias: "svc", view: viewServices},
+		{alias: "ev", view: viewEvents},
+		{alias: "et", view: viewEtcd},
+		{alias: "ov", view: viewOverview},
+		{alias: "contexts", view: viewContexts},
+		{alias: "problems", view: viewProblems},
+	} {
+		t.Run(test.alias, func(t *testing.T) {
+			model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+			model.runClusterCommand(test.alias)
+			if test.view == viewContexts {
+				assert.True(t, model.contexts.active)
+			} else {
+				assert.Equal(t, test.view, model.views.top().Kind)
+			}
+		})
+	}
+}
+
+func TestDirectStartupHonorsContextAndNodeFocus(t *testing.T) {
+	opened := ""
+	client := application.NewClient(application.Dependencies{
+		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "dev"}}, nil
+		}},
+		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(_ context.Context, name string) (ports.Session, error) {
+			opened = name
+			return &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-a", Name: "a"}, {ID: "node-b", Name: "b"}}}, nil
+			}}}, nil
+		}},
+	})
+	model := newDirectModel(context.Background(), client, LaunchOptions{ContextName: "dev", NodeFocus: "node-b", OpenContextPicker: true})
+	model, command := applyDirectCommand(t, model, model.Init())
+	model, command = applyDirectCommand(t, model, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.Equal(t, "dev", opened)
+	assert.Equal(t, "dev", model.cluster.contextName)
+	assert.True(t, model.contexts.active)
+	assert.Equal(t, "node-b", model.nodes.selectedID)
+}
+
 func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (directModel, tea.Cmd) {
 	t.Helper()
 	require.NotNil(t, command)
 	message := command()
 	require.NotNil(t, message)
+	if batch, ok := message.(tea.BatchMsg); ok {
+		for _, command := range batch {
+			model, _ = applyDirectCommand(t, model, command)
+		}
+		return model, nil
+	}
 	updated, next := model.Update(message)
 	return updated.(directModel), next
 }
