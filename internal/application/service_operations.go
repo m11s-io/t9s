@@ -207,11 +207,7 @@ func (s *Session) readServiceActionFacts(ctx context.Context, nodes []domain.Nod
 }
 
 func etcdQuorumBlockReasonFromFacts(etcd EtcdPolicyFacts, target string) string {
-	quorum := assessEtcdQuorumFacts(etcd, []string{target})
-	if !quorum.certainlyBelowQuorum() {
-		return ""
-	}
-	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", quorum.confirmedRemaining, quorum.voters, quorum.floor)
+	return etcdQuorumBlockReasonFacts(etcd, []string{target})
 }
 
 func sameServiceActionFacts(prepared, current serviceActionFacts) bool {

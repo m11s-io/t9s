@@ -88,6 +88,7 @@ type preparedState struct {
 	consumed       bool // guarded by session.mu
 	assessment     Assessment
 	serviceFacts   *serviceActionFacts
+	nodeFacts      *nodeActionFacts
 	nodeRequest    *NodeActionRequest
 	serviceRequest *ServiceActionRequest
 	etcdRequest    *EtcdActionRequest

@@ -213,14 +213,10 @@ func assessEtcdQuorum(etcd EtcdState, targets []string) etcdQuorumAssessment {
 }
 
 func computeEtcdQuorumWarning(etcd EtcdState, targets []string) string {
-	assessment := assessEtcdQuorum(etcd, targets)
-	if !assessment.known {
-		return "control-plane node(s); " + assessment.reason
-	}
-	if assessment.belowQuorum() {
-		return fmt.Sprintf("control-plane node(s); would drop etcd to %d/%d — below quorum (need %d)", assessment.remaining, assessment.voters, assessment.floor)
-	}
-	return "control-plane node(s)"
+	return etcdQuorumWarningFacts(EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, targets)
 }
 
 // pendingActionBlockReason re-evaluates the hard gate for an already-open
@@ -572,23 +568,10 @@ func UpgradeMinorWarning(running, image string) string {
 	return ""
 }
 func UpgradeActionWarning(nodes []domain.NodeSnapshot, etcd EtcdState, targets []string, image string) string {
-	warning := computeActionWarning(nodes, etcd, targets)
-	if len(targets) == 0 {
-		return warning
-	}
-	for _, node := range nodes {
-		for _, target := range targets {
-			if node.Target() == target {
-				if minor := UpgradeMinorWarning(node.Version, image); minor != "" {
-					if warning != "" {
-						return warning + "; " + minor
-					}
-					return minor
-				}
-			}
-		}
-	}
-	return warning
+	return upgradeActionWarningFacts(nodes, EtcdPolicyFacts{
+		Available: etcd.Status == Ready || etcd.Status == Partial,
+		Members:   etcd.Value.Members,
+	}, targets, image)
 }
 
 func startUpgradeEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {

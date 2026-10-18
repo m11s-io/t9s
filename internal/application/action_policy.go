@@ -146,6 +146,48 @@ func assessEtcdQuorumFacts(etcd EtcdPolicyFacts, targets []string) etcdQuorumAss
 	}
 }
 
+func etcdQuorumWarningFacts(etcd EtcdPolicyFacts, targets []string) string {
+	assessment := assessEtcdQuorumFacts(etcd, targets)
+	if !assessment.known {
+		return "control-plane node(s); " + assessment.reason
+	}
+	if assessment.belowQuorum() {
+		return fmt.Sprintf("control-plane node(s); would drop etcd to %d/%d — below quorum (need %d)", assessment.remaining, assessment.voters, assessment.floor)
+	}
+	return "control-plane node(s)"
+}
+
+func etcdQuorumBlockReasonFacts(etcd EtcdPolicyFacts, targets []string) string {
+	assessment := assessEtcdQuorumFacts(etcd, targets)
+	if !assessment.certainlyBelowQuorum() {
+		return ""
+	}
+	return fmt.Sprintf("refusing: would drop etcd to %d/%d (need %d)", assessment.confirmedRemaining, assessment.voters, assessment.floor)
+}
+
+func upgradeActionWarningFacts(nodes []domain.NodeSnapshot, etcd EtcdPolicyFacts, targets []string, image string) string {
+	warning := ""
+	if targetsIncludeControlPlane(nodes, targets) {
+		warning = etcdQuorumWarningFacts(etcd, targets)
+	}
+	if len(targets) == 0 {
+		return warning
+	}
+	for _, node := range nodes {
+		for _, target := range targets {
+			if node.Target() == target {
+				if minor := UpgradeMinorWarning(node.Version, image); minor != "" {
+					if warning != "" {
+						return warning + "; " + minor
+					}
+					return minor
+				}
+			}
+		}
+	}
+	return warning
+}
+
 func etcdLeadershipWarningFacts(etcd EtcdPolicyFacts, memberHostname string) string {
 	if !etcd.Available {
 		return ""
