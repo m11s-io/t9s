@@ -32,7 +32,7 @@ func TestContextCommandReplacesAFullResourceContentRegion(t *testing.T) {
 		Status: application.Ready,
 		Value:  domain.ServiceSet{Services: services},
 	}
-	root.services = newServicesModel(root.application.Services)
+	root.services = newServicesModel().normalizeSelection(root.application.Services.Value.Services, 0)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 	root.width, root.height, root.splash = 80, 24, false
 

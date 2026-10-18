@@ -19,47 +19,40 @@ const (
 )
 
 type servicesModel struct {
-	state       application.ServiceState
 	filter      string
 	filtering   bool
 	selectedKey string
 	control     listControl
 }
 
-func newServicesModel(state application.ServiceState) servicesModel {
-	return (servicesModel{state: state}).normalizeSelection(0)
+func newServicesModel() servicesModel {
+	return servicesModel{}
 }
 
-func (m servicesModel) startFilter(value string) servicesModel {
+func (m servicesModel) startFilter(value string, services []domain.ServiceSnapshot) servicesModel {
 	m.filter = value
 	m.filtering = true
-	return m.normalizeSelection(m.control.Cursor())
+	return m.normalizeSelection(services, m.control.Cursor())
 }
 
-func (m servicesModel) setState(state application.ServiceState) servicesModel {
-	previousIndex := m.control.Cursor()
-	m.state = state
-	return m.normalizeSelection(previousIndex)
-}
-
-func (m servicesModel) update(message tea.KeyPressMsg) servicesModel {
+func (m servicesModel) update(message tea.KeyPressMsg, services []domain.ServiceSnapshot) servicesModel {
 	key := message.String()
 	if m.filtering {
 		switch key {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.control.Cursor())
+			return m.normalizeSelection(services, m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.control.Cursor())
+			return m.normalizeSelection(services, m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.control.Cursor())
+			return m.normalizeSelection(services, m.control.Cursor())
 		}
 		return m
 	}
@@ -69,25 +62,25 @@ func (m servicesModel) update(message tea.KeyPressMsg) servicesModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.control.Cursor())
+		m = m.normalizeSelection(services, m.control.Cursor())
 	case "up", "k":
-		m = m.moveSelection(-1)
+		m = m.moveSelection(-1, services)
 	case "down", "j":
-		m = m.moveSelection(1)
+		m = m.moveSelection(1, services)
 	case "g":
 		m.selectedKey = ""
-		m = m.normalizeSelection(0)
+		m = m.normalizeSelection(services, 0)
 	case "G":
 		m.selectedKey = ""
-		m = m.normalizeSelection(len(m.visibleServices()) - 1)
+		m = m.normalizeSelection(services, len(m.visibleServices(services))-1)
 	}
 	return m
 }
 
-func (m servicesModel) moveSelection(delta int) servicesModel {
-	services := m.visibleServices()
+func (m servicesModel) moveSelection(delta int, all []domain.ServiceSnapshot) servicesModel {
+	services := m.visibleServices(all)
 	if len(services) == 0 {
-		return m.normalizeSelection(0)
+		return m.normalizeSelection(all, 0)
 	}
 	if delta < 0 {
 		m.control.MoveUp(-delta)
@@ -98,12 +91,23 @@ func (m servicesModel) moveSelection(delta int) servicesModel {
 	return m
 }
 
-func (m servicesModel) normalizeSelection(closest int) servicesModel {
-	services := m.visibleServices()
+func (m servicesModel) normalizeSelection(all []domain.ServiceSnapshot, closest int) servicesModel {
+	services := m.visibleServices(all)
 	m.control.SetCount(len(services))
+	selectedPresent := false
+	if m.selectedKey != "" {
+		for _, service := range all {
+			if serviceKey(service) == m.selectedKey {
+				selectedPresent = true
+				break
+			}
+		}
+	}
 	if len(services) == 0 {
 		m.control.SetCursor(0)
-		m.selectedKey = ""
+		if !selectedPresent {
+			m.selectedKey = ""
+		}
 		return m
 	}
 	for index, service := range services {
@@ -113,12 +117,14 @@ func (m servicesModel) normalizeSelection(closest int) servicesModel {
 		}
 	}
 	m.control.SetCursor(min(max(closest, 0), len(services)-1))
-	m.selectedKey = serviceKey(services[m.control.Cursor()])
+	if !selectedPresent {
+		m.selectedKey = serviceKey(services[m.control.Cursor()])
+	}
 	return m
 }
 
-func (m servicesModel) selected() (domain.ServiceSnapshot, bool) {
-	services := m.visibleServices()
+func (m servicesModel) selected(all []domain.ServiceSnapshot) (domain.ServiceSnapshot, bool) {
+	services := m.visibleServices(all)
 	cursor := m.control.Cursor()
 	if len(services) == 0 || cursor < 0 || cursor >= len(services) {
 		return domain.ServiceSnapshot{}, false
@@ -126,19 +132,19 @@ func (m servicesModel) selected() (domain.ServiceSnapshot, bool) {
 	return services[cursor], true
 }
 
-func (m servicesModel) selectedValue() domain.ServiceSnapshot {
-	service, _ := m.selected()
+func (m servicesModel) selectedValue(all []domain.ServiceSnapshot) domain.ServiceSnapshot {
+	service, _ := m.selected(all)
 	return service
 }
 
-func (m servicesModel) visibleServices() []domain.ServiceSnapshot {
+func (m servicesModel) visibleServices(all []domain.ServiceSnapshot) []domain.ServiceSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return capServices(m.state.Value.Services)
+		return capServices(all)
 	}
 
-	filtered := make([]domain.ServiceSnapshot, 0, min(len(m.state.Value.Services), maxServiceRows))
-	for _, service := range m.state.Value.Services {
+	filtered := make([]domain.ServiceSnapshot, 0, min(len(all), maxServiceRows))
+	for _, service := range all {
 		if strings.Contains(strings.ToLower(service.Node), query) || strings.Contains(strings.ToLower(service.Name), query) {
 			filtered = append(filtered, service)
 			if len(filtered) == maxServiceRows {
@@ -156,43 +162,43 @@ func capServices(services []domain.ServiceSnapshot) []domain.ServiceSnapshot {
 	return services[:maxServiceRows]
 }
 
-func (m servicesModel) view(width int) string {
-	contents := renderServiceTable(width, m.visibleServices(), m.control.Cursor())
+func (m servicesModel) view(width int, all []domain.ServiceSnapshot) string {
+	contents := renderServiceTable(width, m.visibleServices(all), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
 	return contents
 }
 
-func (m servicesModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+func (m servicesModel) viewSized(size contentSize, services domain.ServiceSet, loading, failed bool, err string) string {
+	if failed {
+		return fallback(err)
 	}
-	services := m.visibleServices()
-	problems := m.visibleProblems()
-	if len(services) == 0 && len(problems) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+	visible := m.visibleServices(services.Services)
+	problems := m.visibleProblems(services)
+	if len(visible) == 0 && len(problems) == 0 {
+		if loading {
 			return "Loading services…"
 		}
 		return "No services"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(services), m.control.Cursor(), rowCapacity)
-	services = services[start:end]
-	remaining := max(0, rowCapacity-len(services))
+	start, end := resourceWindow(len(visible), m.control.Cursor(), rowCapacity)
+	visible = visible[start:end]
+	remaining := max(0, rowCapacity-len(visible))
 	if len(problems) > remaining {
 		problems = problems[:remaining]
 	}
-	return renderServiceTableWithProblems(size.Width, services, problems, m.control.Cursor()-start)
+	return renderServiceTableWithProblems(size.Width, visible, problems, m.control.Cursor()-start)
 }
 
-func (m servicesModel) visibleProblems() []domain.ServiceProblem {
+func (m servicesModel) visibleProblems(services domain.ServiceSet) []domain.ServiceProblem {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Problems
+		return services.Problems
 	}
-	problems := make([]domain.ServiceProblem, 0, len(m.state.Value.Problems))
-	for _, problem := range m.state.Value.Problems {
+	problems := make([]domain.ServiceProblem, 0, len(services.Problems))
+	for _, problem := range services.Problems {
 		if strings.Contains(strings.ToLower(problem.Node), query) || strings.Contains(strings.ToLower(problem.Message), query) {
 			problems = append(problems, problem)
 		}
@@ -201,7 +207,12 @@ func (m servicesModel) visibleProblems() []domain.ServiceProblem {
 }
 
 func renderServices(width int, state application.ServiceState) string {
-	return newServicesModel(state).view(width)
+	model := newServicesModel().normalizeSelection(state.Value.Services, 0)
+	return model.view(width, state.Value.Services)
+}
+
+func (m servicesModel) legacyViewSized(size contentSize, state application.ServiceState) string {
+	return m.viewSized(size, state.Value, state.Status == application.Loading || state.Status == application.Idle, state.Status == application.Failed, state.Err)
 }
 
 var serviceColumns = []tableColumn[domain.ServiceSnapshot]{

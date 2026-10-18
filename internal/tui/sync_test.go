@@ -34,13 +34,13 @@ func TestSyncNodesUpdatesHealthWithoutSyncingServices(t *testing.T) {
 			Services: application.ServiceState{Status: application.Ready},
 		},
 		nodes:    newNodesModel(),
-		services: newServicesModel(application.ServiceState{Status: application.Loading}),
+		services: newServicesModel(),
 		problems: newProblemsModel(nil),
 	}
 	m = m.syncScreens(application.NodesLoaded{})
 	assert.Equal(t, "node", m.nodes.selectedValue(m.application.Nodes.Value.Nodes).ID)
 	assert.Len(t, m.problems.diagnoses, 1)
-	assert.Equal(t, application.Loading, m.services.state.Status)
+	assert.Empty(t, m.services.selectedKey)
 }
 
 func TestSyncDiskActionSuccessUpdatesDiskLoadingStatusOnly(t *testing.T) {

@@ -110,7 +110,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		watchCtx:          watchCtx,
 		styles:            defaultStyles(),
 		nodes:             newNodesModel().normalizeSelection(applicationModel.Nodes.Value.Nodes, 0),
-		services:          newServicesModel(applicationModel.Services),
+		services:          newServicesModel().normalizeSelection(applicationModel.Services.Value.Services, 0),
 		events:            newEventsModel(applicationModel.Events),
 		etcd:              newEtcdModel(applicationModel.Etcd),
 		processes:         newProcessesModel(applicationModel.Processes),
@@ -287,7 +287,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.views = m.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RefreshServices{})
-					m.services = m.services.setState(m.application.Services)
+					m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 					return m, m.command(effect)
 				case commandContexts:
 					m.contexts = newContextsModel(m.application.Contexts, m.application.ContextName)
@@ -493,7 +493,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.filtering() && m.views.top().Kind == viewServices {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RefreshServices{})
-				m.services = m.services.setState(m.application.Services)
+				m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 				return m, m.command(effect)
 			}
 			if !m.filtering() && m.views.top().Kind == viewNodes {
@@ -582,7 +582,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				var servicesEffect, etcdEffect application.Effect
 				m.application, servicesEffect = application.Update(m.application, application.RefreshServices{})
 				m.application, etcdEffect = application.Update(m.application, application.RefreshEtcd{})
-				m.services = m.services.setState(m.application.Services)
+				m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 				m.etcd = m.etcd.setState(m.application.Etcd)
 				return m, tea.Batch(m.command(servicesEffect), m.command(etcdEffect))
 			}
@@ -647,7 +647,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewServices {
 			if key == "l" && !m.services.filtering {
-				if service, ok := m.services.selected(); ok {
+				if service, ok := m.services.selected(m.application.Services.Value.Services); ok {
 					label := fallback(service.Name) + "@" + fallback(service.Node)
 					m.views = m.views.push(viewFrame{Kind: viewServiceLogs, Label: label + " > logs"})
 					var effect application.Effect
@@ -657,34 +657,34 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if (key == "enter" || key == "d") && !m.services.filtering {
-				if _, ok := m.services.selected(); ok {
-					service := m.services.selectedValue()
+				if _, ok := m.services.selected(m.application.Services.Value.Services); ok {
+					service := m.services.selectedValue(m.application.Services.Value.Services)
 					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: fallback(service.Name) + "@" + fallback(service.Node)})
 					return m, nil
 				}
 			}
 			if key == "S" && m.writeActionsEnabled() && !m.services.filtering {
-				if service, ok := m.services.selected(); ok {
+				if service, ok := m.services.selected(m.application.Services.Value.Services); ok {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionStart, Node: service.Node, Service: service.Name})
 					return m, m.command(effect)
 				}
 			}
 			if key == "T" && m.writeActionsEnabled() && !m.services.filtering {
-				if service, ok := m.services.selected(); ok {
+				if service, ok := m.services.selected(m.application.Services.Value.Services); ok {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionStop, Node: service.Node, Service: service.Name})
 					return m, m.command(effect)
 				}
 			}
 			if key == "R" && m.writeActionsEnabled() && !m.services.filtering {
-				if service, ok := m.services.selected(); ok {
+				if service, ok := m.services.selected(m.application.Services.Value.Services); ok {
 					var effect application.Effect
 					m.application, effect = application.Update(m.application, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: service.Node, Service: service.Name})
 					return m, m.command(effect)
 				}
 			}
-			m.services = m.services.update(message)
+			m.services = m.services.update(message, m.application.Services.Value.Services)
 			return m, nil
 		}
 		if m.views.top().Kind == viewEvents {
@@ -1144,9 +1144,9 @@ func (m model) activeContent(size contentSize) string {
 	case viewNodeDetail:
 		view.WriteString(renderNodeDetail(m.nodes.selectedValue(m.application.Nodes.Value.Nodes)))
 	case viewServices:
-		view.WriteString(m.services.viewSized(innerSize))
+		view.WriteString(m.services.legacyViewSized(innerSize, m.application.Services))
 	case viewServiceDetail:
-		view.WriteString(renderServiceDetail(m.services.selectedValue()))
+		view.WriteString(renderServiceDetail(m.services.selectedValue(m.application.Services.Value.Services)))
 	case viewServiceLogs:
 		view.WriteString(m.logs.viewSized(innerSize))
 	case viewEvents:

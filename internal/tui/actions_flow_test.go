@@ -583,7 +583,7 @@ func writesEnabledServicesTestModel(t *testing.T, controller *testkit.FakeServic
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-	root.services = root.services.setState(root.application.Services)
+	root.services = root.services.normalizeSelection(root.application.Services.Value.Services, root.services.control.Cursor())
 	return root
 }
 
@@ -607,7 +607,7 @@ func TestServiceStartKeyWithWritesDisabledIsInert(t *testing.T) {
 	})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-	root.services = root.services.setState(root.application.Services)
+	root.services = root.services.normalizeSelection(root.application.Services.Value.Services, root.services.control.Cursor())
 
 	updated, _ := root.Update(keyPress('S'))
 

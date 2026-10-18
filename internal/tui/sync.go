@@ -22,7 +22,7 @@ func (m model) syncScreens(message application.Message) model {
 		return m
 	case "node-services":
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
-		m.services = m.services.setState(m.application.Services)
+		m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 		return m
 	}
@@ -34,7 +34,7 @@ func (m model) syncScreens(message application.Message) model {
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
 	case application.ServicesLoaded, application.ServicesFailed, application.RefreshServices:
-		m.services = m.services.setState(m.application.Services)
+		m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 	case application.KubernetesNodesLoaded, application.KubernetesNodesFailed:
 		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 	case application.EventsLoaded, application.EventsFailed, application.RefreshEvents,
@@ -89,7 +89,7 @@ func (m model) syncScreens(message application.Message) model {
 
 func (m model) syncAllScreens() model {
 	m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
-	m.services = m.services.setState(m.application.Services)
+	m.services = m.services.normalizeSelection(m.application.Services.Value.Services, m.services.control.Cursor())
 	m.events = m.events.setState(m.application.Events)
 	m.etcd = m.etcd.setState(m.application.Etcd)
 	m.processes = m.processes.setState(m.application.Processes)

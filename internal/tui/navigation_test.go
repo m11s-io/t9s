@@ -48,9 +48,11 @@ func TestFilterConsumesQBeforeViewNavigation(t *testing.T) {
 	root := readyRootModel()
 	root.splash = false
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-	root.services = newServicesModel(application.ServiceState{Status: application.Ready, Value: domain.ServiceSet{
+	serviceSet := domain.ServiceSet{
 		Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}},
-	}})
+	}
+	root.application.Services = application.ServiceState{Status: application.Ready, Value: serviceSet}
+	root.services = newServicesModel().normalizeSelection(serviceSet.Services, 0)
 
 	updated, _ := root.Update(keyPress('/'))
 	updated, command := updated.(model).Update(keyPress('q'))

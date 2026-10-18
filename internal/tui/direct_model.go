@@ -27,6 +27,7 @@ type directModel struct {
 	cluster  directClusterState
 	view     directViewState
 	nodes    nodesModel
+	services servicesModel
 	contexts contextsModel
 	palette  commandModel
 	views    viewStack
@@ -53,10 +54,11 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 			etcd:        directEtcdState{Status: directLoading},
 			kubernetes:  directKubernetesState{Status: directLoading},
 		},
-		nodes:   newNodesModel(),
-		palette: newCommandModel(),
-		views:   newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
-		styles:  defaultStyles(), width: 120, height: 40, splash: true,
+		nodes:    newNodesModel(),
+		services: newServicesModel(),
+		palette:  newCommandModel(),
+		views:    newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
+		styles:   defaultStyles(), width: 120, height: 40, splash: true,
 	}
 }
 
@@ -161,6 +163,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		state.Value = application.EnrichNodes(state.Value, m.cluster.kubernetes.Nodes)
 		m.cluster.nodes = state
 		m.cluster.services = serviceState
+		m.services = m.services.normalizeSelection(serviceState.Value.Services, m.services.control.Cursor())
 		previousCursor := m.nodes.control.Cursor()
 		m.nodes = m.nodes.normalizeSelection(state.Value.Nodes, previousCursor)
 		if m.options.NodeFocus != "" {
@@ -257,12 +260,12 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
 		}
-		if m.views.top().Kind == viewNodeDetail {
+		if m.views.top().Kind == viewNodeDetail || m.views.top().Kind == viewServiceDetail {
 			if message.String() == "esc" || message.String() == "q" {
 				m.views, _ = m.views.pop()
 			}
@@ -285,6 +288,21 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.nodes = m.nodes.update(message, m.cluster.nodes.Value.Nodes)
+		} else if m.views.top().Kind == viewServices {
+			if message.String() == "q" && !m.services.filtering {
+				return m, m.cleanup(tea.Quit())
+			}
+			if (message.String() == "enter" || message.String() == "d") && !m.services.filtering {
+				if service, ok := m.services.selected(m.cluster.services.Value.Services); ok {
+					label := fallback(service.Name) + "@" + fallback(service.Node)
+					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: label})
+				}
+				return m, nil
+			}
+			if message.String() == "r" && !m.services.filtering && m.session != nil {
+				return m, m.refreshDirectNodes()
+			}
+			m.services = m.services.update(message, m.cluster.services.Value.Services)
 		}
 	}
 	return m, nil
@@ -379,6 +397,11 @@ func (m directModel) View() tea.View {
 	} else {
 		if m.views.top().Kind == viewNodeDetail {
 			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
+		} else if m.views.top().Kind == viewServiceDetail {
+			content = renderServiceDetail(m.services.selectedValue(m.cluster.services.Value.Services))
+		} else if m.views.top().Kind == viewServices {
+			content = m.services.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.services.Value,
+				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)
 		} else {
 			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
 		}
@@ -407,6 +430,8 @@ func (m directModel) View() tea.View {
 	prompt := ""
 	if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
 		prompt = "/" + m.nodes.filter
+	} else if !m.palette.active && m.views.top().Kind == viewServices && (m.services.filtering || m.services.filter != "") {
+		prompt = "/" + m.services.filter
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
@@ -433,6 +458,10 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.nodes.marked = nil
 	m.nodes.filter = ""
 	m.nodes.filtering = false
+	m.services.filter = ""
+	m.services.filtering = false
+	m.services.selectedKey = ""
+	m.services.control.SetCursor(0)
 	m.session = nil
 	m.view.notice = ""
 	m.palette = m.palette.close()

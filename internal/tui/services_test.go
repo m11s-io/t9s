@@ -40,23 +40,24 @@ func TestServicesRenderUnknownHealthAsQuestionMark(t *testing.T) {
 }
 
 func TestServicesFilterMatchesNodeAndServiceCaseInsensitively(t *testing.T) {
-	services := newServicesModel(servicesTestState())
+	state := servicesTestState()
+	services := newServicesModel().normalizeSelection(state.Value.Services, 0)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('N'), keyPress('o'), keyPress('D'), keyPress('e'), keyPress('-'), keyPress('b'), keyPress('E'), keyPress('t'), keyPress('A'),
 		{Code: tea.KeyEnter},
 	} {
-		services = services.update(message)
+		services = services.update(message, state.Value.Services)
 	}
 
-	filtered := services.view(120)
+	filtered := services.view(120, state.Value.Services)
 	assert.Contains(t, filtered, "node-beta")
 	assert.Contains(t, filtered, "machined")
 	assert.NotContains(t, filtered, "node-alpha")
 	assert.NotContains(t, filtered, "kubelet")
 	assert.Contains(t, filtered, "FILTER NoDe-bEtA")
 
-	services = services.update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	cleared := services.view(120)
+	services = services.update(tea.KeyPressMsg{Code: tea.KeyEsc}, state.Value.Services)
+	cleared := services.view(120, state.Value.Services)
 	assert.Contains(t, cleared, "node-alpha")
 	assert.Contains(t, cleared, "node-beta")
 	assert.NotContains(t, cleared, "FILTER")
@@ -69,20 +70,22 @@ func TestServicesRenderEmptyState(t *testing.T) {
 }
 
 func TestServicesSelectionResetsWhenRefreshedServiceSetIsEmpty(t *testing.T) {
-	services := newServicesModel(application.ServiceState{
+	state := application.ServiceState{
 		Status: application.Ready,
 		Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{
 			{Node: "cp-1", Name: "etcd"},
 			{Node: "cp-1", Name: "kubelet"},
 		}},
-	})
-	services = services.update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	services := newServicesModel().normalizeSelection(state.Value.Services, 0)
+	services = services.update(tea.KeyPressMsg{Code: tea.KeyDown}, state.Value.Services)
 
-	services = services.setState(application.ServiceState{Status: application.Ready})
+	state = application.ServiceState{Status: application.Ready}
+	services = services.normalizeSelection(state.Value.Services, services.control.Cursor())
 
-	_, ok := services.selected()
+	_, ok := services.selected(state.Value.Services)
 	assert.False(t, ok)
-	assert.Equal(t, "No services", services.viewSized(contentSize{Width: 80, Height: 10}))
+	assert.Equal(t, "No services", services.legacyViewSized(contentSize{Width: 80, Height: 10}, state))
 }
 
 func TestServicesRenderCapsTheNumberOfRows(t *testing.T) {
@@ -103,9 +106,9 @@ func TestServicesRenderSuccessfulRowsWithNodeScopedProblems(t *testing.T) {
 		Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd", State: "Running"}},
 		Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "services unavailable"}},
 	}}
-	model := newServicesModel(state)
+	model := newServicesModel().normalizeSelection(state.Value.Services, 0)
 
-	view := model.viewSized(contentSize{Width: 100, Height: 8})
+	view := model.legacyViewSized(contentSize{Width: 100, Height: 8}, state)
 
 	assert.Contains(t, view, "cp-1")
 	assert.Contains(t, view, "etcd")
@@ -118,9 +121,9 @@ func TestServicesFilterMatchesNodeScopedProblems(t *testing.T) {
 		Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}},
 		Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "services unavailable"}},
 	}}
-	model := newServicesModel(state).startFilter("WoRkEr")
+	model := newServicesModel().startFilter("WoRkEr", state.Value.Services)
 
-	view := model.viewSized(contentSize{Width: 100, Height: 8})
+	view := model.legacyViewSized(contentSize{Width: 100, Height: 8}, state)
 
 	assert.Contains(t, view, "worker-1")
 	assert.Contains(t, view, "services unavailable")

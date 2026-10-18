@@ -28,7 +28,8 @@ func TestServicesShellKeepsMovedSelectionVisible(t *testing.T) {
 	root := readyRootModel()
 	root.splash = false
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-	root.services = newServicesModel(application.ServiceState{Status: application.Ready, Value: domain.ServiceSet{Services: services}})
+	root.application.Services = application.ServiceState{Status: application.Ready, Value: domain.ServiceSet{Services: services}}
+	root.services = newServicesModel().normalizeSelection(services, 0)
 	updated, _ := root.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	root = updated.(model)
 	for range 12 {
@@ -53,8 +54,8 @@ func TestResourceStatesRenderInsideContent(t *testing.T) {
 		{name: "empty", state: application.ServiceState{Status: application.Ready}, want: "No services"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			model := newServicesModel(test.state)
-			assert.Contains(t, model.viewSized(contentSize{Width: 80, Height: 5}), test.want)
+			model := newServicesModel().normalizeSelection(test.state.Value.Services, 0)
+			assert.Contains(t, model.legacyViewSized(contentSize{Width: 80, Height: 5}, test.state), test.want)
 		})
 	}
 }
