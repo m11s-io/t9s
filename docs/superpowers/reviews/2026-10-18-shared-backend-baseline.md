@@ -35,6 +35,20 @@ Failing cases, observed in both test commands:
 
 These failures are present before migration edits: the corresponding source and tests are committed at baseline HEAD, and there were no tracked worktree changes. Track them as baseline failures, then decide whether migration changes legitimately update the expectations; do not silently attribute them to migration.
 
+## Task 1a: baseline expectation repair
+
+At migration-plan HEAD `d181c63`, the four above cases were reproduced before edits with the same normalized results recorded in the original baseline. The expectations were stale: `mutationErrorText` deliberately returns `action failed` for confirmed failures; successful upgrades carry `domain.OperationCompleted`; and an unconfirmed reboot hides the transport detail while retaining the target and remote-outcome warning. For an unconfirmed canceled upgrade, it reports `request canceled`.
+
+After updating only these assertions, the focused cases pass. The earlier baseline RED and repaired GREEN are distinct evidence: the failures predate migration work and were resolved by aligning test expectations with the committed operation policy; production behavior was not changed.
+
+| Command | Result after expectation repair |
+| --- | --- |
+| `go test ./internal/application -run 'TestActionFailedAppendsErrorResultForCurrentGeneration|TestUpgradeBridgeStreamsProgressAndRefreshesNodesOnSuccess' -count=1` | Pass. |
+| `go test ./internal/tui -run 'TestConfirmingRebootReportsFailureWithTargetAndError|TestUpgradeFailureKeepsPhaseAndNormalizedErrorInNotice' -count=1` | Pass. |
+| `go test ./...` | Pass. |
+| `go test -race ./...` | Pass. |
+| `go vet ./...` | Pass. |
+
 ## Capability-to-test and migration inventory
 
 Test-file mappings below identify the current behavioral suites, including the application contract, adapter behavior where applicable, and TUI call-site/interaction coverage. Migration task numbers refer to the ordered steps in `docs/superpowers/specs/2026-10-18-shared-backend-migration-design.md`.

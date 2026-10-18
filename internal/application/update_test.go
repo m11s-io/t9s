@@ -1636,7 +1636,7 @@ func TestActionFailedAppendsErrorResultForCurrentGeneration(t *testing.T) {
 	got, _ := application.Update(model, application.ActionFailed{Generation: model.Generation, Target: "cp-1", Err: errors.New("unreachable")})
 
 	require.Len(t, got.ActionResults, 1)
-	assert.Equal(t, "unreachable", got.ActionResults[0].Err)
+	assert.Equal(t, "action failed", got.ActionResults[0].Err)
 }
 
 func TestActionResultIgnoredFromOlderGeneration(t *testing.T) {

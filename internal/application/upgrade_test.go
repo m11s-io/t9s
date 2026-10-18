@@ -62,10 +62,10 @@ func TestUpgradeBridgeStreamsProgressAndRefreshesNodesOnSuccess(t *testing.T) {
 	assert.Equal(t, ports.UpgradeInstalling, model.Upgrade.Event.Phase)
 
 	completed := next(t.Context(), application.Dependencies{})
-	assert.Equal(t, application.UpgradeSucceeded{Generation: model.Generation, Target: "cp-1"}, completed)
+	assert.Equal(t, application.UpgradeSucceeded{Generation: model.Generation, Target: "cp-1", Outcome: domain.OperationCompleted}, completed)
 	model, refresh := application.Update(model, completed)
 	assert.False(t, model.Upgrade.Active)
-	assert.Equal(t, []application.ActionResult{{Target: "cp-1"}}, model.ActionResults)
+	assert.Equal(t, []application.ActionResult{{Target: "cp-1", Outcome: domain.OperationCompleted}}, model.ActionResults)
 	require.NotNil(t, refresh)
 	_ = refresh(t.Context(), application.Dependencies{})
 	assert.Equal(t, 1, nodeLoads)

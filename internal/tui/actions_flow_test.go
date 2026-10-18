@@ -303,7 +303,7 @@ func TestConfirmingRebootReportsFailureWithTargetAndError(t *testing.T) {
 	rootModel = updated.(model)
 
 	assert.Contains(t, rootModel.notice, "cp-1")
-	assert.Contains(t, rootModel.notice, "connection refused")
+	assert.Contains(t, rootModel.notice, "request failed; remote outcome unconfirmed — check state before retrying")
 }
 
 func TestActionResultsFooterDenominatorIsConfirmedTargetCountNotResultsSoFar(t *testing.T) {
@@ -410,7 +410,7 @@ func TestUpgradeFailureKeepsPhaseAndNormalizedErrorInNotice(t *testing.T) {
 		Err:        context.Canceled,
 	}})
 
-	assert.Equal(t, "Upgrade cp-1 unconfirmed during waiting: request failed; remote outcome unconfirmed — check state before retrying", updated.(model).notice)
+	assert.Equal(t, "Upgrade cp-1 unconfirmed during waiting: request canceled; remote outcome unconfirmed — check state before retrying", updated.(model).notice)
 }
 
 func TestActiveUpgradeBlocksWritesButAllowsReadOnlyNavigation(t *testing.T) {
