@@ -11,7 +11,6 @@ import (
 )
 
 type nodesModel struct {
-	state      application.NodeState
 	filter     string
 	filtering  bool
 	selectedID string
@@ -20,25 +19,16 @@ type nodesModel struct {
 	notice     string
 }
 
-func newNodesModel(state application.NodeState) nodesModel {
-	model := nodesModel{state: state}
-	return model.normalizeSelection(0)
-}
+func newNodesModel() nodesModel { return nodesModel{} }
 
-func (m nodesModel) setState(state application.NodeState) nodesModel {
-	previousIndex := m.control.Cursor()
-	m.state = state
-	return m.normalizeSelection(previousIndex)
-}
-
-func (m nodesModel) startFilter(value string) nodesModel {
+func (m nodesModel) startFilter(value string, nodes []domain.NodeSnapshot) nodesModel {
 	m.filter = value
 	m.filtering = true
 	m.notice = ""
-	return m.normalizeSelection(m.control.Cursor())
+	return m.normalizeSelection(nodes, m.control.Cursor())
 }
 
-func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
+func (m nodesModel) update(message tea.KeyPressMsg, nodes []domain.NodeSnapshot) nodesModel {
 	key := message.String()
 	if m.filtering {
 		switch key {
@@ -46,18 +36,18 @@ func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
 			m.filter = ""
 			m.filtering = false
 			m.notice = ""
-			return m.normalizeSelection(m.control.Cursor())
+			return m.normalizeSelection(nodes, m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.control.Cursor())
+			return m.normalizeSelection(nodes, m.control.Cursor())
 		}
 
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.control.Cursor())
+			return m.normalizeSelection(nodes, m.control.Cursor())
 		}
 		return m
 	}
@@ -69,19 +59,19 @@ func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
 	case "esc":
 		m.filter = ""
 		m.notice = ""
-		m = m.normalizeSelection(m.control.Cursor())
+		m = m.normalizeSelection(nodes, m.control.Cursor())
 	case "up", "k":
-		m = m.moveSelection(-1)
+		m = m.moveSelection(nodes, -1)
 	case "down", "j":
-		m = m.moveSelection(1)
+		m = m.moveSelection(nodes, 1)
 	case "g":
 		m.selectedID = ""
-		m = m.normalizeSelection(0)
+		m = m.normalizeSelection(nodes, 0)
 	case "G":
 		m.selectedID = ""
-		m = m.normalizeSelection(len(m.visibleNodes()) - 1)
+		m = m.normalizeSelection(nodes, len(m.visibleNodes(nodes))-1)
 	case "space":
-		if node, ok := m.selected(); ok {
+		if node, ok := m.selected(nodes); ok {
 			if m.marked == nil {
 				m.marked = make(map[string]struct{})
 			}
@@ -96,10 +86,10 @@ func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
 	return m
 }
 
-func (m nodesModel) moveSelection(delta int) nodesModel {
-	nodes := m.visibleNodes()
+func (m nodesModel) moveSelection(snapshot []domain.NodeSnapshot, delta int) nodesModel {
+	nodes := m.visibleNodes(snapshot)
 	if len(nodes) == 0 {
-		return m.normalizeSelection(0)
+		return m.normalizeSelection(snapshot, 0)
 	}
 	if delta < 0 {
 		m.control.MoveUp(-delta)
@@ -111,8 +101,8 @@ func (m nodesModel) moveSelection(delta int) nodesModel {
 	return m
 }
 
-func (m nodesModel) normalizeSelection(closest int) nodesModel {
-	nodes := m.visibleNodes()
+func (m nodesModel) normalizeSelection(snapshot []domain.NodeSnapshot, closest int) nodesModel {
+	nodes := m.visibleNodes(snapshot)
 	m.control.SetCount(len(nodes))
 	if len(nodes) == 0 {
 		m.control.SetCursor(0)
@@ -134,8 +124,18 @@ func (m nodesModel) normalizeSelection(closest int) nodesModel {
 	return m
 }
 
-func (m nodesModel) selected() (domain.NodeSnapshot, bool) {
-	nodes := m.visibleNodes()
+func (m nodesModel) selectID(id string, snapshot []domain.NodeSnapshot) nodesModel {
+	for index, node := range m.visibleNodes(snapshot) {
+		if node.ID == id {
+			m.selectedID = id
+			return m.normalizeSelection(snapshot, index)
+		}
+	}
+	return m
+}
+
+func (m nodesModel) selected(snapshot []domain.NodeSnapshot) (domain.NodeSnapshot, bool) {
+	nodes := m.visibleNodes(snapshot)
 	cursor := m.control.Cursor()
 	if len(nodes) == 0 || cursor < 0 || cursor >= len(nodes) {
 		return domain.NodeSnapshot{}, false
@@ -143,7 +143,10 @@ func (m nodesModel) selected() (domain.NodeSnapshot, bool) {
 	return nodes[cursor], true
 }
 
-func (m nodesModel) selectedValue() domain.NodeSnapshot { node, _ := m.selected(); return node }
+func (m nodesModel) selectedValue(snapshot []domain.NodeSnapshot) domain.NodeSnapshot {
+	node, _ := m.selected(snapshot)
+	return node
+}
 
 func (m nodesModel) isMarked(id string) bool {
 	if m.marked == nil {
@@ -153,30 +156,30 @@ func (m nodesModel) isMarked(id string) bool {
 	return ok
 }
 
-func (m nodesModel) actionTargets() []string {
+func (m nodesModel) actionTargets(snapshot []domain.NodeSnapshot) []string {
 	if len(m.marked) > 0 {
 		targets := make([]string, 0, len(m.marked))
-		for _, node := range m.state.Value.Nodes {
+		for _, node := range snapshot {
 			if m.isMarked(node.ID) {
 				targets = append(targets, node.Target())
 			}
 		}
 		return targets
 	}
-	if node, ok := m.selected(); ok {
+	if node, ok := m.selected(snapshot); ok {
 		return []string{node.Target()}
 	}
 	return nil
 }
 
-func (m nodesModel) visibleNodes() []domain.NodeSnapshot {
+func (m nodesModel) visibleNodes(snapshot []domain.NodeSnapshot) []domain.NodeSnapshot {
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
-		return m.state.Value.Nodes
+		return snapshot
 	}
 
-	filtered := make([]domain.NodeSnapshot, 0, len(m.state.Value.Nodes))
-	for _, node := range m.state.Value.Nodes {
+	filtered := make([]domain.NodeSnapshot, 0, len(snapshot))
+	for _, node := range snapshot {
 		values := []string{
 			node.DisplayName(),
 			string(node.Role),
@@ -195,8 +198,8 @@ func (m nodesModel) visibleNodes() []domain.NodeSnapshot {
 	return filtered
 }
 
-func (m nodesModel) view(width int) string {
-	contents := renderNodeTable(width, m.visibleNodes(), m.control.Cursor(), m.marked)
+func (m nodesModel) view(width int, snapshot []domain.NodeSnapshot) string {
+	contents := renderNodeTable(width, m.visibleNodes(snapshot), m.control.Cursor(), m.marked)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -206,13 +209,13 @@ func (m nodesModel) view(width int) string {
 	return contents
 }
 
-func (m nodesModel) viewSized(size contentSize) string {
-	if m.state.Status == application.Failed {
-		return fallback(m.state.Err)
+func (m nodesModel) viewSized(size contentSize, state application.NodeState) string {
+	if state.Status == application.Failed {
+		return fallback(state.Err)
 	}
-	nodes := m.visibleNodes()
+	nodes := m.visibleNodes(state.Value.Nodes)
 	if len(nodes) == 0 {
-		if m.state.Status == application.Loading || m.state.Status == application.Idle {
+		if state.Status == application.Loading || state.Status == application.Idle {
 			return "Loading nodes…"
 		}
 		return "No nodes"
@@ -223,7 +226,8 @@ func (m nodesModel) viewSized(size contentSize) string {
 }
 
 func renderNodes(width int, state application.NodeState) string {
-	return newNodesModel(state).view(width)
+	model := newNodesModel().normalizeSelection(state.Value.Nodes, 0)
+	return model.view(width, state.Value.Nodes)
 }
 
 func trimLastRune(value string) string {

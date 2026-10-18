@@ -109,7 +109,7 @@ func newModel(parent context.Context, watchCtx bool, applicationModel applicatio
 		},
 		watchCtx:          watchCtx,
 		styles:            defaultStyles(),
-		nodes:             newNodesModel(applicationModel.Nodes),
+		nodes:             newNodesModel().normalizeSelection(applicationModel.Nodes.Value.Nodes, 0),
 		services:          newServicesModel(applicationModel.Services),
 		events:            newEventsModel(applicationModel.Events),
 		etcd:              newEtcdModel(applicationModel.Etcd),
@@ -500,7 +500,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				var nodesEffect, kubernetesEffect application.Effect
 				m.application, nodesEffect = application.Update(m.application, application.RefreshNodes{})
 				m.application, kubernetesEffect = application.Update(m.application, application.RefreshKubernetesNodes{})
-				m.nodes = m.nodes.setState(m.application.Nodes)
+				m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 				return m, tea.Batch(m.command(nodesEffect), m.command(kubernetesEffect))
 			}
 			if !m.filtering() && m.views.top().Kind == viewEvents {
@@ -779,14 +779,14 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				if diagnosis, ok := m.problems.selected(); ok {
 					switch diagnosis.ResourceKind {
 					case "node":
-						for index, node := range m.nodes.visibleNodes() {
+						for index, node := range m.nodes.visibleNodes(m.application.Nodes.Value.Nodes) {
 							if node.ID == diagnosis.ResourceID {
 								m.nodes.selectedID = node.ID
-								m.nodes = m.nodes.normalizeSelection(index)
+								m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, index)
 								break
 							}
 						}
-						m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue().DisplayName())})
+						m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue(m.application.Nodes.Value.Nodes).DisplayName())})
 					case "etcd-member":
 						m.views = m.views.push(viewFrame{Kind: viewEtcd, Label: "etcd"})
 					}
@@ -847,14 +847,14 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if (key == "enter" || key == "d") && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue().DisplayName())})
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue(m.application.Nodes.Value.Nodes).DisplayName())})
 				return m, nil
 			}
 		}
 		if key == "p" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewProcesses, Label: fallback(node.DisplayName()) + " > processes"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenProcesses{Node: node.Target()})
@@ -863,8 +863,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "k" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewDisks, Label: fallback(node.DisplayName()) + " > disks"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenDisks{Node: node.Target()})
@@ -873,8 +873,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "n" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewNetwork, Label: fallback(node.DisplayName()) + " > network"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenNetwork{Node: node.Target()})
@@ -883,8 +883,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "e" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewDmesg, Label: fallback(node.DisplayName()) + " > dmesg"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenDmesg{Request: domain.DmesgRequest{Node: node.Target(), Follow: true, Tail: true}})
@@ -893,8 +893,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "s" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewNetstat, Label: fallback(node.DisplayName()) + " > netstat"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenNetstat{Node: node.Target()})
@@ -903,8 +903,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "m" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewMounts, Label: fallback(node.DisplayName()) + " > mounts"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenMounts{Node: node.Target()})
@@ -913,7 +913,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "u" && !m.nodes.filtering && m.views.top().Kind == viewNodes {
-			if node, ok := m.nodes.selected(); ok {
+			if node, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
 				m.views = m.views.push(viewFrame{Kind: viewCPU, Label: fallback(node.DisplayName()) + " > CPU"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenCPU{Node: node.Target()})
@@ -922,7 +922,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "t" && !m.nodes.filtering && m.views.top().Kind == viewNodes {
-			if node, ok := m.nodes.selected(); ok {
+			if node, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
 				m.views = m.views.push(viewFrame{Kind: viewTime, Label: fallback(node.DisplayName()) + " > time"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenTime{Node: node.Target()})
@@ -931,8 +931,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "f" && !m.nodes.filtering {
-			if _, ok := m.nodes.selected(); ok {
-				node := m.nodes.selectedValue()
+			if _, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
+				node := m.nodes.selectedValue(m.application.Nodes.Value.Nodes)
 				m.views = m.views.push(viewFrame{Kind: viewMemory, Label: fallback(node.DisplayName()) + " > memory"})
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.OpenMemory{Node: node.Target()})
@@ -941,35 +941,35 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if key == "R" && m.writeActionsEnabled() && !m.nodes.filtering {
-			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+			if targets := m.nodes.actionTargets(m.application.Nodes.Value.Nodes); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionReboot, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
 		if key == "X" && m.writeActionsEnabled() && !m.nodes.filtering {
-			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+			if targets := m.nodes.actionTargets(m.application.Nodes.Value.Nodes); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionShutdown, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
 		if key == "B" && m.writeActionsEnabled() && !m.nodes.filtering {
-			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+			if targets := m.nodes.actionTargets(m.application.Nodes.Value.Nodes); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestAction{Kind: application.ActionRollback, Targets: targets})
 				return m, m.command(effect)
 			}
 		}
 		if key == "W" && m.writeActionsEnabled() && !m.nodes.filtering {
-			if targets := m.nodes.actionTargets(); len(targets) > 0 {
+			if targets := m.nodes.actionTargets(m.application.Nodes.Value.Nodes); len(targets) > 0 {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestResetPrompt{Targets: targets})
 				return m, m.command(effect)
 			}
 		}
 		if key == "U" && m.writeActionsEnabled() && !m.nodes.filtering && m.upgradePrompt == nil {
-			if node, ok := m.nodes.selected(); ok {
+			if node, ok := m.nodes.selected(m.application.Nodes.Value.Nodes); ok {
 				var effect application.Effect
 				m.application, effect = application.Update(m.application, application.RequestUpgradePrompt{Target: node.Target()})
 				return m, m.command(effect)
@@ -981,7 +981,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			// exactly as it did before this feature, per spec.
 			return m, nil
 		}
-		m.nodes = m.nodes.update(message)
+		m.nodes = m.nodes.update(message, m.application.Nodes.Value.Nodes)
 		return m, nil
 	case shutdownMessage:
 		return m, m.shutdown()
@@ -995,7 +995,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var nodesEffect, kubernetesEffect application.Effect
 		m.application, nodesEffect = application.Update(m.application, application.RefreshNodes{})
 		m.application, kubernetesEffect = application.Update(m.application, application.RefreshKubernetesNodes{})
-		m.nodes = m.nodes.setState(m.application.Nodes)
+		m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, m.nodes.control.Cursor())
 		return m, tea.Batch(m.command(nodesEffect), m.command(kubernetesEffect), nodeAutoRefreshTick())
 	case applicationMessage:
 		if message.message == nil {
@@ -1022,11 +1022,11 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.syncScreens(message.message)
 		if m.application.NodeFocus != "" && !m.nodeFocusResolved && m.application.Nodes.Status != application.Loading && m.application.Nodes.Status != application.Idle {
 			m.nodeFocusResolved = true
-			for index, node := range m.nodes.visibleNodes() {
-				if node.Name == m.application.NodeFocus || slices.Contains(node.Addresses, m.application.NodeFocus) {
+			for index, node := range m.nodes.visibleNodes(m.application.Nodes.Value.Nodes) {
+				if node.ID == m.application.NodeFocus || node.Name == m.application.NodeFocus || slices.Contains(node.Addresses, m.application.NodeFocus) {
 					m.nodes.selectedID = node.ID
-					m.nodes = m.nodes.normalizeSelection(index)
-					m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue().DisplayName())})
+					m.nodes = m.nodes.normalizeSelection(m.application.Nodes.Value.Nodes, index)
+					m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(m.nodes.selectedValue(m.application.Nodes.Value.Nodes).DisplayName())})
 					break
 				}
 			}
@@ -1142,7 +1142,7 @@ func (m model) activeContent(size contentSize) string {
 	var view strings.Builder
 	switch m.views.top().Kind {
 	case viewNodeDetail:
-		view.WriteString(renderNodeDetail(m.nodes.selectedValue()))
+		view.WriteString(renderNodeDetail(m.nodes.selectedValue(m.application.Nodes.Value.Nodes)))
 	case viewServices:
 		view.WriteString(m.services.viewSized(innerSize))
 	case viewServiceDetail:
@@ -1199,7 +1199,7 @@ func (m model) activeContent(size contentSize) string {
 	case viewHelp:
 		view.WriteString("HELP\n\n" + renderActionHints(actionHints(viewNodes, m.writeActionsEnabled())) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.writeActionsEnabled())))
 	default:
-		view.WriteString(m.nodes.viewSized(innerSize))
+		view.WriteString(m.nodes.viewSized(innerSize, m.application.Nodes))
 	}
 	return renderResourceFrame(frame, view.String(), m.styles.k9s)
 }

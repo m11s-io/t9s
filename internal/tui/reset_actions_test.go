@@ -27,7 +27,7 @@ func resetTestRoot(t *testing.T, controller *testkit.FakeNodeController, diskRea
 		}},
 	})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
-	root.nodes = root.nodes.setState(root.application.Nodes)
+	root.nodes = root.nodes.normalizeSelection(root.application.Nodes.Value.Nodes, root.nodes.control.Cursor())
 	return root
 }
 

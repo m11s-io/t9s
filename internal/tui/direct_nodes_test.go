@@ -1,0 +1,138 @@
+package tui
+
+import (
+	"context"
+	"sync/atomic"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
+	"github.com/m11s-io/t9s/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDirectNodesFilterUsesCurrentSharedSnapshot(t *testing.T) {
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model.splash = false
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+		{ID: "cp-id", Name: "control-plane"},
+		{ID: "worker-id", Name: "worker-1"},
+	}}}
+	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
+	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: model.cluster.nodes.Value})
+
+	model, _ = updateDirect(model, keyPress('/'))
+	for _, character := range "worker" {
+		model, _ = updateDirect(model, keyPress(character))
+	}
+
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "worker-1")
+	assert.NotContains(t, content, "control-plane")
+}
+
+func TestDirectNodesEnterShowsSelectedNodeDetailAndEscapeReturns(t *testing.T) {
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{
+		{ID: "cp-id", Name: "control-plane"},
+		{ID: "worker-id", Name: "worker-1", Kubernetes: domain.KubernetesUnknown},
+	})
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyDown})
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	require.Nil(t, command)
+	assert.Contains(t, model.View().Content, "NODE DETAIL")
+	assert.Contains(t, model.View().Content, "NAME       worker-1")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.NotContains(t, model.View().Content, "NODE DETAIL")
+}
+
+func TestDirectNodesMarksRowsByStableIDWhenWritesEnabled(t *testing.T) {
+	model := newDirectNodesModel(t, LaunchOptions{WritesEnabled: true}, []domain.NodeSnapshot{
+		{ID: "cp-id", Name: "control-plane"},
+		{ID: "worker-id", Name: "worker-1"},
+	})
+	model, _ = updateDirect(model, keyPress(' '))
+
+	assert.True(t, model.nodes.isMarked("cp-id"))
+	assert.False(t, model.nodes.isMarked("worker-id"))
+}
+
+func TestDirectNodesRefreshKeyReloadsSnapshotAndKeepsSelection(t *testing.T) {
+	var reads atomic.Int32
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{
+			NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				reads.Add(1)
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1"}, {ID: "cp-id", Name: "control-plane"}}}, nil
+			}},
+			ServiceReader: &testkit.FakeServiceReader{ListFunc: func(context.Context) (domain.ServiceSet, error) {
+				return domain.ServiceSet{}, nil
+			}},
+		}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	defer session.Close()
+
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{
+		{ID: "cp-id", Name: "control-plane"}, {ID: "worker-id", Name: "worker-1"},
+	})
+	model.session = session
+	model.sessionCtx = context.Background()
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyDown})
+	model, command := updateDirect(model, keyPress('r'))
+	model, _ = applyDirectCommand(t, model, command)
+
+	assert.Equal(t, int32(1), reads.Load())
+	assert.Equal(t, "worker-id", model.nodes.selectedID)
+	assert.Equal(t, "worker-id", model.nodes.selectedValue(model.cluster.nodes.Value.Nodes).ID)
+}
+
+func TestDirectNodeFocusResolvesNameAndAddressToStableIDOnce(t *testing.T) {
+	for _, focus := range []string{"worker-1", "10.0.0.2"} {
+		t.Run(focus, func(t *testing.T) {
+			model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{NodeFocus: focus})
+			model.splash = false
+			first := domain.NodeSet{Nodes: []domain.NodeSnapshot{
+				{ID: "cp-id", Name: "control-plane", Addresses: []string{"10.0.0.1"}},
+				{ID: "worker-id", Name: "worker-1", Addresses: []string{"10.0.0.2"}},
+			}}
+			request, _ := model.requests.begin("cluster-nodes-services", model.generation())
+			model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: first})
+			require.Equal(t, "worker-id", model.nodes.selectedID)
+
+			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyUp})
+			refreshed := domain.NodeSet{Nodes: []domain.NodeSnapshot{first.Nodes[1], first.Nodes[0]}}
+			request, _ = model.requests.begin("cluster-nodes-services", model.generation())
+			model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: refreshed})
+			assert.Equal(t, "cp-id", model.nodes.selectedID, "a later refresh must preserve the user's current selection")
+		})
+	}
+}
+
+func TestDirectNodeFocusAcceptsStableID(t *testing.T) {
+	model := newDirectNodesModel(t, LaunchOptions{NodeFocus: "worker-id"}, []domain.NodeSnapshot{
+		{ID: "cp-id", Name: "control-plane"},
+		{ID: "worker-id", Name: "worker-1"},
+	})
+	assert.Equal(t, "worker-id", model.nodes.selectedID)
+}
+
+func updateDirect(model directModel, message tea.Msg) (directModel, tea.Cmd) {
+	updated, command := model.Update(message)
+	return updated.(directModel), command
+}
+
+func newDirectNodesModel(t *testing.T, options LaunchOptions, nodes []domain.NodeSnapshot) directModel {
+	t.Helper()
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), options)
+	model.splash = false
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
+	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: model.cluster.nodes.Value})
+	return model
+}

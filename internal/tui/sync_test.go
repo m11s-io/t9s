@@ -15,7 +15,7 @@ func TestSyncLogBatchLeavesUnrelatedScreensUntouched(t *testing.T) {
 			Dmesg: application.DmesgState{Lines: []string{"new dmesg"}},
 			Nodes: application.NodeState{Status: application.Ready},
 		},
-		nodes:    newNodesModel(application.NodeState{Status: application.Loading}),
+		nodes:    nodesModel{selectedID: "node"},
 		logs:     newLogsModel(application.LogState{}),
 		dmesg:    newDmesgModel(application.DmesgState{Lines: []string{"old dmesg"}}),
 		problems: newProblemsModel([]domain.Diagnosis{{Summary: "retained diagnosis"}}),
@@ -23,7 +23,7 @@ func TestSyncLogBatchLeavesUnrelatedScreensUntouched(t *testing.T) {
 	m = m.syncScreens(application.ServiceLogBatchLoaded{})
 	assert.Equal(t, []string{"new log"}, m.logs.state.Lines)
 	assert.Equal(t, []string{"old dmesg"}, m.dmesg.state.Lines)
-	assert.Equal(t, application.Loading, m.nodes.state.Status)
+	assert.Equal(t, "node", m.nodes.selectedID)
 	assert.Equal(t, "retained diagnosis", m.problems.diagnoses[0].Summary)
 }
 
@@ -33,12 +33,12 @@ func TestSyncNodesUpdatesHealthWithoutSyncingServices(t *testing.T) {
 			Nodes:    application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node", Health: domain.HealthUnhealthy}}}},
 			Services: application.ServiceState{Status: application.Ready},
 		},
-		nodes:    newNodesModel(application.NodeState{}),
+		nodes:    newNodesModel(),
 		services: newServicesModel(application.ServiceState{Status: application.Loading}),
 		problems: newProblemsModel(nil),
 	}
 	m = m.syncScreens(application.NodesLoaded{})
-	assert.Equal(t, application.Ready, m.nodes.state.Status)
+	assert.Equal(t, "node", m.nodes.selectedValue(m.application.Nodes.Value.Nodes).ID)
 	assert.Len(t, m.problems.diagnoses, 1)
 	assert.Equal(t, application.Loading, m.services.state.Status)
 }

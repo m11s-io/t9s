@@ -53,7 +53,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 			etcd:        directEtcdState{Status: directLoading},
 			kubernetes:  directKubernetesState{Status: directLoading},
 		},
-		nodes:   newNodesModel(nodeState),
+		nodes:   newNodesModel(),
 		palette: newCommandModel(),
 		views:   newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}),
 		styles:  defaultStyles(), width: 120, height: 40, splash: true,
@@ -79,7 +79,6 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.cluster.contexts = append([]domain.ClusterContext(nil), message.contexts...)
 		if message.err != nil {
 			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Context discovery failed"}
-			m.nodes = m.nodes.setState(m.cluster.nodes)
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
 			m.cluster.etcd = directEtcdState{Status: directFailed, Err: "Etcd data is unavailable"}
@@ -90,7 +89,6 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		selected, err := directResolveContext(message.contexts, m.options.ContextName)
 		if err != nil {
 			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Selected context is unavailable"}
-			m.nodes = m.nodes.setState(m.cluster.nodes)
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
 			m.cluster.etcd = directEtcdState{Status: directFailed, Err: "Etcd data is unavailable"}
@@ -120,7 +118,6 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if message.err != nil {
 			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Session unavailable"}
-			m.nodes = m.nodes.setState(m.cluster.nodes)
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
 			m.cluster.etcd = directEtcdState{Status: directFailed, Err: "Etcd data is unavailable"}
@@ -164,10 +161,13 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		state.Value = application.EnrichNodes(state.Value, m.cluster.kubernetes.Nodes)
 		m.cluster.nodes = state
 		m.cluster.services = serviceState
-		m.nodes = m.nodes.setState(state)
+		previousCursor := m.nodes.control.Cursor()
+		m.nodes = m.nodes.normalizeSelection(state.Value.Nodes, previousCursor)
 		if m.options.NodeFocus != "" {
-			m.nodes.selectedID = m.options.NodeFocus
-			m.nodes = m.nodes.normalizeSelection(m.nodes.control.Cursor())
+			if focusedID := resolveNodeFocus(state.Value.Nodes, m.options.NodeFocus); focusedID != "" {
+				m.nodes = m.nodes.selectID(focusedID, state.Value.Nodes)
+			}
+			m.options.NodeFocus = ""
 		}
 		return m, nil
 	case directEventsLoaded:
@@ -214,7 +214,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cluster.kubernetes = state
 		m.cluster.nodes.Value = application.EnrichNodes(m.cluster.nodes.Value, state.Nodes)
-		m.nodes = m.nodes.setState(m.cluster.nodes)
+		m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
 		return m, nil
 	case directRunCommand:
 		return m, m.runClusterCommand(message.value)
@@ -257,10 +257,34 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
+		if m.views.top().Kind == viewNodeDetail {
+			if message.String() == "esc" || message.String() == "q" {
+				m.views, _ = m.views.pop()
+			}
+			return m, nil
+		}
 		if message.String() == ":" {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
+		}
+		if m.views.top().Kind == viewNodes {
+			if message.String() == "q" && !m.nodes.filtering {
+				return m, m.cleanup(tea.Quit())
+			}
+			if (message.String() == "enter" || message.String() == "d") && !m.nodes.filtering {
+				if node, ok := m.nodes.selected(m.cluster.nodes.Value.Nodes); ok {
+					m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(node.DisplayName())})
+				}
+				return m, nil
+			}
+			if message.String() == "r" && !m.nodes.filtering && m.session != nil {
+				return m, m.refreshDirectNodes()
+			}
+			if message.String() == "space" && !m.options.WritesEnabled && !m.nodes.filtering {
+				return m, nil
+			}
+			m.nodes = m.nodes.update(message, m.cluster.nodes.Value.Nodes)
 		}
 	}
 	return m, nil
@@ -290,6 +314,32 @@ func cloneKubernetesSnapshots(values map[string]domain.KubernetesNodeSnapshot) m
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func resolveNodeFocus(nodes []domain.NodeSnapshot, focus string) string {
+	for _, node := range nodes {
+		if node.ID == focus || node.Name == focus {
+			return node.ID
+		}
+		for _, address := range node.Addresses {
+			if address == focus {
+				return node.ID
+			}
+		}
+	}
+	return ""
+}
+
+func (m *directModel) refreshDirectNodes() tea.Cmd {
+	if m.session == nil {
+		return nil
+	}
+	nodeRequest, _ := m.requests.beginWithContext("cluster-nodes-services", m.generation(), m.sessionCtx)
+	kubeRequest, _ := m.requests.beginWithContext("cluster-kubernetes", m.generation(), m.sessionCtx)
+	return tea.Batch(
+		directNodeServicesCommand(m.session, nodeRequest),
+		directKubernetesNodesCommand(m.session, kubeRequest),
+	)
 }
 
 func (m directModel) View() tea.View {
@@ -327,7 +377,11 @@ func (m directModel) View() tea.View {
 	} else if m.splash {
 		content = "t9s\nInspect Talos clusters"
 	} else {
-		content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+		if m.views.top().Kind == viewNodeDetail {
+			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
+		} else {
+			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
+		}
 	}
 	if m.palette.active {
 		content += "\n" + m.palette.view()
@@ -370,7 +424,7 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.cluster.events = directEventState{Status: directLoading}
 	m.cluster.etcd = directEtcdState{Status: directLoading}
 	m.cluster.kubernetes = directKubernetesState{Status: directLoading}
-	m.nodes = m.nodes.setState(m.cluster.nodes)
+	m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
 	m.nodes.selectedID = ""
 	m.nodes.marked = nil
 	m.nodes.filter = ""

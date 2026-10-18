@@ -123,7 +123,7 @@ func TestNodeAutoRefreshTickSkipsRefreshOffTheNodeView(t *testing.T) {
 
 func TestNodeAutoRefreshTickSkipsRefreshWhileFiltering(t *testing.T) {
 	root := readyRootModel()
-	root.nodes = root.nodes.update(keyPress('/'))
+	root.nodes = root.nodes.update(keyPress('/'), root.application.Nodes.Value.Nodes)
 	require.True(t, root.filtering())
 
 	updated, cmd := root.Update(nodeAutoRefreshTickMsg{})

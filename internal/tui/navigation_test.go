@@ -63,14 +63,15 @@ func TestFilterConsumesQBeforeViewNavigation(t *testing.T) {
 func TestResourceEndpointKeysAndContextualHints(t *testing.T) {
 	root := readyRootModel()
 	root.splash = false
-	root.nodes = newNodesModel(application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	root.application.Nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{ID: "one", Name: "one"}, {ID: "two", Name: "two"}, {ID: "three", Name: "three"},
-	}}})
+	}}}
+	root.nodes = newNodesModel().normalizeSelection(root.application.Nodes.Value.Nodes, 0)
 
 	updated, _ := root.Update(keyPress('G'))
-	assert.Equal(t, "three", updated.(model).nodes.selectedValue().ID)
+	assert.Equal(t, "three", updated.(model).nodes.selectedValue(updated.(model).application.Nodes.Value.Nodes).ID)
 	updated, _ = updated.(model).Update(keyPress('g'))
-	assert.Equal(t, "one", updated.(model).nodes.selectedValue().ID)
+	assert.Equal(t, "one", updated.(model).nodes.selectedValue(updated.(model).application.Nodes.Value.Nodes).ID)
 
 	view := ansi.Strip(updated.(model).View().Content)
 	assert.Contains(t, view, "<?> Help")

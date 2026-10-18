@@ -34,7 +34,7 @@ func writesEnabledTestModel(t *testing.T, controller *testkit.FakeNodeController
 	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
-	root.nodes = root.nodes.setState(root.application.Nodes)
+	root.nodes = root.nodes.normalizeSelection(root.application.Nodes.Value.Nodes, root.nodes.control.Cursor())
 	return root
 }
 
@@ -160,7 +160,7 @@ func TestSpaceKeyWithWritesDisabledDoesNotMarkRow(t *testing.T) {
 		}},
 	})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
-	root.nodes = root.nodes.setState(root.application.Nodes)
+	root.nodes = root.nodes.normalizeSelection(root.application.Nodes.Value.Nodes, root.nodes.control.Cursor())
 
 	updated, _ := root.Update(keyPress(' '))
 	rootModel := updated.(model)
@@ -177,8 +177,8 @@ func TestSpaceKeyWithWritesDisabledStillFiltersWhenFilteringActive(t *testing.T)
 		}},
 	})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
-	root.nodes = root.nodes.setState(root.application.Nodes)
-	root.nodes = root.nodes.startFilter("cp")
+	root.nodes = root.nodes.normalizeSelection(root.application.Nodes.Value.Nodes, root.nodes.control.Cursor())
+	root.nodes = root.nodes.startFilter("cp", root.application.Nodes.Value.Nodes)
 
 	updated, _ := root.Update(keyPress(' '))
 	rootModel := updated.(model)
@@ -322,12 +322,12 @@ func TestActionResultsFooterDenominatorIsConfirmedTargetCountNotResultsSoFar(t *
 	})
 	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
-	root.nodes = root.nodes.setState(root.application.Nodes)
-	root.nodes = root.nodes.update(keyPress(' '))
-	root.nodes = root.nodes.moveSelection(1)
-	root.nodes = root.nodes.update(keyPress(' '))
-	root.nodes = root.nodes.moveSelection(1)
-	root.nodes = root.nodes.update(keyPress(' '))
+	root.nodes = root.nodes.normalizeSelection(root.application.Nodes.Value.Nodes, root.nodes.control.Cursor())
+	root.nodes = root.nodes.update(keyPress(' '), root.application.Nodes.Value.Nodes)
+	root.nodes = root.nodes.moveSelection(root.application.Nodes.Value.Nodes, 1)
+	root.nodes = root.nodes.update(keyPress(' '), root.application.Nodes.Value.Nodes)
+	root.nodes = root.nodes.moveSelection(root.application.Nodes.Value.Nodes, 1)
+	root.nodes = root.nodes.update(keyPress(' '), root.application.Nodes.Value.Nodes)
 
 	updated, _ := root.Update(keyPress('R'))
 	rootModel := updated.(model)

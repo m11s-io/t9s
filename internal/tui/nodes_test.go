@@ -60,22 +60,22 @@ func TestNodesRenderRetainsAllColumnsAtWidth80(t *testing.T) {
 }
 
 func TestNodesFilterMatchesDisplayNameAndRoleCaseInsensitively(t *testing.T) {
-	nodes := newNodesModel(nodesTestState())
+	nodes := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('W'), keyPress('o'), keyPress('R'), keyPress('k'), keyPress('e'), keyPress('r'),
 		{Code: tea.KeyEnter},
 	} {
-		nodes = nodes.update(message)
+		nodes = nodes.update(message, nodesTestState().Value.Nodes)
 	}
 
-	filtered := nodes.view(120)
+	filtered := nodes.view(120, nodesTestState().Value.Nodes)
 	assert.Contains(t, filtered, "worker-1")
 	assert.NotContains(t, filtered, "control-plane-node")
 	assert.NotContains(t, filtered, "10.0.0.3")
 	assert.Contains(t, filtered, "FILTER WoRker")
 
-	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	cleared := nodes.view(120)
+	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyEsc}, nodesTestState().Value.Nodes)
+	cleared := nodes.view(120, nodesTestState().Value.Nodes)
 	assert.Contains(t, cleared, "worker-1")
 	assert.Contains(t, cleared, "control-plane-node")
 	assert.Contains(t, cleared, "10.0.0.3")
@@ -92,51 +92,51 @@ func TestNodesFilterSearchesEverySemanticValue(t *testing.T) {
 		"version":         "V1.9.5",
 	} {
 		t.Run(name, func(t *testing.T) {
-			nodes := newNodesModel(nodesTestState())
-			nodes = nodes.startFilter(query)
+			nodes := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
+			nodes = nodes.startFilter(query, nodesTestState().Value.Nodes)
 
-			require.NotEmpty(t, nodes.visibleNodes())
+			require.NotEmpty(t, nodes.visibleNodes(nodesTestState().Value.Nodes))
 		})
 	}
 }
 
 func TestNodesSelectionSurvivesRefreshByID(t *testing.T) {
-	nodes := newNodesModel(nodesTestState())
-	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyDown})
-	assert.Equal(t, "worker-1", nodes.selectedValue().DisplayName())
+	nodes := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
+	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyDown}, nodesTestState().Value.Nodes)
+	assert.Equal(t, "worker-1", nodes.selectedValue(nodesTestState().Value.Nodes).DisplayName())
 
 	refreshed := nodesTestState()
 	refreshed.Value.Nodes[0], refreshed.Value.Nodes[1] = refreshed.Value.Nodes[1], refreshed.Value.Nodes[0]
-	nodes = nodes.setState(refreshed)
+	nodes = nodes.normalizeSelection(refreshed.Value.Nodes, nodes.control.Cursor())
 
-	assert.Equal(t, "worker-1", nodes.selectedValue().DisplayName())
+	assert.Equal(t, "worker-1", nodes.selectedValue(refreshed.Value.Nodes).DisplayName())
 }
 
 func TestNodesSelectionMovesToClosestRowWhenSelectedNodeDisappears(t *testing.T) {
-	nodes := newNodesModel(nodesTestState())
-	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyDown})
+	nodes := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
+	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyDown}, nodesTestState().Value.Nodes)
 
 	refreshed := nodesTestState()
 	refreshed.Value.Nodes = []domain.NodeSnapshot{
 		refreshed.Value.Nodes[0],
 		refreshed.Value.Nodes[2],
 	}
-	nodes = nodes.setState(refreshed)
+	nodes = nodes.normalizeSelection(refreshed.Value.Nodes, nodes.control.Cursor())
 
-	assert.Equal(t, "10.0.0.3", nodes.selectedValue().DisplayName())
+	assert.Equal(t, "10.0.0.3", nodes.selectedValue(refreshed.Value.Nodes).DisplayName())
 }
 
 func TestNodesSelectionResetsWhenRefreshedNodeSetIsEmpty(t *testing.T) {
-	nodes := newNodesModel(nodesTestState())
-	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyDown})
+	nodes := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
+	nodes = nodes.update(tea.KeyPressMsg{Code: tea.KeyDown}, nodesTestState().Value.Nodes)
 
 	empty := nodesTestState()
 	empty.Value.Nodes = nil
-	nodes = nodes.setState(empty)
+	nodes = nodes.normalizeSelection(empty.Value.Nodes, nodes.control.Cursor())
 
-	_, ok := nodes.selected()
+	_, ok := nodes.selected(empty.Value.Nodes)
 	assert.False(t, ok)
-	assert.Equal(t, "No nodes", nodes.viewSized(contentSize{Width: 80, Height: 10}))
+	assert.Equal(t, "No nodes", nodes.viewSized(contentSize{Width: 80, Height: 10}, empty))
 }
 
 func TestNodesEnterShowsSelectedNodeDetail(t *testing.T) {
@@ -166,7 +166,7 @@ func TestNodesEscapeReturnsToListAndKeepsRootResource(t *testing.T) {
 func TestNodesRootRoutesQToActiveFilterInsteadOfQuitting(t *testing.T) {
 	applicationModel := application.Model{Nodes: nodesTestState()}
 	root := newModel(t.Context(), false, applicationModel, nil)
-	root.nodes = root.nodes.update(keyPress('/'))
+	root.nodes = root.nodes.update(keyPress('/'), root.application.Nodes.Value.Nodes)
 
 	updated, command := root.Update(keyPress('q'))
 
@@ -178,7 +178,7 @@ func TestNodesRootPreservesSelectionAcrossLoadedSnapshot(t *testing.T) {
 	applicationModel := application.Model{Generation: 1, Nodes: nodesTestState()}
 	root := newModel(t.Context(), false, applicationModel, nil)
 	root.splash = false
-	root.nodes = root.nodes.update(tea.KeyPressMsg{Code: tea.KeyDown})
+	root.nodes = root.nodes.update(tea.KeyPressMsg{Code: tea.KeyDown}, nodesTestState().Value.Nodes)
 	refreshed := nodesTestState().Value
 	refreshed.Nodes[0], refreshed.Nodes[1] = refreshed.Nodes[1], refreshed.Nodes[0]
 
@@ -187,51 +187,52 @@ func TestNodesRootPreservesSelectionAcrossLoadedSnapshot(t *testing.T) {
 		Nodes:      refreshed,
 	}})
 
-	assert.Equal(t, "worker-1", updated.(model).nodes.selectedValue().DisplayName())
+	updatedRoot := updated.(model)
+	assert.Equal(t, "worker-1", updatedRoot.nodes.selectedValue(updatedRoot.application.Nodes.Value.Nodes).DisplayName())
 }
 
 func TestSpaceTogglesMarkOnSelectedRow(t *testing.T) {
-	model := newNodesModel(nodesTestState())
+	model := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
 
-	toggled := model.update(keyPress(' '))
+	toggled := model.update(keyPress(' '), nodesTestState().Value.Nodes)
 
-	assert.True(t, toggled.isMarked(toggled.selectedValue().ID))
+	assert.True(t, toggled.isMarked(toggled.selectedValue(nodesTestState().Value.Nodes).ID))
 
-	untoggled := toggled.update(keyPress(' '))
-	assert.False(t, untoggled.isMarked(untoggled.selectedValue().ID))
+	untoggled := toggled.update(keyPress(' '), nodesTestState().Value.Nodes)
+	assert.False(t, untoggled.isMarked(untoggled.selectedValue(nodesTestState().Value.Nodes).ID))
 }
 
 func TestMarksPersistAcrossFiltering(t *testing.T) {
-	model := newNodesModel(nodesTestState())
-	model = model.update(keyPress(' '))
-	markedID := model.selectedValue().ID
+	model := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
+	model = model.update(keyPress(' '), nodesTestState().Value.Nodes)
+	markedID := model.selectedValue(nodesTestState().Value.Nodes).ID
 
-	model = model.startFilter("")
-	model = model.update(keyPress('x')) // arbitrary filter text
-	model = model.update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	model = model.startFilter("", nodesTestState().Value.Nodes)
+	model = model.update(keyPress('x'), nodesTestState().Value.Nodes) // arbitrary filter text
+	model = model.update(tea.KeyPressMsg{Code: tea.KeyEsc}, nodesTestState().Value.Nodes)
 
 	assert.True(t, model.isMarked(markedID))
 }
 
 func TestActionTargetsPrefersMarkedSetOverCursor(t *testing.T) {
-	model := newNodesModel(nodesTestState())
-	nodes := model.visibleNodes()
+	model := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
+	nodes := model.visibleNodes(nodesTestState().Value.Nodes)
 	require.GreaterOrEqual(t, len(nodes), 2)
-	model = model.update(keyPress(' ')) // mark node at cursor 0
-	model = model.moveSelection(1)
-	model = model.update(keyPress(' ')) // mark node at cursor 1
+	model = model.update(keyPress(' '), nodesTestState().Value.Nodes) // mark node at cursor 0
+	model = model.moveSelection(nodesTestState().Value.Nodes, 1)
+	model = model.update(keyPress(' '), nodesTestState().Value.Nodes) // mark node at cursor 1
 
-	targets := model.actionTargets()
+	targets := model.actionTargets(nodesTestState().Value.Nodes)
 
 	assert.ElementsMatch(t, []string{nodes[0].Target(), nodes[1].Target()}, targets)
 }
 
 func TestActionTargetsFallsBackToCursorWhenNothingMarked(t *testing.T) {
-	model := newNodesModel(nodesTestState())
+	model := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
 
-	targets := model.actionTargets()
+	targets := model.actionTargets(nodesTestState().Value.Nodes)
 
-	assert.Equal(t, []string{model.selectedValue().Target()}, targets)
+	assert.Equal(t, []string{model.selectedValue(nodesTestState().Value.Nodes).Target()}, targets)
 }
 
 func TestRenderNodeTableMarksRowWithIndicator(t *testing.T) {
@@ -330,13 +331,13 @@ func TestKeyStringCanonicalizesLegacyAndKittyUppercase(t *testing.T) {
 }
 
 func TestNodesGotoBottomHandlesKittyShiftEncoding(t *testing.T) {
-	model := newNodesModel(nodesTestState())
+	model := newNodesModel().normalizeSelection(nodesTestState().Value.Nodes, 0)
 
-	updated := model.update(shiftKeyPress('G'))
+	updated := model.update(shiftKeyPress('G'), nodesTestState().Value.Nodes)
 
-	nodes := updated.visibleNodes()
+	nodes := updated.visibleNodes(nodesTestState().Value.Nodes)
 	require.NotEmpty(t, nodes)
-	assert.Equal(t, nodes[len(nodes)-1].ID, updated.selectedValue().ID, "shift+g (Kitty protocol) must jump to the bottom, same as legacy \"G\"")
+	assert.Equal(t, nodes[len(nodes)-1].ID, updated.selectedValue(nodesTestState().Value.Nodes).ID, "shift+g (Kitty protocol) must jump to the bottom, same as legacy \"G\"")
 }
 
 func TestRenderNodeDetailShowsKubernetesBlockWhenCorrelated(t *testing.T) {
