@@ -3,10 +3,8 @@ package application
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
-	"github.com/m11s-io/t9s/internal/ports"
 )
 
 type CPUState struct {
@@ -54,13 +52,10 @@ func updateCPU(model Model, message Message) (Model, Effect, bool) {
 		model.CPU = CPUState{}
 		return model, nil, true
 	case CPULoaded:
-		if msg.Generation != model.Generation || msg.RequestID != model.cpuRequestID || msg.Node != model.CPU.Node || model.CPU.Status != Loading {
+		if msg.Generation != model.Generation || msg.Node != model.CPU.Node || model.CPU.Status != Loading {
 			return model, nil, true
 		}
-		if model.cpuCancel != nil {
-			model.cpuCancel()
-			model.cpuCancel = nil
-		}
+
 		model.CPU.Value = msg.Value
 		model.CPU.Status = Ready
 		if len(msg.Value.Problems) > 0 || !msg.Value.Aggregate.Known {
@@ -86,22 +81,10 @@ func updateCPU(model Model, message Message) (Model, Effect, bool) {
 	return model, nil, false
 }
 func startCPUSample(model Model) (Model, Effect) {
-	if model.cpuCancel != nil {
-		model.cpuCancel()
-	}
-	model.cpuRequestID++
-	lifetime, cancel := context.WithCancel(context.Background())
-	model.cpuCancel = cancel
 	model.CPU.Status = Loading
 	model.CPU.Err = ""
-	generation, id, node, reader := model.Generation, model.cpuRequestID, model.CPU.Node, model.cpuReader
-	return model, func(effectCtx context.Context, _ Dependencies) Message {
-		stop := context.AfterFunc(effectCtx, cancel)
-		if effectCtx.Err() != nil {
-			cancel()
-		}
-		ctx, timeoutCancel := context.WithTimeout(lifetime, 10*time.Second)
-		defer func() { stop(); timeoutCancel(); cancel() }()
+	generation, node, reader := model.Generation, model.CPU.Node, model.cpuReader
+	return model, func(ctx context.Context, _ Dependencies) Message {
 		var value domain.CPUSnapshot
 		var err error
 		if reader == nil {
@@ -114,35 +97,9 @@ func startCPUSample(model Model) (Model, Effect) {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return CPULoaded{Generation: generation, RequestID: id, Node: node, Value: value, Err: err}
+		return CPULoaded{Generation: generation, Node: node, Value: value, Err: err}
 	}
 }
 func closeCPURequest(model *Model) {
-	if model.cpuCancel != nil {
-		model.cpuCancel()
-		model.cpuCancel = nil
-	}
-	model.cpuRequestID++
-}
-
-func (s managedSession) CPU() ports.CPUReader {
-	if s.cpu == nil {
-		return nil
-	}
-	return boundCPUReader{CPUReader: s.cpu, ctx: s.ctx}
-}
-
-type boundCPUReader struct {
-	ports.CPUReader
-	ctx context.Context
-}
-
-func (r boundCPUReader) Sample(callCtx context.Context, node string) (domain.CPUSnapshot, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	if callCtx.Err() != nil {
-		cancel()
-	}
-	defer func() { stop(); cancel() }()
-	return r.CPUReader.Sample(ctx, node)
+	*model = closeRead(*model, "cpu")
 }

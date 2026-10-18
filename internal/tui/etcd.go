@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -16,15 +14,15 @@ type etcdModel struct {
 	state     application.EtcdState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newEtcdModel(state application.EtcdState) etcdModel {
-	return (etcdModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (etcdModel{state: state}).normalizeSelection(0)
 }
 
 func (m etcdModel) setState(state application.EtcdState) etcdModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -32,7 +30,7 @@ func (m etcdModel) setState(state application.EtcdState) etcdModel {
 func (m etcdModel) startFilter(value string) etcdModel {
 	m.filter = value
 	m.filtering = true
-	return m.normalizeSelection(m.table.Cursor())
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m etcdModel) update(message tea.KeyPressMsg) etcdModel {
@@ -42,17 +40,17 @@ func (m etcdModel) update(message tea.KeyPressMsg) etcdModel {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -62,29 +60,29 @@ func (m etcdModel) update(message tea.KeyPressMsg) etcdModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m etcdModel) normalizeSelection(closest int) etcdModel {
 	members := m.visibleMembers()
-	m.table.SetRows(make([]table.Row, len(members)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(members)-1)))
+	m.control.SetCount(len(members))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(members)-1)))
 	return m
 }
 
 func (m etcdModel) selected() (domain.EtcdMemberSnapshot, bool) {
 	members := m.visibleMembers()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(members) == 0 || cursor < 0 || cursor >= len(members) {
 		return domain.EtcdMemberSnapshot{}, false
 	}
@@ -106,7 +104,7 @@ func (m etcdModel) visibleMembers() []domain.EtcdMemberSnapshot {
 }
 
 func (m etcdModel) view(width int) string {
-	contents := renderEtcdTable(width, m.visibleMembers(), m.table.Cursor())
+	contents := renderEtcdTable(width, m.visibleMembers(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -125,8 +123,8 @@ func (m etcdModel) viewSized(size contentSize) string {
 		return "No etcd members"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(members), m.table.Cursor(), rowCapacity)
-	return renderEtcdTable(size.Width, members[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(members), m.control.Cursor(), rowCapacity)
+	return renderEtcdTable(size.Width, members[start:end], m.control.Cursor()-start)
 }
 
 func renderEtcd(width int, state application.EtcdState) string {

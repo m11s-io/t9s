@@ -15,6 +15,7 @@ type Dependencies struct {
 	SessionFactory     ports.SessionFactory
 	KubernetesResolver ports.KubernetesResolver
 	openSession        func(context.Context, string, uint64) (ports.Session, error)
+	sessionRequests    func() *requestOwner
 }
 
 type Effect func(context.Context, Dependencies) Message
@@ -94,7 +95,11 @@ func openSession(contextName string, generation uint64) Effect {
 			}
 		}
 
-		return SessionOpened{Generation: generation, Nodes: nodes, NodeController: session.NodeActions(), ServiceController: session.ServiceActions(), Services: session.Services(), Logs: session.ServiceLogs(), Events: session.Events(), Etcd: session.Etcd(), EtcdOperations: session.EtcdOperations(), Processes: session.Processes(), Disks: session.Disks(), Network: session.Network(), Dmesg: session.Dmesg(), Netstat: session.Netstat(), Mounts: session.Mounts(), Memory: session.Memory(), Time: session.Time(), CPU: session.CPU(), ClusterHealth: session.ClusterHealth(), ResourceKinds: session.ResourceKinds(), Resources: session.Resources(), KubernetesNodes: kubernetesReader}
+		opened := SessionOpened{Generation: generation, Session: session, KubernetesNodes: kubernetesReader}
+		if dependencies.sessionRequests != nil {
+			opened.requests = dependencies.sessionRequests()
+		}
+		return opened
 	}
 }
 
@@ -117,7 +122,7 @@ type Runner struct {
 	dependencies Dependencies
 
 	mu         sync.Mutex
-	activeCtx  context.Context
+	requests   *requestOwner
 	cancel     context.CancelFunc
 	session    ports.Session
 	generation uint64
@@ -136,6 +141,11 @@ func (r *Runner) Run(ctx context.Context, effect Effect) Message {
 	dependencies := r.dependencies
 	if dependencies.SessionFactory != nil {
 		dependencies.openSession = r.replaceSession
+		dependencies.sessionRequests = func() *requestOwner {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.requests
+		}
 	}
 
 	return effect(ctx, dependencies)
@@ -153,13 +163,17 @@ func (r *Runner) stopActive() error {
 	r.mu.Lock()
 	cancel := r.cancel
 	session := r.session
-	r.activeCtx = nil
+	requests := r.requests
+	r.requests = nil
 	r.cancel = nil
 	r.session = nil
 	r.generation++
 	r.active = false
 	r.mu.Unlock()
 
+	if requests != nil {
+		requests.close()
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -178,14 +192,19 @@ func (r *Runner) replaceSession(effectCtx context.Context, contextName string, g
 	}
 	oldCancel := r.cancel
 	oldSession := r.session
+	oldRequests := r.requests
 	sessionCtx, cancel := context.WithCancel(effectCtx)
-	r.activeCtx = sessionCtx
+	requests := newRequestOwner(sessionCtx)
+	r.requests = requests
 	r.cancel = cancel
 	r.session = nil
 	r.generation = generation
 	r.active = true
 	r.mu.Unlock()
 
+	if oldRequests != nil {
+		oldRequests.close()
+	}
 	if oldCancel != nil {
 		oldCancel()
 	}
@@ -195,207 +214,47 @@ func (r *Runner) replaceSession(effectCtx context.Context, contextName string, g
 
 	session, err := r.dependencies.SessionFactory.Open(sessionCtx, contextName)
 	if err != nil {
-		r.clearFailedSession(generation, cancel)
+		if session != nil {
+			_ = session.Close()
+		}
+		r.clearFailedSession(requests, cancel)
 		return nil, err
 	}
 	if session == nil {
-		r.clearFailedSession(generation, cancel)
+		r.clearFailedSession(requests, cancel)
 		return nil, fmt.Errorf("open session: session factory returned no session")
 	}
 	nodes := session.Nodes()
 	if nodes == nil {
 		_ = session.Close()
-		r.clearFailedSession(generation, cancel)
+		r.clearFailedSession(requests, cancel)
 		return nil, fmt.Errorf("load nodes: node reader is not configured")
 	}
 
-	managed := managedSession{Session: session, nodes: nodes, logs: session.ServiceLogs(), events: session.Events(), etcd: session.Etcd(), etcdOperations: session.EtcdOperations(), dmesg: session.Dmesg(), clusterHealth: session.ClusterHealth(), time: session.Time(), cpu: session.CPU(), ctx: sessionCtx}
 	r.mu.Lock()
-	if generation != r.generation || !r.active {
+	if requests != r.requests || !r.active || sessionCtx.Err() != nil {
 		r.mu.Unlock()
 		_ = session.Close()
+		r.clearFailedSession(requests, cancel)
 		return nil, context.Canceled
 	}
-	r.session = managed
+	r.session = session
 	r.mu.Unlock()
 
-	return managed, nil
+	return session, nil
 }
 
-func (r *Runner) clearFailedSession(generation uint64, cancel context.CancelFunc) {
+func (r *Runner) clearFailedSession(requests *requestOwner, cancel context.CancelFunc) {
 	r.mu.Lock()
-	if generation == r.generation {
-		r.activeCtx = nil
+	if requests == r.requests {
+		r.requests = nil
 		r.cancel = nil
 		r.session = nil
 		r.active = false
 	}
 	r.mu.Unlock()
+	requests.close()
 	cancel()
-}
-
-type managedSession struct {
-	ports.Session
-	nodes          ports.NodeReader
-	logs           ports.ServiceLogReader
-	events         ports.EventReader
-	etcd           ports.EtcdReader
-	etcdOperations ports.EtcdOperations
-	dmesg          ports.DmesgReader
-	clusterHealth  ports.ClusterHealthReader
-	time           ports.TimeReader
-	cpu            ports.CPUReader
-	ctx            context.Context
-}
-
-func (s managedSession) Dmesg() ports.DmesgReader {
-	if s.dmesg == nil {
-		return nil
-	}
-	return boundDmesgReader{DmesgReader: s.dmesg, ctx: s.ctx}
-}
-
-func (s managedSession) ClusterHealth() ports.ClusterHealthReader {
-	if s.clusterHealth == nil {
-		return nil
-	}
-	return boundClusterHealthReader{ClusterHealthReader: s.clusterHealth, ctx: s.ctx}
-}
-
-func (s managedSession) ServiceLogs() ports.ServiceLogReader {
-	if s.logs == nil {
-		return nil
-	}
-	return boundLogReader{ServiceLogReader: s.logs, ctx: s.ctx}
-}
-
-func (s managedSession) Nodes() ports.NodeReader {
-	if s.nodes == nil {
-		return nil
-	}
-
-	return boundNodeReader{NodeReader: s.nodes, ctx: s.ctx}
-}
-
-func (s managedSession) Events() ports.EventReader {
-	if s.events == nil {
-		return nil
-	}
-	return boundEventReader{EventReader: s.events, ctx: s.ctx}
-}
-
-func (s managedSession) Etcd() ports.EtcdReader {
-	if s.etcd == nil {
-		return nil
-	}
-	return boundEtcdReader{EtcdReader: s.etcd, ctx: s.ctx}
-}
-
-func (s managedSession) EtcdOperations() ports.EtcdOperations {
-	if s.etcdOperations == nil {
-		return nil
-	}
-	return boundEtcdOperations{EtcdOperations: s.etcdOperations, ctx: s.ctx}
-}
-
-// boundEtcdOperations ties the long-lived session context to each individual
-// call so a session teardown cancels an in-flight snapshot or maintenance RPC
-// (the adapter removes its .part file on cancellation).
-type boundEtcdOperations struct {
-	ports.EtcdOperations
-	ctx context.Context
-}
-
-func (o boundEtcdOperations) Snapshot(callCtx context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
-	ctx, cancel := context.WithCancel(o.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return o.EtcdOperations.Snapshot(ctx, node, path)
-}
-
-func (o boundEtcdOperations) Defragment(callCtx context.Context, node string) error {
-	ctx, cancel := context.WithCancel(o.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return o.EtcdOperations.Defragment(ctx, node)
-}
-
-func (o boundEtcdOperations) DisarmAlarms(callCtx context.Context, node string) error {
-	ctx, cancel := context.WithCancel(o.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return o.EtcdOperations.DisarmAlarms(ctx, node)
-}
-
-func (o boundEtcdOperations) ForfeitLeadership(callCtx context.Context, node string) error {
-	ctx, cancel := context.WithCancel(o.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return o.EtcdOperations.ForfeitLeadership(ctx, node)
-}
-
-type boundEtcdReader struct {
-	ports.EtcdReader
-	ctx context.Context
-}
-
-func (r boundEtcdReader) List(callCtx context.Context, controlPlaneNodes []string) (domain.EtcdSet, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return r.EtcdReader.List(ctx, controlPlaneNodes)
-}
-
-type boundNodeReader struct {
-	ports.NodeReader
-	ctx context.Context
-}
-
-type boundEventReader struct {
-	ports.EventReader
-	ctx context.Context
-}
-
-func (r boundEventReader) List(callCtx context.Context) (domain.EventSet, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return r.EventReader.List(ctx)
-}
-
-func (r boundNodeReader) List(callCtx context.Context) (domain.NodeSet, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	defer func() {
-		stop()
-		cancel()
-	}()
-
-	return r.NodeReader.List(ctx)
 }
 
 func loadServices(reader ports.ServiceReader, generation uint64) Effect {
@@ -411,16 +270,16 @@ func loadServices(reader ports.ServiceReader, generation uint64) Effect {
 	}
 }
 
-func loadEvents(reader ports.EventReader, generation, requestGeneration uint64) Effect {
+func loadEvents(reader ports.EventReader, generation uint64) Effect {
 	return func(ctx context.Context, _ Dependencies) Message {
 		if reader == nil {
-			return EventsLoaded{RequestGeneration: requestGeneration, Generation: generation}
+			return EventsLoaded{Generation: generation}
 		}
 		events, err := reader.List(ctx)
 		if err != nil {
-			return EventsFailed{RequestGeneration: requestGeneration, Generation: generation, Err: err}
+			return EventsFailed{Generation: generation, Err: err}
 		}
-		return EventsLoaded{RequestGeneration: requestGeneration, Generation: generation, Events: events}
+		return EventsLoaded{Generation: generation, Events: events}
 	}
 }
 
@@ -750,39 +609,6 @@ func closeClusterHealth(stream ports.ClusterHealthStream) Effect {
 	}
 }
 
-type boundClusterHealthReader struct {
-	ports.ClusterHealthReader
-	ctx context.Context
-}
-
-func (r boundClusterHealthReader) Open(callCtx context.Context, request domain.ClusterHealthRequest) (ports.ClusterHealthStream, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	stream, err := r.ClusterHealthReader.Open(ctx, request)
-	if err != nil {
-		stop()
-		cancel()
-		return nil, err
-	}
-	return &boundClusterHealthStream{ClusterHealthStream: stream, cancel: cancel, stop: stop}, nil
-}
-
-type boundClusterHealthStream struct {
-	ports.ClusterHealthStream
-	cancel context.CancelFunc
-	stop   func() bool
-}
-
-func (s *boundClusterHealthStream) Close() error {
-	if s.stop != nil {
-		s.stop()
-	}
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return s.ClusterHealthStream.Close()
-}
-
 func closeDmesg(stream ports.DmesgStream) Effect {
 	if stream == nil {
 		return nil
@@ -824,70 +650,4 @@ func closeServiceLogs(stream ports.ServiceLogStream) Effect {
 		_ = stream.Close()
 		return nil
 	}
-}
-
-type boundDmesgReader struct {
-	ports.DmesgReader
-	ctx context.Context
-}
-
-func (r boundDmesgReader) Open(callCtx context.Context, request domain.DmesgRequest) (ports.DmesgStream, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	stream, err := r.DmesgReader.Open(ctx, request)
-	if err != nil {
-		stop()
-		cancel()
-		return nil, err
-	}
-	return &boundDmesgStream{DmesgStream: stream, cancel: cancel, stop: stop}, nil
-}
-
-type boundDmesgStream struct {
-	ports.DmesgStream
-	cancel context.CancelFunc
-	stop   func() bool
-}
-
-func (s *boundDmesgStream) Close() error {
-	if s.stop != nil {
-		s.stop()
-	}
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return s.DmesgStream.Close()
-}
-
-type boundLogReader struct {
-	ports.ServiceLogReader
-	ctx context.Context
-}
-
-func (r boundLogReader) Open(callCtx context.Context, request domain.LogRequest) (ports.ServiceLogStream, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	stream, err := r.ServiceLogReader.Open(ctx, request)
-	if err != nil {
-		stop()
-		cancel()
-		return nil, err
-	}
-	return &boundLogStream{ServiceLogStream: stream, cancel: cancel, stop: stop}, nil
-}
-
-type boundLogStream struct {
-	ports.ServiceLogStream
-	cancel context.CancelFunc
-	stop   func() bool
-}
-
-func (s *boundLogStream) Close() error {
-	if s.stop != nil {
-		s.stop()
-	}
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return s.ServiceLogStream.Close()
 }

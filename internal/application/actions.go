@@ -631,17 +631,6 @@ func sanitizeSnapshotToken(value string) string {
 	return token
 }
 
-// DefaultEtcdSnapshotPathForTest exposes defaultEtcdSnapshotPath for tests in
-// package application_test, which cannot see unexported identifiers.
-func DefaultEtcdSnapshotPathForTest(contextName, memberHostname string, now time.Time) string {
-	return defaultEtcdSnapshotPath(contextName, memberHostname, now)
-}
-
-// memberMatchesAnyTarget reports whether an etcd member corresponds to any
-// action target. Node targets are names or addresses (NodeSnapshot.Target()),
-// while etcd members expose a hostname, a numeric member ID, and endpoint
-// URLs, so all of those forms must be considered or control-plane impact goes
-// uncounted.
 func memberMatchesAnyTarget(member domain.EtcdMemberSnapshot, targets []string) bool {
 	for _, target := range targets {
 		if target == "" {
@@ -675,22 +664,6 @@ func endpointHost(raw string) string {
 	}
 
 	return parsed.Hostname()
-}
-
-// recoveryUncordonEffect makes one opportunistic, idempotent uncordon
-// attempt. A failure is not surfaced to the operator: it is usually a
-// transient blip, and the unchanged warning already says t9s will retry —
-// the next Kubernetes node refresh (on a 30s heartbeat) tries again.
-func recoveryUncordonEffect(controller ports.NodeController, target string, generation uint64) Effect {
-	return func(ctx context.Context, _ Dependencies) Message {
-		if controller == nil {
-			return RecoveryUncordonFailed{Generation: generation, Target: target}
-		}
-		if err := controller.Uncordon(ctx, target); err != nil {
-			return RecoveryUncordonFailed{Generation: generation, Target: target}
-		}
-		return RecoveryUncordonSucceeded{Generation: generation, Target: target}
-	}
 }
 
 func actionEffect(controller ports.NodeController, pending PendingAction, target string, generation uint64) Effect {
@@ -733,13 +706,7 @@ func actionEffect(controller ports.NodeController, pending PendingAction, target
 	}
 }
 
-// BuildActionEffects returns one Effect per target in pending, meant to be
-// run as independent Bubble Tea commands (tea.Batch) so a slow or
-// unreachable target never blocks the rest of a bulk action. Call this
-// with the Model as it existed before ConfirmPendingAction clears
-// PendingAction — capture *model.PendingAction first, then call
-// Update(model, ConfirmPendingAction{}) separately.
-func BuildActionEffects(model Model, pending PendingAction) []Effect {
+func buildActionEffects(model Model, pending PendingAction) []Effect {
 	if pending.Blocked != "" {
 		return nil
 	}

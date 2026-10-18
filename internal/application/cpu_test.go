@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"github.com/m11s-io/t9s/internal/testkit"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func (f cpuTestReader) Sample(ctx context.Context, node string) (domain.CPUSnaps
 	return f(ctx, node)
 }
 func withCPUReader(m application.Model, r ports.CPUReader) application.Model {
-	m, _ = application.Update(m, application.SessionOpened{Generation: m.Generation, CPU: r})
+	m, _ = application.Update(m, application.SessionOpened{Generation: m.Generation, Session: &testkit.FakeSession{CPUReader: r}})
 	return m
 }
 func TestCPURefreshStaysOnOpenedNode(t *testing.T) {

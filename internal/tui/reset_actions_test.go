@@ -18,11 +18,7 @@ func resetTestRoot(t *testing.T, controller *testkit.FakeNodeController, diskRea
 	t.Helper()
 	appModel, _ := application.NewModel("prod")
 	appModel.WritesEnabled = true
-	appModel, _ = application.Update(appModel, application.SessionOpened{
-		Generation:     appModel.Generation,
-		NodeController: controller,
-		Disks:          diskReader,
-	})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{NodeController: controller, DiskReader: diskReader}})
 	appModel, _ = application.Update(appModel, application.NodesLoaded{
 		Generation: appModel.Generation,
 		Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{

@@ -7,15 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
 type contextsModel struct {
 	values  []domain.ClusterContext
-	table   table.Model
+	control listControl
 	active  bool
 	current string
 }
@@ -34,9 +32,9 @@ func newContextsModel(values []domain.ClusterContext, current string) contextsMo
 		}
 	}
 
-	model := contextsModel{values: contexts, table: table.New(), active: true, current: current}
-	model.table.SetRows(make([]table.Row, len(contexts)))
-	model.table.SetCursor(selected)
+	model := contextsModel{values: contexts, active: true, current: current}
+	model.control.SetCount(len(contexts))
+	model.control.SetCursor(selected)
 	return model
 }
 
@@ -45,15 +43,15 @@ func (m contextsModel) update(message tea.KeyPressMsg, current string) (contexts
 	case "esc":
 		m.active = false
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "enter":
 		m.active = false
-		if len(m.values) == 0 || m.values[m.table.Cursor()].Name == current {
+		if len(m.values) == 0 || m.values[m.control.Cursor()].Name == current {
 			return m, nil
 		}
-		selected := m.values[m.table.Cursor()].Name
+		selected := m.values[m.control.Cursor()].Name
 		return m, func() tea.Msg {
 			return applicationMessage{message: application.SelectContext{Name: selected}}
 		}
@@ -80,7 +78,7 @@ func (m contextsModel) viewSized(size contentSize) string {
 			name += "(*)"
 		}
 		row := fmt.Sprintf("  %-20s  %-20s  %-20s  %d", name, clusterContext.Cluster, strings.Join(clusterContext.Endpoints, ","), len(clusterContext.Nodes))
-		lines = append(lines, renderSelectedRow(row, size.Width, index == m.table.Cursor(), defaultK9sSkin()))
+		lines = append(lines, renderSelectedRow(row, size.Width, index == m.control.Cursor(), defaultK9sSkin()))
 	}
 	if len(lines) > size.Height {
 		lines = lines[:size.Height]

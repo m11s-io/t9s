@@ -326,44 +326,6 @@ func TestNodeControllerCurrentInstallImageWrapsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cp-1")
 }
-func TestNodeControllerUncordonRejectsClientWithoutMaintenanceSupport(t *testing.T) {
-	controller := newNodeController(&fakeNodeControlClient{})
-
-	err := controller.Uncordon(t.Context(), "cp-1")
-
-	require.ErrorContains(t, err, "does not support safe upgrade maintenance")
-}
-
-func TestNodeControllerUncordonWrapsPrepareError(t *testing.T) {
-	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}, prepareErr: errors.New("get node: not found")}
-
-	err := newNodeController(client).Uncordon(t.Context(), "cp-1")
-
-	require.ErrorContains(t, err, "prepare Kubernetes node maintenance")
-	require.ErrorContains(t, err, "not found")
-}
-
-func TestNodeControllerUncordonDelegatesToMaintenanceAndIsIdempotent(t *testing.T) {
-	steps := []string{}
-	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}, steps: steps}
-	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps}
-
-	err := newNodeController(client).Uncordon(t.Context(), "cp-1")
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"uncordon"}, client.steps)
-}
-
-func TestNodeControllerUncordonWrapsMaintenanceError(t *testing.T) {
-	client := &fakeLifecycleMaintenanceClient{fakeNodeControlClient: &fakeNodeControlClient{}}
-	client.maintenance = &fakeUpgradeMaintenance{steps: &client.steps, uncordonErr: errors.New("api unavailable")}
-
-	err := newNodeController(client).Uncordon(t.Context(), "cp-1")
-
-	require.ErrorContains(t, err, "cp-1")
-	require.ErrorContains(t, err, "api unavailable")
-}
-
 func TestDeriveSchematicInstallerImage(t *testing.T) {
 	tests := map[string]struct {
 		factoryURL string
@@ -399,13 +361,6 @@ func TestDeriveSchematicInstallerImageRejectsUnsafeMetadata(t *testing.T) {
 	}
 	assert.Empty(t, deriveSchematicInstallerImage("https://factory.talos.dev/", "metal", "", "v1.13.4"))
 	assert.Empty(t, deriveSchematicInstallerImage("https://factory.talos.dev/", "metal", "live", ""))
-}
-
-func TestSupportsLifecycleUpgradeAPI(t *testing.T) {
-	assert.False(t, supportsLifecycleUpgradeAPI("v1.12.9"))
-	assert.True(t, supportsLifecycleUpgradeAPI("v1.13.3"))
-	assert.False(t, supportsLifecycleUpgradeAPI("v2.0.0"))
-	assert.False(t, supportsLifecycleUpgradeAPI("not-a-version"))
 }
 
 type fakeLifecycleOperations struct {
@@ -707,6 +662,8 @@ func TestLifecycleUpgradeAPIRangeBoundaries(t *testing.T) {
 		version string
 		want    bool
 	}{
+		{version: "v1.12.9", want: false},
+		{version: "v1.13.3", want: true},
 		{version: "1.13.0-alpha.2", want: false},
 		{version: "1.13.0-alpha.3", want: true},
 		{version: "1.13.3", want: true},
@@ -787,11 +744,12 @@ func TestSafeUpgradeMaintenanceUncordonsAndJoinsCleanupFailureAfterRebootFailure
 	assert.Equal(t, []string{"cordon", "drain", "reboot", "uncordon"}, steps)
 }
 
-func TestSafeUpgradeMaintenanceReportsCleanupWarningWithoutFailingCompletedUpgrade(t *testing.T) {
+func TestSafeUpgradeMaintenancePreservesCleanupFailureAsRecoveryWarning(t *testing.T) {
 	steps := []string{}
+	cleanupErr := errors.New("uncordon unavailable")
 	maintenance := &fakeUpgradeMaintenance{
 		steps:       &steps,
-		uncordonErr: errors.New("uncordon unavailable"),
+		uncordonErr: cleanupErr,
 	}
 	var events []ports.UpgradeEvent
 
@@ -799,10 +757,29 @@ func TestSafeUpgradeMaintenanceReportsCleanupWarningWithoutFailingCompletedUpgra
 		events = append(events, event)
 	})
 
-	require.NoError(t, err)
+	require.ErrorIs(t, err, cleanupErr)
+	var recoveryErr *upgradeRecoveryError
+	require.ErrorAs(t, err, &recoveryErr)
 	require.NotEmpty(t, events)
 	assert.Equal(t, ports.UpgradeUncordon, events[len(events)-1].Phase)
 	assert.Contains(t, events[len(events)-1].Message, "upgrade completed")
+}
+
+func TestNodeControllerUpgradeStreamRetainsCleanupWarningInTerminalResult(t *testing.T) {
+	client := &fakeLifecycleMaintenanceClient{
+		fakeNodeControlClient: &fakeNodeControlClient{},
+		version:               "v1.13.3",
+		maintenance:           &fakeUpgradeMaintenance{steps: &[]string{}, uncordonErr: errors.New("uncordon unavailable")},
+	}
+
+	results := upgradeResults(newNodeController(client).UpgradeStream(t.Context(), "cp-1", "image:v1.13.4"))
+
+	require.NotEmpty(t, results)
+	last := results[len(results)-1]
+	assert.NoError(t, last.Err)
+	assert.Equal(t, ports.UpgradeOutcomeAppliedWithRecoveryWarning, last.Outcome)
+	assert.NotEmpty(t, last.Warning)
+	assert.True(t, last.Done)
 }
 
 func TestNodeControllerUpgradeStreamReportsRecoveryWarningAfterInstall(t *testing.T) {

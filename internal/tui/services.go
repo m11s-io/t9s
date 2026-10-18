@@ -8,8 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -25,21 +23,21 @@ type servicesModel struct {
 	filter      string
 	filtering   bool
 	selectedKey string
-	table       table.Model
+	control     listControl
 }
 
 func newServicesModel(state application.ServiceState) servicesModel {
-	return (servicesModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (servicesModel{state: state}).normalizeSelection(0)
 }
 
 func (m servicesModel) startFilter(value string) servicesModel {
 	m.filter = value
 	m.filtering = true
-	return m.normalizeSelection(m.table.Cursor())
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m servicesModel) setState(state application.ServiceState) servicesModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -51,17 +49,17 @@ func (m servicesModel) update(message tea.KeyPressMsg) servicesModel {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -71,7 +69,7 @@ func (m servicesModel) update(message tea.KeyPressMsg) servicesModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
 		m = m.moveSelection(-1)
 	case "down", "j":
@@ -92,36 +90,36 @@ func (m servicesModel) moveSelection(delta int) servicesModel {
 		return m.normalizeSelection(0)
 	}
 	if delta < 0 {
-		m.table.MoveUp(-delta)
+		m.control.MoveUp(-delta)
 	} else {
-		m.table.MoveDown(delta)
+		m.control.MoveDown(delta)
 	}
-	m.selectedKey = serviceKey(services[m.table.Cursor()])
+	m.selectedKey = serviceKey(services[m.control.Cursor()])
 	return m
 }
 
 func (m servicesModel) normalizeSelection(closest int) servicesModel {
 	services := m.visibleServices()
-	m.table.SetRows(make([]table.Row, len(services)))
+	m.control.SetCount(len(services))
 	if len(services) == 0 {
-		m.table.SetCursor(0)
+		m.control.SetCursor(0)
 		m.selectedKey = ""
 		return m
 	}
 	for index, service := range services {
 		if serviceKey(service) == m.selectedKey {
-			m.table.SetCursor(index)
+			m.control.SetCursor(index)
 			return m
 		}
 	}
-	m.table.SetCursor(min(max(closest, 0), len(services)-1))
-	m.selectedKey = serviceKey(services[m.table.Cursor()])
+	m.control.SetCursor(min(max(closest, 0), len(services)-1))
+	m.selectedKey = serviceKey(services[m.control.Cursor()])
 	return m
 }
 
 func (m servicesModel) selected() (domain.ServiceSnapshot, bool) {
 	services := m.visibleServices()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(services) == 0 || cursor < 0 || cursor >= len(services) {
 		return domain.ServiceSnapshot{}, false
 	}
@@ -159,7 +157,7 @@ func capServices(services []domain.ServiceSnapshot) []domain.ServiceSnapshot {
 }
 
 func (m servicesModel) view(width int) string {
-	contents := renderServiceTable(width, m.visibleServices(), m.table.Cursor())
+	contents := renderServiceTable(width, m.visibleServices(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -179,13 +177,13 @@ func (m servicesModel) viewSized(size contentSize) string {
 		return "No services"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(services), m.table.Cursor(), rowCapacity)
+	start, end := resourceWindow(len(services), m.control.Cursor(), rowCapacity)
 	services = services[start:end]
 	remaining := max(0, rowCapacity-len(services))
 	if len(problems) > remaining {
 		problems = problems[:remaining]
 	}
-	return renderServiceTableWithProblems(size.Width, services, problems, m.table.Cursor()-start)
+	return renderServiceTableWithProblems(size.Width, services, problems, m.control.Cursor()-start)
 }
 
 func (m servicesModel) visibleProblems() []domain.ServiceProblem {

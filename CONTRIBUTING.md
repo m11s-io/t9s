@@ -35,8 +35,10 @@ Dependencies point inward:
 - `internal/domain` contains small normalized values and imports no Talos SDK
   or terminal packages.
 - `internal/ports` defines narrow capabilities in terms of domain values.
-- `internal/application` owns pure state transitions, typed messages, session
-  generations, and cancellable effects. Its reducer performs no I/O.
+- `internal/application` owns typed messages, screen transitions, session
+  generations, request identities, and cancellable effects. `Update` coordinates
+  the session request owner and dispatches to `updateModel` for screen state
+  transitions; it can cancel superseded work. Backend calls run inside effects.
 - `internal/adapters/talos` is the only Talos SDK boundary. SDK, protobuf, COSI,
   and credential-bearing configuration types must be converted there and must
   not enter application or TUI state.
@@ -44,6 +46,23 @@ Dependencies point inward:
   messages. `View` must remain a pure, network-independent projection; effects
   run only from Bubble Tea commands.
 - `cmd/t9s` and `internal/cli` are the composition and process-lifecycle roots.
+
+Application `Model` exposes normalized screen data. Its private session runtime
+holds port readers, controllers, streams, and request ownership; those handles
+are not presentation data. A session owns cancellation, each replaceable read
+has its own request identity, and unary reads have timeouts. Leaving a diagnostic
+or changing context releases its work. Generation and request checks reject late results.
+
+`EffectBatch` describes independent work that the frontend must schedule as
+separate effects. The TUI maps its children to Bubble Tea commands, so a blocked
+read does not hold up another snapshot. Node health and detailed services share
+one uncapped service observation per refresh; only the detailed table is capped.
+
+Confirmation messages produce execution effects after application policy checks.
+Operation identities isolate mutation results from older operations. The TUI
+owns prompts, navigation, filters, and selection; it does not construct backend
+actions from display text. Port operations and SDK adapters can be reused by a
+future API frontend. This application does not add a web server.
 
 Normal tests use `internal/testkit` fakes at port boundaries. A test that needs
 a live Talos endpoint is a manual smoke test and must be explicitly separated

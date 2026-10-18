@@ -36,15 +36,16 @@ func (r *dmesgReader) Open(ctx context.Context, request domain.DmesgRequest) (po
 }
 
 type dmesgStream struct {
-	stream talosDataStream
-	cancel context.CancelFunc
-	once   sync.Once
+	stream  talosDataStream
+	cancel  context.CancelFunc
+	once    sync.Once
+	decoder dataStreamDecoder
 }
 
 func (s *dmesgStream) Next(ctx context.Context) (domain.DmesgBatch, error) {
 	stop := context.AfterFunc(ctx, s.cancel)
 	defer stop()
-	batch, err := readDataStreamBatch(s.stream)
+	batch, err := s.decoder.next(s.stream, true)
 	return domain.DmesgBatch{Lines: batch.Lines, EOF: batch.EOF, Err: batch.Err}, err
 }
 

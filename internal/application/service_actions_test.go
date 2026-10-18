@@ -20,7 +20,7 @@ func TestBuildServiceActionEffectCallsRestart(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ServiceController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ServiceController: controller}})
 	pending := application.PendingServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "etcd"}
 
 	effect := application.BuildServiceActionEffect(model, pending)
@@ -44,7 +44,7 @@ func TestBuildServiceActionEffectUsesStartAndStop(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ServiceController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ServiceController: controller}})
 
 	application.BuildServiceActionEffect(model, application.PendingServiceAction{Kind: application.ServiceActionStart, Node: "cp-1", Service: "kubelet"})(t.Context(), application.Dependencies{})
 	application.BuildServiceActionEffect(model, application.PendingServiceAction{Kind: application.ServiceActionStop, Node: "cp-1", Service: "kubelet"})(t.Context(), application.Dependencies{})
@@ -60,7 +60,7 @@ func TestBuildServiceActionEffectReturnsActionFailedOnError(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ServiceController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ServiceController: controller}})
 	pending := application.PendingServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "etcd"}
 
 	result := application.BuildServiceActionEffect(model, pending)(t.Context(), application.Dependencies{})

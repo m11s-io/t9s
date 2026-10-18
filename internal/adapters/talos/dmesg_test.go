@@ -89,3 +89,32 @@ func (f *fakeDmesgClient) Dmesg(_ context.Context, node string, follow, tail boo
 	f.node, f.follow, f.tail = node, follow, tail
 	return f.stream, f.err
 }
+
+func TestDmesgEmitsRecordWithoutWaitingForNewline(t *testing.T) {
+	source := &fakeTalosDataStream{responses: []*common.Data{{Bytes: []byte("kernel record")}, {Bytes: []byte("next record")}}}
+	stream := &dmesgStream{stream: source, cancel: func() {}}
+	batch, err := stream.Next(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"kernel record"}, batch.Lines)
+	assert.Equal(t, 1, source.index)
+	batch, err = stream.Next(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"next record"}, batch.Lines)
+}
+
+func TestDmesgDrainsLargeFrameWithoutDroppingRecords(t *testing.T) {
+	source := &fakeTalosDataStream{responses: []*common.Data{{Bytes: []byte(strings.Repeat("record\n", 250) + "last")}}, errors: []error{nil, io.EOF}}
+	stream := &dmesgStream{stream: source, cancel: func() {}}
+	var lines []string
+	for {
+		batch, err := stream.Next(t.Context())
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(batch.Lines), 200)
+		lines = append(lines, batch.Lines...)
+		if batch.EOF {
+			break
+		}
+	}
+	require.Len(t, lines, 251)
+	assert.Equal(t, "last", lines[250])
+}

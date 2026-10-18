@@ -24,7 +24,7 @@ func TestBuildActionEffectsCallsControllerPerTargetIndependently(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	pending := application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}}
 
 	effects := application.BuildActionEffects(model, pending)
@@ -40,7 +40,7 @@ func TestBuildActionEffectsCallsControllerPerTargetIndependently(t *testing.T) {
 func TestBuildActionEffectsReturnsNilForBlockedAction(t *testing.T) {
 	controller := &testkit.FakeNodeController{}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 
 	effects := application.BuildActionEffects(model, application.PendingAction{
 		Kind:    application.ActionReboot,
@@ -54,7 +54,7 @@ func TestBuildActionEffectsReturnsNilForBlockedAction(t *testing.T) {
 func TestBuildServiceActionEffectReturnsNilForBlockedAction(t *testing.T) {
 	controller := &testkit.FakeServiceController{}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ServiceController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ServiceController: controller}})
 
 	effect := application.BuildServiceActionEffect(model, application.PendingServiceAction{
 		Kind:    application.ServiceActionStop,
@@ -75,7 +75,7 @@ func TestBuildActionEffectsUsesShutdownForShutdownKind(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	pending := application.PendingAction{Kind: application.ActionShutdown, Targets: []string{"cp-1"}}
 
 	effects := application.BuildActionEffects(model, pending)
@@ -94,7 +94,7 @@ func TestBuildActionEffectsUsesRollbackForRollbackKind(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	pending := application.PendingAction{Kind: application.ActionRollback, Targets: []string{"cp-1"}}
 
 	effects := application.BuildActionEffects(model, pending)
@@ -118,7 +118,7 @@ func TestBuildActionEffectsUsesUpgradeWithImageForUpgradeKind(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	pending := application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "ghcr.io/siderolabs/installer:v1.13.3"}
 
 	effects := application.BuildActionEffects(model, pending)

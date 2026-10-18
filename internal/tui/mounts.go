@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -16,15 +14,15 @@ type mountsModel struct {
 	state     application.MountState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newMountsModel(state application.MountState) mountsModel {
-	return (mountsModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (mountsModel{state: state}).normalizeSelection(0)
 }
 
 func (m mountsModel) setState(state application.MountState) mountsModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -36,17 +34,17 @@ func (m mountsModel) update(message tea.KeyPressMsg) mountsModel {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -56,23 +54,23 @@ func (m mountsModel) update(message tea.KeyPressMsg) mountsModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m mountsModel) normalizeSelection(closest int) mountsModel {
 	mounts := m.visibleMounts()
-	m.table.SetRows(make([]table.Row, len(mounts)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(mounts)-1)))
+	m.control.SetCount(len(mounts))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(mounts)-1)))
 	return m
 }
 
@@ -100,7 +98,7 @@ func mountMatches(mount domain.MountSnapshot, query string) bool {
 }
 
 func (m mountsModel) view(width int) string {
-	contents := renderMountsTable(width, m.visibleMounts(), m.table.Cursor())
+	contents := renderMountsTable(width, m.visibleMounts(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -119,8 +117,8 @@ func (m mountsModel) viewSized(size contentSize) string {
 		return "No mounts"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(mounts), m.table.Cursor(), rowCapacity)
-	return renderMountsTable(size.Width, mounts[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(mounts), m.control.Cursor(), rowCapacity)
+	return renderMountsTable(size.Width, mounts[start:end], m.control.Cursor()-start)
 }
 
 const defaultMountsWidth = 120

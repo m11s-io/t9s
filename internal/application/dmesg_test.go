@@ -96,6 +96,6 @@ func TestSelectContextResetsDmesg(t *testing.T) {
 // SessionOpened message, since application.Model has no exported setter and
 // this test file is package application_test (no access to unexported fields).
 func withDmesgReader(model application.Model, reader ports.DmesgReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Dmesg: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{DmesgReader: reader}})
 	return model
 }

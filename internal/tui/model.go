@@ -152,6 +152,9 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	updated, command := m.update(message)
 	next := updated.(model)
+	var closed tea.Cmd
+	next, closed = next.releaseClosedViews(m.views)
+	command = tea.Batch(command, closed)
 	isCPUView := func(frame viewFrame) bool { return frame.Kind == viewCPU }
 	if slices.ContainsFunc(m.views, isCPUView) && (!slices.ContainsFunc(next.views, isCPUView) || next.application.Generation != m.application.Generation) {
 		var effect application.Effect
@@ -160,7 +163,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		command = tea.Batch(command, next.command(effect))
 	}
 	if slices.ContainsFunc(next.views, isCPUView) {
-		layout := layoutShell(next.width, next.height, next.activePrompt() != "")
+		layout := layoutShell(next.width, next.height)
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "")
 		next.cpu = next.cpu.clampOffset(frame.InnerHeight)
 	}
@@ -173,16 +176,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		command = tea.Batch(command, next.command(effect))
 	}
 	if slices.ContainsFunc(next.views, isTimeView) {
-		layout := layoutShell(next.width, next.height, next.activePrompt() != "")
+		layout := layoutShell(next.width, next.height)
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "")
 		next.time = next.time.clampOffset(frame.InnerHeight)
 	}
-	if m.views.top().Kind == viewEvents && next.views.top().Kind != viewEvents && next.application.Events.Following {
-		var effect application.Effect
-		next.application, effect = application.Update(next.application, application.StopEventFollow{})
-		next.events = next.events.setState(next.application.Events)
-		return next, tea.Batch(command, next.command(effect))
-	}
+
 	return next, command
 }
 
@@ -223,60 +221,16 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.application.PendingAction != nil || m.application.PendingServiceAction != nil || m.application.PendingEtcdAction != nil {
 			if key == "y" {
-				// Confirm through the reducer first. A refused confirm (for
-				// example an action that would drop etcd below quorum, or one
-				// whose state changed since the prompt opened) leaves the
-				// pending prompt in place and must not build or dispatch any
-				// mutation effects.
-				if m.application.PendingAction != nil {
-					pending := *m.application.PendingAction
-					var confirmEffect application.Effect
-					m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
-					if m.application.PendingAction != nil {
-						return m, m.command(confirmEffect)
-					}
-					// A confirmed action has fired for the currently marked rows;
-					// clear marks so a subsequent R/X doesn't silently re-target
-					// already-actioned nodes.
-					m.nodes.marked = nil
-					effects := application.BuildActionEffects(m.application, pending)
-					cmds := make([]tea.Cmd, 0, len(effects)+1)
-					if cmd := m.command(confirmEffect); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-					for _, effect := range effects {
-						cmds = append(cmds, m.command(effect))
-					}
-					return m, tea.Batch(cmds...)
-				}
+				message := application.Message(application.ConfirmPendingAction{})
 				if m.application.PendingEtcdAction != nil {
-					// Confirm through the reducer: a blocked confirm is refused and
-					// leaves the prompt in place, and the reducer is what builds the
-					// effect, so nothing fires before a successful confirm. A
-					// destructive action stays pending across the snapshot stage, so
-					// dispatch whatever effect the reducer returned.
-					if m.application.PendingEtcdAction.Blocked != "" {
-						return m, nil
-					}
-					var effect application.Effect
-					m.application, effect = application.Update(m.application, application.ConfirmEtcdAction{})
-					return m, m.command(effect)
+					message = application.ConfirmEtcdAction{}
 				}
-				pending := *m.application.PendingServiceAction
-				var confirmEffect application.Effect
-				m.application, confirmEffect = application.Update(m.application, application.ConfirmPendingAction{})
-				if m.application.PendingServiceAction != nil {
-					return m, m.command(confirmEffect)
+				var effect application.Effect
+				m.application, effect = application.Update(m.application, message)
+				if m.application.PendingAction == nil && m.application.PendingServiceAction == nil {
+					m.nodes.marked = nil
 				}
-				effect := application.BuildServiceActionEffect(m.application, pending)
-				cmds := make([]tea.Cmd, 0, 2)
-				if cmd := m.command(confirmEffect); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				if cmd := m.command(effect); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				return m, tea.Batch(cmds...)
+				return m, m.command(effect)
 			}
 			var effect application.Effect
 			m.application, effect = application.Update(m.application, application.CancelPendingAction{})
@@ -1060,8 +1014,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.healthcheck = newHealthcheckModel(m.application.HealthCheck)
 		}
 		var effect application.Effect
+		current := application.IsCurrentResult(m.application, message.message)
 		m.application, effect = application.Update(m.application, message.message)
-		m.nodes = m.nodes.setState(m.application.Nodes)
+		if !current {
+			return m, m.command(effect)
+		}
+		m = m.syncScreens(message.message)
 		if m.application.NodeFocus != "" && !m.nodeFocusResolved && m.application.Nodes.Status != application.Loading && m.application.Nodes.Status != application.Idle {
 			m.nodeFocusResolved = true
 			for index, node := range m.nodes.visibleNodes() {
@@ -1073,27 +1031,10 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.services = m.services.setState(m.application.Services)
-		m.events = m.events.setState(m.application.Events)
-		m.etcd = m.etcd.setState(m.application.Etcd)
-		m.processes = m.processes.setState(m.application.Processes)
-		m.disks = m.disks.setState(m.application.Disks)
-		m.network = m.network.setState(m.application.Network)
-		m.dmesg = m.dmesg.setDmesgState(m.application.Dmesg)
-		m.healthcheck = m.healthcheck.setState(m.application.HealthCheck)
-		m.netstat = m.netstat.setState(m.application.Netstat)
-		m.mounts = m.mounts.setState(m.application.Mounts)
-		m.memory = m.memory.setState(m.application.Memory)
-		m.time = m.time.setState(m.application.Time)
-		m.cpu = m.cpu.setState(m.application.CPU)
-		m.problems = m.problems.setDiagnoses(application.EvaluateHealth(m.application))
-		m.resourceKinds = m.resourceKinds.setState(m.application.ResourceBrowser)
-		m.resourceInstances = m.resourceInstances.setState(m.application.ResourceBrowser)
 		if m.pendingContextPicker && len(m.application.Contexts) > 0 {
 			m.contexts = newContextsModel(m.application.Contexts, m.application.ContextName)
 			m.pendingContextPicker = false
 		}
-		m.logs = m.logs.setState(m.application.Logs)
 		if upgradeNotice := renderUpgradeNotice(m.application.Upgrade); upgradeNotice != "" {
 			m.notice = upgradeNotice
 		} else if len(m.application.ActionResults) > 0 {
@@ -1139,7 +1080,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	prompt := m.activePrompt()
-	layout := layoutShell(m.width, m.height, prompt != "")
+	layout := layoutShell(m.width, m.height)
 	headerKind := m.views.top().Kind
 	if m.contexts.active {
 		headerKind = viewContexts
@@ -1431,7 +1372,15 @@ func (m model) command(effect application.Effect) tea.Cmd {
 	}
 
 	return func() tea.Msg {
-		return applicationMessage{message: m.runner.Run(m.lifecycle.effectCtx, effect)}
+		message := m.runner.Run(m.lifecycle.effectCtx, effect)
+		if effects, ok := message.(application.EffectBatch); ok {
+			commands := make([]tea.Cmd, 0, len(effects))
+			for _, effect := range effects {
+				commands = append(commands, m.command(effect))
+			}
+			return tea.Batch(commands...)()
+		}
+		return applicationMessage{message: message}
 	}
 }
 

@@ -31,7 +31,7 @@ func writesEnabledTestModel(t *testing.T, controller *testkit.FakeNodeController
 			{ID: "n2", Name: "worker-1", Role: domain.NodeRoleWorker},
 		}},
 	})
-	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, NodeController: controller})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.nodes = root.nodes.setState(root.application.Nodes)
@@ -96,7 +96,7 @@ func TestBlockedServiceConfirmDoesNotFireAction(t *testing.T) {
 	}
 	appModel, _ := application.NewModel("prod")
 	appModel.WritesEnabled = true
-	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, ServiceController: controller})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{ServiceController: controller}})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
 	root.application.Etcd = application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 		{Hostname: "cp-1", StatusKnown: true},
@@ -320,7 +320,7 @@ func TestActionResultsFooterDenominatorIsConfirmedTargetCountNotResultsSoFar(t *
 			{ID: "n3", Name: "cp-3", Role: domain.NodeRoleControl},
 		}},
 	})
-	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, NodeController: controller})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	root := newModel(t.Context(), false, appModel, application.NewRunner(application.Dependencies{}))
 	root.nodes = root.nodes.setState(root.application.Nodes)
 	root.nodes = root.nodes.update(keyPress(' '))
@@ -579,7 +579,7 @@ func writesEnabledServicesTestModel(t *testing.T, controller *testkit.FakeServic
 		Generation: appModel.Generation,
 		Services:   domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}},
 	})
-	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, ServiceController: controller})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{ServiceController: controller}})
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})

@@ -96,6 +96,6 @@ func TestSelectContextResetsMemory(t *testing.T) {
 }
 
 func withMemoryReader(model application.Model, reader ports.MemoryReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Memory: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{MemoryReader: reader}})
 	return model
 }

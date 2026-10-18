@@ -31,15 +31,19 @@ func TestTimeSessionAndCallCancellationReachBothRPCs(t *testing.T) {
 						return domain.TimeCheckResult{}, ctx.Err()
 					},
 				}
-				reader := (managedSession{time: underlying, ctx: sessionCtx}).Time()
+				model := Model{Generation: 1, sessionRuntime: sessionRuntime{timeReader: underlying, requests: newRequestOwner(sessionCtx)}}
+				model, effect := Update(model, OpenTime{Node: "cp-1"})
+				if kind == "check" {
+					_, effect = Update(model, CheckTime{Server: "ntp.example.org"})
+				}
 				done := make(chan error, 1)
 				go func() {
 					if kind == "read" {
-						_, err := reader.Read(callCtx, "cp-1")
-						done <- err
+						message := effect(callCtx, Dependencies{}).(TimeLoaded)
+						done <- message.Err
 					} else {
-						_, err := reader.Check(callCtx, "cp-1", "ntp.example.org")
-						done <- err
+						message := effect(callCtx, Dependencies{}).(TimeChecked)
+						done <- message.Err
 					}
 				}()
 				select {

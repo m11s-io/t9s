@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 
 	"github.com/m11s-io/t9s/internal/application"
@@ -24,15 +23,15 @@ type resourceKindsModel struct {
 	state     application.ResourceBrowserState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newResourceKindsModel(state application.ResourceBrowserState) resourceKindsModel {
-	return (resourceKindsModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (resourceKindsModel{state: state}).normalizeSelection(0)
 }
 
 func (m resourceKindsModel) setState(state application.ResourceBrowserState) resourceKindsModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -43,17 +42,17 @@ func (m resourceKindsModel) update(message tea.KeyPressMsg) resourceKindsModel {
 		switch key {
 		case "esc":
 			m.filter, m.filtering = "", false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -62,29 +61,29 @@ func (m resourceKindsModel) update(message tea.KeyPressMsg) resourceKindsModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m resourceKindsModel) normalizeSelection(closest int) resourceKindsModel {
 	kinds := m.visibleKinds()
-	m.table.SetRows(make([]table.Row, len(kinds)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(kinds)-1)))
+	m.control.SetCount(len(kinds))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(kinds)-1)))
 	return m
 }
 
 func (m resourceKindsModel) selected() (domain.ResourceKindSnapshot, bool) {
 	kinds := m.visibleKinds()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(kinds) == 0 || cursor < 0 || cursor >= len(kinds) {
 		return domain.ResourceKindSnapshot{}, false
 	}
@@ -111,7 +110,7 @@ func (m resourceKindsModel) visibleKinds() []domain.ResourceKindSnapshot {
 }
 
 func (m resourceKindsModel) view(width int) string {
-	contents := renderResourceKindTable(width, m.visibleKinds(), m.table.Cursor())
+	contents := renderResourceKindTable(width, m.visibleKinds(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -130,8 +129,8 @@ func (m resourceKindsModel) viewSized(size contentSize) string {
 		return "No resource kinds"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(kinds), m.table.Cursor(), rowCapacity)
-	return renderResourceKindTable(size.Width, kinds[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(kinds), m.control.Cursor(), rowCapacity)
+	return renderResourceKindTable(size.Width, kinds[start:end], m.control.Cursor()-start)
 }
 
 const defaultResourceKindsWidth = 120
@@ -182,15 +181,15 @@ type resourceInstancesModel struct {
 	state     application.ResourceBrowserState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newResourceInstancesModel(state application.ResourceBrowserState) resourceInstancesModel {
-	return (resourceInstancesModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (resourceInstancesModel{state: state}).normalizeSelection(0)
 }
 
 func (m resourceInstancesModel) setState(state application.ResourceBrowserState) resourceInstancesModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -201,17 +200,17 @@ func (m resourceInstancesModel) update(message tea.KeyPressMsg) resourceInstance
 		switch key {
 		case "esc":
 			m.filter, m.filtering = "", false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -220,29 +219,29 @@ func (m resourceInstancesModel) update(message tea.KeyPressMsg) resourceInstance
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m resourceInstancesModel) normalizeSelection(closest int) resourceInstancesModel {
 	instances := m.visibleInstances()
-	m.table.SetRows(make([]table.Row, len(instances)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(instances)-1)))
+	m.control.SetCount(len(instances))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(instances)-1)))
 	return m
 }
 
 func (m resourceInstancesModel) selected() (domain.ResourceInstanceSnapshot, bool) {
 	instances := m.visibleInstances()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(instances) == 0 || cursor < 0 || cursor >= len(instances) {
 		return domain.ResourceInstanceSnapshot{}, false
 	}
@@ -282,7 +281,7 @@ func resourceInstanceColumnWidths(width int) []int {
 }
 
 func (m resourceInstancesModel) view(width int) string {
-	contents := renderResourceInstanceTable(width, m.visibleInstances(), m.table.Cursor())
+	contents := renderResourceInstanceTable(width, m.visibleInstances(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -301,8 +300,8 @@ func (m resourceInstancesModel) viewSized(size contentSize) string {
 		return "No instances"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(instances), m.table.Cursor(), rowCapacity)
-	return renderResourceInstanceTable(size.Width, instances[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(instances), m.control.Cursor(), rowCapacity)
+	return renderResourceInstanceTable(size.Width, instances[start:end], m.control.Cursor()-start)
 }
 
 func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceSnapshot, selectedIndex int) string {

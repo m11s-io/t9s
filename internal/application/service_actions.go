@@ -5,13 +5,7 @@ import (
 	"fmt"
 )
 
-// BuildServiceActionEffect returns the single Effect for a confirmed service
-// action. Unlike node actions, service actions are never bulk — there is at
-// most one PendingServiceAction at a time — so this returns one Effect, not
-// a slice, and reuses ActionSucceeded/ActionFailed with a synthesized
-// "service@node" target, matching the label format services.go/logs.go
-// already use for the same node+service pairing.
-func BuildServiceActionEffect(model Model, pending PendingServiceAction) Effect {
+func buildServiceActionEffect(model Model, pending PendingServiceAction) Effect {
 	if pending.Blocked != "" {
 		return nil
 	}

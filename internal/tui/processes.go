@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -16,15 +14,15 @@ type processesModel struct {
 	state     application.ProcessesState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newProcessesModel(state application.ProcessesState) processesModel {
-	return (processesModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (processesModel{state: state}).normalizeSelection(0)
 }
 
 func (m processesModel) setState(state application.ProcessesState) processesModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -32,7 +30,7 @@ func (m processesModel) setState(state application.ProcessesState) processesMode
 func (m processesModel) startFilter(value string) processesModel {
 	m.filter = value
 	m.filtering = true
-	return m.normalizeSelection(m.table.Cursor())
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m processesModel) update(message tea.KeyPressMsg) processesModel {
@@ -42,17 +40,17 @@ func (m processesModel) update(message tea.KeyPressMsg) processesModel {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -62,29 +60,29 @@ func (m processesModel) update(message tea.KeyPressMsg) processesModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m processesModel) normalizeSelection(closest int) processesModel {
 	processes := m.visibleProcesses()
-	m.table.SetRows(make([]table.Row, len(processes)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(processes)-1)))
+	m.control.SetCount(len(processes))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(processes)-1)))
 	return m
 }
 
 func (m processesModel) selected() (domain.ProcessSnapshot, bool) {
 	processes := m.visibleProcesses()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(processes) == 0 || cursor < 0 || cursor >= len(processes) {
 		return domain.ProcessSnapshot{}, false
 	}
@@ -115,7 +113,7 @@ func (m processesModel) visibleProcesses() []domain.ProcessSnapshot {
 }
 
 func (m processesModel) view(width int) string {
-	contents := renderProcessTable(width, m.visibleProcesses(), m.table.Cursor())
+	contents := renderProcessTable(width, m.visibleProcesses(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -134,8 +132,8 @@ func (m processesModel) viewSized(size contentSize) string {
 		return "No processes"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(processes), m.table.Cursor(), rowCapacity)
-	return renderProcessTable(size.Width, processes[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(processes), m.control.Cursor(), rowCapacity)
+	return renderProcessTable(size.Width, processes[start:end], m.control.Cursor()-start)
 }
 
 const defaultProcessesWidth = 120

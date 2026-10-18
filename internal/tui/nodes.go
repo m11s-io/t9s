@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -18,17 +16,17 @@ type nodesModel struct {
 	filtering  bool
 	selectedID string
 	marked     map[string]struct{}
-	table      table.Model
+	control    listControl
 	notice     string
 }
 
 func newNodesModel(state application.NodeState) nodesModel {
-	model := nodesModel{state: state, table: table.New()}
+	model := nodesModel{state: state}
 	return model.normalizeSelection(0)
 }
 
 func (m nodesModel) setState(state application.NodeState) nodesModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -37,7 +35,7 @@ func (m nodesModel) startFilter(value string) nodesModel {
 	m.filter = value
 	m.filtering = true
 	m.notice = ""
-	return m.normalizeSelection(m.table.Cursor())
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
@@ -48,18 +46,18 @@ func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
 			m.filter = ""
 			m.filtering = false
 			m.notice = ""
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -71,7 +69,7 @@ func (m nodesModel) update(message tea.KeyPressMsg) nodesModel {
 	case "esc":
 		m.filter = ""
 		m.notice = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
 		m = m.moveSelection(-1)
 	case "down", "j":
@@ -104,20 +102,20 @@ func (m nodesModel) moveSelection(delta int) nodesModel {
 		return m.normalizeSelection(0)
 	}
 	if delta < 0 {
-		m.table.MoveUp(-delta)
+		m.control.MoveUp(-delta)
 	} else {
-		m.table.MoveDown(delta)
+		m.control.MoveDown(delta)
 	}
-	m.selectedID = nodes[m.table.Cursor()].ID
+	m.selectedID = nodes[m.control.Cursor()].ID
 	m.notice = ""
 	return m
 }
 
 func (m nodesModel) normalizeSelection(closest int) nodesModel {
 	nodes := m.visibleNodes()
-	m.table.SetRows(make([]table.Row, len(nodes)))
+	m.control.SetCount(len(nodes))
 	if len(nodes) == 0 {
-		m.table.SetCursor(0)
+		m.control.SetCursor(0)
 		m.selectedID = ""
 		return m
 	}
@@ -125,20 +123,20 @@ func (m nodesModel) normalizeSelection(closest int) nodesModel {
 	if m.selectedID != "" {
 		for index, node := range nodes {
 			if node.ID == m.selectedID {
-				m.table.SetCursor(index)
+				m.control.SetCursor(index)
 				return m
 			}
 		}
 	}
 
-	m.table.SetCursor(min(max(closest, 0), len(nodes)-1))
-	m.selectedID = nodes[m.table.Cursor()].ID
+	m.control.SetCursor(min(max(closest, 0), len(nodes)-1))
+	m.selectedID = nodes[m.control.Cursor()].ID
 	return m
 }
 
 func (m nodesModel) selected() (domain.NodeSnapshot, bool) {
 	nodes := m.visibleNodes()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(nodes) == 0 || cursor < 0 || cursor >= len(nodes) {
 		return domain.NodeSnapshot{}, false
 	}
@@ -184,7 +182,7 @@ func (m nodesModel) visibleNodes() []domain.NodeSnapshot {
 			string(node.Role),
 			node.Stage,
 			string(node.Health),
-			node.Services.String(),
+			serviceSummary(node.Services),
 			node.Version,
 		}
 		for _, value := range values {
@@ -198,7 +196,7 @@ func (m nodesModel) visibleNodes() []domain.NodeSnapshot {
 }
 
 func (m nodesModel) view(width int) string {
-	contents := renderNodeTable(width, m.visibleNodes(), m.table.Cursor(), m.marked)
+	contents := renderNodeTable(width, m.visibleNodes(), m.control.Cursor(), m.marked)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -220,8 +218,8 @@ func (m nodesModel) viewSized(size contentSize) string {
 		return "No nodes"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(nodes), m.table.Cursor(), rowCapacity)
-	return renderNodeTable(size.Width, nodes[start:end], m.table.Cursor()-start, m.marked)
+	start, end := resourceWindow(len(nodes), m.control.Cursor(), rowCapacity)
+	return renderNodeTable(size.Width, nodes[start:end], m.control.Cursor()-start, m.marked)
 }
 
 func renderNodes(width int, state application.NodeState) string {

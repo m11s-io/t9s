@@ -66,7 +66,7 @@ func TestFoundationFlowRejectsOldGenerationAfterContextSwitch(t *testing.T) {
 	require.NotNil(t, command)
 	terminal, command = updateRoot(terminal, command()) // SessionOpened
 	require.NotNil(t, command)
-	terminal, _ = updateRoot(terminal, command()) // NodesLoaded
+	terminal = drainFiniteRootCommand(t, terminal, command) // Independent initial reads
 	terminal, _ = updateRoot(terminal, splashDoneMsg{})
 	oldGeneration := terminal.application.Generation
 	require.Contains(t, terminal.View().Content, "prod-worker")
@@ -87,7 +87,7 @@ func TestFoundationFlowRejectsOldGenerationAfterContextSwitch(t *testing.T) {
 	require.NotNil(t, command)
 	terminal, command = updateRoot(terminal, command()) // SessionOpened
 	require.NotNil(t, command)
-	terminal, _ = updateRoot(terminal, command()) // NodesLoaded
+	terminal = drainFiniteRootCommand(t, terminal, command) // Independent initial reads
 
 	terminal, _ = updateRoot(terminal, applicationMessage{message: application.NodesLoaded{
 		Generation: oldGeneration,
@@ -102,4 +102,20 @@ func TestFoundationFlowRejectsOldGenerationAfterContextSwitch(t *testing.T) {
 	assert.Contains(t, view, "dev-worker")
 	assert.NotContains(t, view, "prod-worker")
 	assert.NotContains(t, view, "stale-prod-worker")
+}
+
+func drainFiniteRootCommand(t *testing.T, root model, command tea.Cmd) model {
+	t.Helper()
+	if command == nil {
+		return root
+	}
+	message := command()
+	if batch, ok := message.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			root = drainFiniteRootCommand(t, root, child)
+		}
+		return root
+	}
+	next, followup := updateRoot(root, message)
+	return drainFiniteRootCommand(t, next, followup)
 }

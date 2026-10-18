@@ -210,7 +210,7 @@ func TestBuildActionEffectsResetFansOutPerTarget(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	pending := application.PendingAction{
 		Kind:    application.ActionReset,
 		Targets: []string{"cp-1", "cp-2"},

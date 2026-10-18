@@ -63,7 +63,7 @@ func TestResourceInstanceReaderListResolvesAndSortsByID(t *testing.T) {
 	require.Len(t, set.Instances, 2)
 	assert.Equal(t, "a", set.Instances[0].ID)
 	assert.Equal(t, "runtime", set.Instances[0].Namespace)
-	assert.Contains(t, set.Instances[0].YAML, "stage")
+	assert.Empty(t, set.Instances[0].YAML)
 	assert.Equal(t, "b", set.Instances[1].ID)
 }
 
@@ -89,4 +89,14 @@ func TestResourceInstanceReaderGetReturnsYAML(t *testing.T) {
 	assert.Equal(t, "machine", instance.ID)
 	assert.Equal(t, "runtime", instance.Namespace)
 	assert.Contains(t, instance.YAML, "stage")
+}
+
+func TestResourceInstanceListNeverReadsSpec(t *testing.T) {
+	item := newStubResource("runtime", "Status", "a")
+	item.spec = make(chan int)
+	reader := newResourceInstanceReader(&fakeResourceInstanceClient{instances: []cosiresource.Resource{item}})
+	set, err := reader.List(t.Context(), "", "Status")
+	require.NoError(t, err)
+	require.Len(t, set.Instances, 1)
+	assert.Empty(t, set.Instances[0].YAML)
 }

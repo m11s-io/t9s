@@ -1,9 +1,6 @@
 package domain
 
-import (
-	"fmt"
-	"time"
-)
+import "time"
 
 type NodeRole string
 
@@ -46,22 +43,6 @@ type ServiceSummary struct {
 	Unknown int
 	Total   int
 	Known   bool
-}
-
-func (s ServiceSummary) String() string {
-	if !s.Known && s.Total == 0 {
-		return "?"
-	}
-
-	return fmt.Sprintf("%d healthy · %d unhealthy · %d unknown", s.Healthy, s.Total-s.Healthy-s.Unknown, s.Unknown)
-}
-
-func (s ServiceSummary) CompactString() string {
-	if !s.Known && s.Total == 0 {
-		return "?"
-	}
-
-	return fmt.Sprintf("%d✓ %d! %d?", s.Healthy, s.Total-s.Healthy-s.Unknown, s.Unknown)
 }
 
 type NodeSnapshot struct {

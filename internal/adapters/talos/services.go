@@ -8,7 +8,7 @@ import (
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
-	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
+	"sync"
 )
 
 const (
@@ -29,10 +29,6 @@ type detailedServiceReader struct {
 
 var _ ports.ServiceReader = (*detailedServiceReader)(nil)
 
-func newServiceReader(client *talosclient.Client, now func() time.Time) ports.ServiceReader {
-	return newDetailedServiceReader(&machineryAPI{client: client}, now)
-}
-
 func newDetailedServiceReader(api detailedServiceAPI, now func() time.Time) *detailedServiceReader {
 	return &detailedServiceReader{api: api, now: now}
 }
@@ -42,26 +38,51 @@ func (r *detailedServiceReader) List(ctx context.Context) (domain.ServiceSet, er
 	if err != nil {
 		return domain.ServiceSet{}, err
 	}
+	type nodeServices struct {
+		records []serviceRecord
+		err     error
+	}
+	observations := make([]nodeServices, len(members))
+	semaphore := make(chan struct{}, maxConcurrentNodeInspections)
+	var group sync.WaitGroup
+	for i, member := range members {
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case semaphore <- struct{}{}:
+		case <-ctx.Done():
+			group.Wait()
+			return domain.ServiceSet{}, ctx.Err()
+		}
+		group.Add(1)
+		go func(i int, member memberRecord) {
+			defer group.Done()
+			defer func() { <-semaphore }()
+			_, target := serviceNodeAndTarget(member)
+			if target != "" && ctx.Err() == nil {
+				observations[i].records, observations[i].err = r.api.Services(ctx, target)
+			}
+		}(i, member)
+	}
+	group.Wait()
+	if err := ctx.Err(); err != nil {
+		return domain.ServiceSet{}, err
+	}
 	result := make([]domain.ServiceSnapshot, 0, min(len(members), maxDetailedServices))
 	problems := make([]domain.ServiceProblem, 0)
-	for _, member := range members {
-		if err := ctx.Err(); err != nil {
-			return domain.ServiceSet{}, err
-		}
+	for i, member := range members {
 		node, target := serviceNodeAndTarget(member)
 		if target == "" {
 			problems = appendServiceProblem(problems, domain.ServiceProblem{Node: node, Message: "node target unavailable"})
 			continue
 		}
-		services, err := r.api.Services(ctx, target)
-		if err != nil {
-			if ctx.Err() != nil {
-				return domain.ServiceSet{}, ctx.Err()
-			}
+		observation := observations[i]
+		if observation.err != nil {
 			problems = appendServiceProblem(problems, domain.ServiceProblem{Node: node, Message: "services unavailable"})
 			continue
 		}
-		for _, service := range services {
+		for _, service := range observation.records {
 			if len(result) == maxDetailedServices {
 				break
 			}

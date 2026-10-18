@@ -12,9 +12,8 @@ const splashDuration = time.Second
 
 type splashDoneMsg struct{}
 
-// nodeAutoRefreshInterval paces the node-view heartbeat: frequent enough to
-// close the upgrade recovery-warning loop without a keypress, infrequent
-// enough not to add meaningful Talos/Kubernetes API chatter while idling.
+// nodeAutoRefreshInterval paces refreshes of the node inventory and optional
+// Kubernetes correlation while the nodes view is active.
 const nodeAutoRefreshInterval = 30 * time.Second
 
 type nodeAutoRefreshTickMsg struct{}
@@ -24,7 +23,6 @@ type shellLayout struct {
 	Height        int
 	HeaderHeight  int
 	ContentHeight int
-	PromptHeight  int
 }
 
 func splashTimer() tea.Cmd {
@@ -39,8 +37,7 @@ func nodeAutoRefreshTick() tea.Cmd {
 	return tea.Tick(nodeAutoRefreshInterval, func(time.Time) tea.Msg { return nodeAutoRefreshTickMsg{} })
 }
 
-func layoutShell(width, height int, promptActive bool) shellLayout {
-	_ = promptActive
+func layoutShell(width, height int) shellLayout {
 	width = max(0, width)
 	height = max(0, height)
 	remaining := height
@@ -51,8 +48,6 @@ func layoutShell(width, height int, promptActive bool) shellLayout {
 	}
 	remaining -= headerHeight
 
-	promptHeight := 0
-
 	fixedBottom := min(2, remaining) // breadcrumb and flash
 	remaining -= fixedBottom
 
@@ -61,7 +56,6 @@ func layoutShell(width, height int, promptActive bool) shellLayout {
 		Height:        height,
 		HeaderHeight:  headerHeight,
 		ContentHeight: remaining,
-		PromptHeight:  promptHeight,
 	}
 }
 

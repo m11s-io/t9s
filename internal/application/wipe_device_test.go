@@ -117,7 +117,7 @@ func TestBuildActionEffectsWipeDeviceCallsWipeDevice(t *testing.T) {
 		},
 	}
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 	pending := application.PendingAction{
 		Kind:       application.ActionWipeDevice,
 		Targets:    []string{"cp-1"},
@@ -147,7 +147,7 @@ func TestActionSucceededWipeDeviceRefreshesDisks(t *testing.T) {
 	}
 
 	confirmed, effect := application.Update(model, application.ConfirmPendingAction{})
-	require.Nil(t, effect)
+	require.NotNil(t, effect)
 	require.Nil(t, confirmed.PendingAction)
 
 	refreshed, effect := application.Update(confirmed, application.ActionSucceeded{Generation: confirmed.Generation, Target: "cp-1"})

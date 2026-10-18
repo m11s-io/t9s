@@ -41,6 +41,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 	return &session{
 		client:            client,
 		nodes:             newNodeReader(api, time.Now),
+		nodeServices:      newNodeServiceReader(api, time.Now),
 		nodeController:    newNodeController(machineryNodeControlClient{client: client}),
 		serviceController: newServiceController(machineryServiceControlClient{client: client}),
 		services:          newDetailedServiceReader(api, time.Now),
@@ -66,6 +67,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 type session struct {
 	client            *talosclient.Client
 	nodes             ports.NodeReader
+	nodeServices      ports.NodeServiceReader
 	nodeController    ports.NodeController
 	serviceController ports.ServiceController
 	services          ports.ServiceReader
@@ -90,6 +92,8 @@ type session struct {
 var _ ports.Session = (*session)(nil)
 
 func (s *session) Nodes() ports.NodeReader { return s.nodes }
+
+func (s *session) NodeServices() ports.NodeServiceReader { return s.nodeServices }
 
 func (s *session) NodeActions() ports.NodeController { return s.nodeController }
 

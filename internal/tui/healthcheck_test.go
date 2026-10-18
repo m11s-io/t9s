@@ -122,11 +122,7 @@ func runAppCmd(t *testing.T, root model, command tea.Cmd) (model, tea.Cmd) {
 func newHealthcheckRoot(t *testing.T, reader ports.ClusterHealthReader, nodes domain.NodeSet) model {
 	t.Helper()
 	applicationModel := application.Model{Generation: 1, ContextName: "prod"}
-	applicationModel, _ = application.Update(applicationModel, application.SessionOpened{
-		Generation:    1,
-		Nodes:         &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return nodes, nil }},
-		ClusterHealth: reader,
-	})
+	applicationModel, _ = application.Update(applicationModel, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return nodes, nil }}, ClusterHealthReader: reader}})
 	applicationModel.Nodes = application.NodeState{Status: application.Ready, Value: nodes}
 
 	root := newModel(t.Context(), false, applicationModel, application.NewRunner(application.Dependencies{}))

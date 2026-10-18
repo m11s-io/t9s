@@ -18,13 +18,15 @@ func TestCPUSessionAndCallCancellationReachSample(t *testing.T) {
 			callCtx, callCancel := context.WithCancel(t.Context())
 			defer callCancel()
 			started := make(chan struct{})
-			reader := (managedSession{cpu: &testkit.FakeCPUReader{SampleFunc: func(ctx context.Context, _ string) (domain.CPUSnapshot, error) {
+			reader := &testkit.FakeCPUReader{SampleFunc: func(ctx context.Context, _ string) (domain.CPUSnapshot, error) {
 				close(started)
 				<-ctx.Done()
 				return domain.CPUSnapshot{}, ctx.Err()
-			}}, ctx: sessionCtx}).CPU()
+			}}
+			model := Model{Generation: 1, sessionRuntime: sessionRuntime{cpuReader: reader, requests: newRequestOwner(sessionCtx)}}
+			_, effect := Update(model, OpenCPU{Node: "cp-1"})
 			done := make(chan error, 1)
-			go func() { _, err := reader.Sample(callCtx, "cp-1"); done <- err }()
+			go func() { done <- effect(callCtx, Dependencies{}).(CPULoaded).Err }()
 			select {
 			case <-started:
 			case <-time.After(time.Second):

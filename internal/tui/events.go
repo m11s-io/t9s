@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -16,15 +14,15 @@ type eventsModel struct {
 	state     application.EventState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newEventsModel(state application.EventState) eventsModel {
-	return (eventsModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (eventsModel{state: state}).normalizeSelection(0)
 }
 
 func (m eventsModel) setState(state application.EventState) eventsModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	if state.Following {
 		previousIndex = len(m.visibleEvents()) - 1
@@ -35,7 +33,7 @@ func (m eventsModel) setState(state application.EventState) eventsModel {
 func (m eventsModel) startFilter(value string) eventsModel {
 	m.filter = value
 	m.filtering = true
-	return m.normalizeSelection(m.table.Cursor())
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m eventsModel) update(message tea.KeyPressMsg) eventsModel {
@@ -45,17 +43,17 @@ func (m eventsModel) update(message tea.KeyPressMsg) eventsModel {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -65,29 +63,29 @@ func (m eventsModel) update(message tea.KeyPressMsg) eventsModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m eventsModel) normalizeSelection(closest int) eventsModel {
 	events := m.visibleEvents()
-	m.table.SetRows(make([]table.Row, len(events)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(events)-1)))
+	m.control.SetCount(len(events))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(events)-1)))
 	return m
 }
 
 func (m eventsModel) selected() (domain.EventSnapshot, bool) {
 	events := m.visibleEvents()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(events) == 0 || cursor < 0 || cursor >= len(events) {
 		return domain.EventSnapshot{}, false
 	}
@@ -121,7 +119,7 @@ func (m eventsModel) visibleEvents() []domain.EventSnapshot {
 }
 
 func (m eventsModel) view(width int) string {
-	contents := renderEventTable(width, m.visibleEvents(), m.table.Cursor())
+	contents := renderEventTable(width, m.visibleEvents(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -169,8 +167,8 @@ func (m eventsModel) tableViewSized(size contentSize) string {
 		return "No events"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(events), m.table.Cursor(), rowCapacity)
-	return renderEventTable(size.Width, events[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(events), m.control.Cursor(), rowCapacity)
+	return renderEventTable(size.Width, events[start:end], m.control.Cursor()-start)
 }
 
 func renderEvents(width int, state application.EventState) string {

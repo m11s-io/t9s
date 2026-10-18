@@ -64,15 +64,17 @@ func convertResourceInstance(r cosiresource.Resource) (domain.ResourceInstanceSn
 	if err != nil {
 		return domain.ResourceInstanceSnapshot{}, fmt.Errorf("encode resource yaml: %w", err)
 	}
+	snapshot := resourceInstanceMetadata(r)
+	snapshot.YAML = string(rendered)
+	return snapshot, nil
+}
+
+func resourceInstanceMetadata(r cosiresource.Resource) domain.ResourceInstanceSnapshot {
 	metadata := r.Metadata()
 	return domain.ResourceInstanceSnapshot{
-		Namespace: string(metadata.Namespace()),
-		Type:      string(metadata.Type()),
-		ID:        string(metadata.ID()),
-		Version:   metadata.Version().String(),
-		Phase:     metadata.Phase().String(),
-		YAML:      string(rendered),
-	}, nil
+		Namespace: string(metadata.Namespace()), Type: string(metadata.Type()), ID: string(metadata.ID()),
+		Version: metadata.Version().String(), Phase: metadata.Phase().String(),
+	}
 }
 
 func (r *resourceInstanceReader) List(ctx context.Context, node, kindType string) (domain.ResourceInstanceSet, error) {
@@ -87,11 +89,7 @@ func (r *resourceInstanceReader) List(ctx context.Context, node, kindType string
 
 	instances := make([]domain.ResourceInstanceSnapshot, len(items))
 	for index, item := range items {
-		instance, err := convertResourceInstance(item)
-		if err != nil {
-			return domain.ResourceInstanceSet{}, err
-		}
-		instances[index] = instance
+		instances[index] = resourceInstanceMetadata(item)
 	}
 	sort.SliceStable(instances, func(i, j int) bool {
 		return instances[i].ID < instances[j].ID

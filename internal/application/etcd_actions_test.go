@@ -19,7 +19,7 @@ import (
 // since this test file is package application_test and cannot set unexported
 // fields directly (the same technique withEtcdReader uses for etcdReader).
 func withEtcdOperations(model application.Model, operations ports.EtcdOperations) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, EtcdOperations: operations})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{EtcdOps: operations}})
 	return model
 }
 
@@ -56,8 +56,10 @@ func TestConfirmEtcdSnapshotPromptRejectsInvalidPathWithoutCallingOps(t *testing
 			return domain.EtcdSnapshotResult{}, nil
 		},
 	}
-	model := application.Model{Generation: 1}
+	model := application.Model{Generation: 1, WritesEnabled: true}
 	model = withEtcdOperations(model, operations)
+
+	model, _ = application.Update(model, application.RequestEtcdSnapshotPrompt{Node: "cp-1", MemberHostname: "cp-1"})
 
 	model, effect := application.Update(model, application.ConfirmEtcdSnapshotPrompt{Node: "cp-1", Path: ".."})
 
@@ -75,8 +77,10 @@ func TestConfirmEtcdSnapshotPromptRunsSnapshot(t *testing.T) {
 			return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 544, SHA256: "deadbeef"}, nil
 		},
 	}
-	model := application.Model{Generation: 1}
+	model := application.Model{Generation: 1, WritesEnabled: true}
 	model = withEtcdOperations(model, operations)
+
+	model, _ = application.Update(model, application.RequestEtcdSnapshotPrompt{Node: "cp-1", MemberHostname: "cp-1"})
 
 	model, effect := application.Update(model, application.ConfirmEtcdSnapshotPrompt{Node: "cp-1", Path: "/tmp/snap.db"})
 
@@ -90,7 +94,9 @@ func TestConfirmEtcdSnapshotPromptRunsSnapshot(t *testing.T) {
 }
 
 func TestConfirmEtcdSnapshotPromptWithoutOpsFails(t *testing.T) {
-	model := application.Model{Generation: 1}
+	model := application.Model{Generation: 1, WritesEnabled: true}
+
+	model, _ = application.Update(model, application.RequestEtcdSnapshotPrompt{Node: "cp-1", MemberHostname: "cp-1"})
 
 	_, effect := application.Update(model, application.ConfirmEtcdSnapshotPrompt{Node: "cp-1", Path: "/tmp/snap.db"})
 

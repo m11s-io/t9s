@@ -107,11 +107,8 @@ func TestServicesCommandRefreshesTheServiceSnapshot(t *testing.T) {
 	applicationModel, _ := application.NewModel("")
 	model := tui.New(applicationModel, runner)
 
-	command := startupApplicationCommand(t, model.Init())
-	model, command = model.Update(command())
-	model, command = model.Update(command())
-	model, command = model.Update(command())
-	model, _ = model.Update(command())
+	model = drainFiniteCommand(t, model, startupApplicationCommand(t, model.Init()))
+	var command tea.Cmd
 	require.Equal(t, int32(1), serviceCalls.Load())
 
 	for _, message := range []tea.KeyPressMsg{
@@ -173,7 +170,7 @@ func TestEffectsRunOnlyInsideCommands(t *testing.T) {
 	assert.NotNil(t, command)
 	assert.Zero(t, nodeCalls.Load())
 
-	command()
+	model = drainFiniteCommand(t, model, command)
 	assert.Equal(t, int32(1), nodeCalls.Load())
 
 	_, quit := model.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
@@ -398,4 +395,22 @@ func waitForMessage(t *testing.T, messages <-chan tea.Msg, description string) t
 		t.Fatalf("timed out waiting for %s", description)
 		return nil
 	}
+}
+
+// drainFiniteCommand schedules every child of application batches. Fixtures
+// using this helper provide finite reads and no live streams or timer commands.
+func drainFiniteCommand(t *testing.T, model tea.Model, command tea.Cmd) tea.Model {
+	t.Helper()
+	if command == nil {
+		return model
+	}
+	message := command()
+	if batch, ok := message.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			model = drainFiniteCommand(t, model, child)
+		}
+		return model
+	}
+	next, followup := model.Update(message)
+	return drainFiniteCommand(t, next, followup)
 }

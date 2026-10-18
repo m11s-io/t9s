@@ -90,29 +90,22 @@ func TestSelectContextResetsNetstat(t *testing.T) {
 // SessionOpened message, since application.Model has no exported setter and
 // this test file is package application_test (no access to unexported fields).
 func withNetstatReader(model application.Model, reader ports.NetstatReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Netstat: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NetstatReader: reader}})
 	return model
 }
 
 func TestSessionOpenedWiresDiagnosticReaders(t *testing.T) {
 	model := application.Model{Generation: 1}
 
-	model, effect := application.Update(model, application.SessionOpened{
-		Generation: 1,
-		Nodes:      &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return domain.NodeSet{}, nil }},
-		Dmesg: &testkit.FakeDmesgReader{OpenFunc: func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error) {
-			return &testkit.FakeDmesgStream{}, nil
-		}},
-		Netstat: &testkit.FakeNetstatReader{ListFunc: func(context.Context, string) (domain.SocketSet, error) {
-			return domain.SocketSet{}, nil
-		}},
-		Mounts: &testkit.FakeMountReader{ListFunc: func(context.Context, string) (domain.MountSet, error) {
-			return domain.MountSet{}, nil
-		}},
-		Memory: &testkit.FakeMemoryReader{ListFunc: func(context.Context, string) (domain.MemorySnapshot, error) {
-			return domain.MemorySnapshot{}, nil
-		}},
-	})
+	model, effect := application.Update(model, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return domain.NodeSet{}, nil }}, DmesgReader: &testkit.FakeDmesgReader{OpenFunc: func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error) {
+		return &testkit.FakeDmesgStream{}, nil
+	}}, NetstatReader: &testkit.FakeNetstatReader{ListFunc: func(context.Context, string) (domain.SocketSet, error) {
+		return domain.SocketSet{}, nil
+	}}, MountReader: &testkit.FakeMountReader{ListFunc: func(context.Context, string) (domain.MountSet, error) {
+		return domain.MountSet{}, nil
+	}}, MemoryReader: &testkit.FakeMemoryReader{ListFunc: func(context.Context, string) (domain.MemorySnapshot, error) {
+		return domain.MemorySnapshot{}, nil
+	}}}})
 	require.NotNil(t, effect)
 
 	model, effect = application.Update(model, application.OpenNetstat{Node: "cp-1"})

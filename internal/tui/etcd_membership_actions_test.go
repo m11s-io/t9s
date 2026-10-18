@@ -24,7 +24,7 @@ func etcdMembershipTestModel(t *testing.T, writesEnabled bool, operations *testk
 		}},
 	})
 	appModel, _ = application.Update(appModel, application.EtcdLoaded{Generation: appModel.Generation, Etcd: domain.EtcdSet{Members: members}})
-	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, EtcdOperations: operations})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{EtcdOps: operations}})
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})

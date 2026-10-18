@@ -53,7 +53,7 @@ func TestConfirmEtcdActionForfeitLeadershipCallsForfeit(t *testing.T) {
 		},
 	}
 	model := application.Model{Generation: 1, WritesEnabled: true}
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, EtcdOperations: operations})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{EtcdOps: operations}})
 	model, _ = application.Update(model, application.RequestEtcdAction{Kind: application.EtcdActionForfeitLeadership, MemberID: 1, MemberHostname: "cp-1", Node: "cp-1"})
 	require.NotNil(t, model.PendingEtcdAction)
 

@@ -75,3 +75,16 @@ func (f *fakeDetailedServiceAPI) Services(_ context.Context, node string) ([]ser
 	}
 	return append([]serviceRecord(nil), f.services[node]...), nil
 }
+
+func TestDetailedServicesBoundsConcurrentNodeFetches(t *testing.T) {
+	members := make([]memberRecord, 24)
+	for i := range members {
+		members[i] = memberRecord{Hostname: fmt.Sprintf("node-%02d", i)}
+	}
+	api := &fakeTalosAPI{members: members, delay: time.Millisecond}
+	set, err := newDetailedServiceReader(api, time.Now).List(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, set.Problems)
+	assert.Greater(t, api.maxConcurrent(), 1)
+	assert.LessOrEqual(t, api.maxConcurrent(), maxConcurrentNodeInspections)
+}

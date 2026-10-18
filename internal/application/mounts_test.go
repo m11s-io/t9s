@@ -96,6 +96,6 @@ func TestSelectContextResetsMounts(t *testing.T) {
 }
 
 func withMountReader(model application.Model, reader ports.MountReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Mounts: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{MountReader: reader}})
 	return model
 }

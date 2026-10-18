@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 // maxClusterHealthLines bounds the retained health-check transcript so a
@@ -16,7 +17,6 @@ const maxClusterHealthLines = 500
 
 func NewModel(contextOverride string) (Model, Effect) {
 	model := Model{
-		Route:       RouteNodes,
 		ContextName: contextOverride,
 		Generation:  1,
 		Nodes:       NodeState{Status: Loading},
@@ -25,7 +25,7 @@ func NewModel(contextOverride string) (Model, Effect) {
 	return Update(model, Start{})
 }
 
-func Update(model Model, message Message) (Model, Effect) {
+func updateModel(model Model, message Message) (Model, Effect) {
 	if next, effect, handled := updateCPU(model, message); handled {
 		return next, effect
 	}
@@ -54,22 +54,15 @@ func Update(model Model, message Message) (Model, Effect) {
 			return model, nil
 		}
 		cancelActiveUpgrade(&model)
-		closeTimeRequests(&model)
 		model.Time = TimeState{}
-		closeCPURequest(&model)
 		model.CPU = CPUState{}
 		model.ContextName = message.Name
 		model.Generation++
 		model.Nodes = NodeState{Status: Loading}
 		model.Services = ServiceState{}
-		if model.eventCancel != nil {
-			model.eventCancel()
-			model.eventCancel = nil
-		}
 		eventStream := model.eventStream
 		model.eventStream = nil
 		model.eventGeneration++
-		model.eventRequestGeneration++
 		model.Events = EventState{}
 		model.Etcd = EtcdState{}
 		model.Processes = ProcessesState{}
@@ -95,6 +88,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.PendingEtcdAction = nil
 		model.EtcdSnapshot = EtcdSnapshotState{}
 		model.ActionResults = nil
+		model.operationID++
 		model.ActionTotal = 0
 		model.refreshDisksTarget = ""
 		open := openSession(message.Name, model.Generation)
@@ -109,40 +103,67 @@ func Update(model Model, message Message) (Model, Effect) {
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		model.nodeReader = message.Nodes
-		model.nodeController = message.NodeController
-		model.serviceController = message.ServiceController
-		model.serviceReader = message.Services
-		model.logReader = message.Logs
-		model.eventReader = message.Events
-		model.etcdReader = message.Etcd
-		model.etcdOperations = message.EtcdOperations
-		model.processReader = message.Processes
-		model.diskReader = message.Disks
-		model.networkReader = message.Network
-		model.dmesgReader = message.Dmesg
-		model.clusterHealthReader = message.ClusterHealth
-		model.netstatReader = message.Netstat
-		model.mountReader = message.Mounts
-		model.memoryReader = message.Memory
-		model.timeReader = message.Time
-		model.cpuReader = message.CPU
-		model.resourceKindReader = message.ResourceKinds
-		model.resourceInstanceReader = message.Resources
+		if session := message.Session; session != nil {
+			if composite, ok := session.(ports.NodeServiceSession); ok {
+				model.nodeServices = composite.NodeServices()
+			}
+			model.nodeReader = session.Nodes()
+			model.nodeController = session.NodeActions()
+			model.serviceController = session.ServiceActions()
+			model.serviceReader = session.Services()
+			model.logReader = session.ServiceLogs()
+			model.eventReader = session.Events()
+			model.etcdReader = session.Etcd()
+			model.etcdOperations = session.EtcdOperations()
+			model.processReader = session.Processes()
+			model.diskReader = session.Disks()
+			model.networkReader = session.Network()
+			model.dmesgReader = session.Dmesg()
+			model.clusterHealthReader = session.ClusterHealth()
+			model.netstatReader = session.Netstat()
+			model.mountReader = session.Mounts()
+			model.memoryReader = session.Memory()
+			model.timeReader = session.Time()
+			model.cpuReader = session.CPU()
+			model.resourceKindReader = session.ResourceKinds()
+			model.resourceInstanceReader = session.Resources()
+		}
+		if message.requests != nil {
+			model.requests = message.requests
+		}
 		model.kubernetesReader = message.KubernetesNodes
 		model.Kubernetes.Available = model.kubernetesReader != nil
-		return model, loadNodes(message.Nodes, message.Generation)
+		return model, nil
 
 	case NodesLoaded:
 		if message.Generation != model.Generation {
 			return model, nil
 		}
 		model.Nodes = NodeState{Status: nodeLoadStatus(message.Nodes), Value: message.Nodes}
+		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, model.Kubernetes.Nodes)
 		model.Notice = ""
-		if model.serviceReader != nil {
-			return model, loadServices(model.serviceReader, message.Generation)
+		return startEtcdRead(model)
+
+	case NodeServicesLoaded:
+		if message.Generation != model.Generation {
+			return model, nil
 		}
-		return model, nil
+		if message.Err != nil {
+			model.Nodes.Status = Failed
+			model.Nodes.Err = "nodes unavailable"
+			if message.ServicesRequestID == 0 || message.ServicesRequestID == model.requestIDs["services"] {
+				model.Services.Status = Failed
+				model.Services.Err = "services unavailable"
+			}
+			return model, nil
+		}
+		model.Nodes = NodeState{Status: nodeLoadStatus(message.Nodes), Value: message.Nodes}
+		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, model.Kubernetes.Nodes)
+		if message.ServicesRequestID == 0 || message.ServicesRequestID == model.requestIDs["services"] {
+			model.Services = ServiceState{Status: serviceLoadStatus(message.Services), Value: message.Services}
+		}
+		model.Notice = ""
+		return startEtcdRead(model)
 
 	case ServicesLoaded:
 		if message.Generation != model.Generation {
@@ -152,7 +173,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		if len(message.Services.Problems) > 0 {
 			model.Notice = fmt.Sprintf("services unavailable on %d node(s)", len(message.Services.Problems))
 		}
-		return model, loadEvents(model.eventReader, message.Generation, model.eventRequestGeneration)
+		return model, nil
 
 	case ServicesFailed:
 		if message.Generation != model.Generation {
@@ -171,24 +192,24 @@ func Update(model Model, message Message) (Model, Effect) {
 	case RefreshNodes:
 		model.Nodes.Status = Loading
 		model.Nodes.Err = ""
-		return model, loadNodes(model.nodeReader, model.Generation)
+		return model, loadNodeSnapshot(model)
 
 	case EventsLoaded:
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		if message.RequestGeneration != model.eventRequestGeneration || model.Events.Following {
-			return model, continueAfterEventSnapshot(model)
+		if model.Events.Following {
+			return model, nil
 		}
 		model.Events = EventState{Status: Ready, Value: message.Events}
-		return model, continueAfterEventSnapshot(model)
+		return model, nil
 
 	case EventsFailed:
 		if message.Generation != model.Generation {
 			return model, nil
 		}
-		if message.RequestGeneration != model.eventRequestGeneration || model.Events.Following {
-			return model, continueAfterEventSnapshot(model)
+		if model.Events.Following {
+			return model, nil
 		}
 		model.Events.Status = Failed
 		model.Events.Err = "events unavailable"
@@ -198,17 +219,16 @@ func Update(model Model, message Message) (Model, Effect) {
 		if model.Events.Following {
 			return model, nil
 		}
-		model.eventRequestGeneration++
 		model.Events.Status = Loading
 		model.Events.Err = ""
-		return model, loadEvents(model.eventReader, model.Generation, model.eventRequestGeneration)
+		return model, loadEvents(model.eventReader, model.Generation)
 
 	case EtcdLoaded:
 		if message.Generation != model.Generation {
 			return model, nil
 		}
 		model.Etcd = EtcdState{Status: Ready, Value: message.Etcd}
-		return model, loadKubernetesNodesIfAvailable(model)
+		return model, nil
 
 	case EtcdFailed:
 		if message.Generation != model.Generation {
@@ -216,7 +236,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		model.Etcd.Status = Failed
 		model.Etcd.Err = "etcd unavailable"
-		return model, loadKubernetesNodesIfAvailable(model)
+		return model, nil
 
 	case RefreshEtcd:
 		model.Etcd.Status = Loading
@@ -235,6 +255,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		model.EtcdSnapshot = EtcdSnapshotState{Status: Loading, MemberNode: message.Node}
 		model.ActionResults = nil
+		model.operationID++
 		model.ActionTotal = 0
 		return model, defaultEtcdSnapshotPathEffect(model.ContextName, message.MemberHostname, message.Node, model.Generation)
 
@@ -246,10 +267,14 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case ConfirmEtcdSnapshotPrompt:
+		if !model.WritesEnabled || model.Upgrade.Active || model.EtcdSnapshot.Status != Loading || model.EtcdSnapshot.InFlight || message.Node != model.EtcdSnapshot.MemberNode {
+			return model, nil
+		}
 		if err := ValidateEtcdSnapshotPath(message.Path); err != nil {
 			model.EtcdSnapshot = EtcdSnapshotState{Status: Failed, Err: err.Error(), MemberNode: message.Node}
 			return model, nil
 		}
+		model.EtcdSnapshot.InFlight = true
 		return model, runEtcdSnapshot(model.etcdOperations, message.Node, message.Path, model.Generation)
 
 	case EtcdSnapshotSucceeded:
@@ -322,7 +347,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			pending.Warning = etcdMembershipWarning(model.Etcd, message.Kind, message.MemberID, message.MemberHostname)
 			pending.Blocked = etcdMembershipBlockReason(model.Etcd, message.Kind, message.MemberID, message.MemberHostname)
 			pending.SnapshotNode = etcdSnapshotNodeFor(model.Etcd, message.MemberID, message.MemberHostname)
-			pending.SnapshotPath = defaultEtcdSnapshotPath(model.ContextName, message.MemberHostname, time.Now().UTC())
+			pending.SnapshotPath = defaultEtcdSnapshotPath(model.ContextName, message.MemberHostname, message.requestedAt)
 			if message.Kind == EtcdActionLeaveCluster {
 				// Leave is executed by the member itself.
 				pending.Node = message.MemberHostname
@@ -344,10 +369,14 @@ func Update(model Model, message Message) (Model, Effect) {
 		// standalone snapshot notice cannot mask its outcome.
 		model.EtcdSnapshot = EtcdSnapshotState{}
 		model.ActionResults = nil
+		model.operationID++
 		model.ActionTotal = 0
 		return model, nil
 
 	case ConfirmEtcdAction:
+		if !model.WritesEnabled || model.Upgrade.Active {
+			return model, nil
+		}
 		// Confirm through the reducer only: a blocked, absent, or already-stage-
 		// advanced pending action produces no effect, so nothing fires before a
 		// successful confirm.
@@ -413,7 +442,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		model.Kubernetes.Status = Ready
 		model.Kubernetes.Nodes = message.Nodes
 		model.Nodes.Value.Nodes = mergeKubernetesCorrelation(model.Nodes.Value.Nodes, message.Nodes)
-		return model, recoveryEffectIfReady(model)
+		return model, nil
 
 	case KubernetesNodesFailed:
 		if message.Generation != model.Generation {
@@ -740,6 +769,7 @@ func Update(model Model, message Message) (Model, Effect) {
 				Confirmation: confirmation,
 			}
 			model.ActionResults = nil
+			model.operationID++
 			model.ActionTotal = 0
 			return model, nil
 		}
@@ -762,6 +792,7 @@ func Update(model Model, message Message) (Model, Effect) {
 				Confirmation: strings.TrimSpace(message.Confirmation),
 			}
 			model.ActionResults = nil
+			model.operationID++
 			model.ActionTotal = 0
 			return model, nil
 		}
@@ -782,6 +813,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			Image:   message.Image,
 		}
 		model.ActionResults = nil
+		model.operationID++
 		model.ActionTotal = 0
 		return model, nil
 
@@ -803,6 +835,7 @@ func Update(model Model, message Message) (Model, Effect) {
 			Blocked: blocked,
 		}
 		model.ActionResults = nil
+		model.operationID++
 		model.ActionTotal = 0
 		return model, nil
 
@@ -837,6 +870,9 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case ConfirmPendingAction:
+		if !model.WritesEnabled || model.Upgrade.Active {
+			return model, nil
+		}
 		// Hard gate, re-evaluated against the current snapshot: an action that
 		// is (or became) quorum-unsafe is refused outright and the pending
 		// prompt is left in place so the operator must cancel it explicitly.
@@ -846,11 +882,17 @@ func Update(model Model, message Message) (Model, Effect) {
 				return model, nil
 			}
 		}
+		if model.PendingAction != nil {
+			model.PendingAction.Blocked = ""
+		}
 		if model.PendingServiceAction != nil {
 			if reason := pendingServiceActionBlockReason(model, *model.PendingServiceAction); reason != "" {
 				model.PendingServiceAction.Blocked = reason
 				return model, nil
 			}
+		}
+		if model.PendingServiceAction != nil {
+			model.PendingServiceAction.Blocked = ""
 		}
 		if model.PendingAction != nil {
 			model.ActionTotal = len(model.PendingAction.Targets)
@@ -860,12 +902,21 @@ func Update(model Model, message Message) (Model, Effect) {
 		} else if model.PendingServiceAction != nil {
 			model.ActionTotal = 1
 		}
+		var effect Effect
+		if model.PendingAction != nil {
+			effect = batch(buildActionEffects(model, *model.PendingAction)...)
+			if model.PendingAction.Kind == ActionUpgrade && len(model.PendingAction.Targets) == 1 {
+				model.Upgrade = UpgradeState{Active: true, Target: model.PendingAction.Targets[0]}
+			}
+		} else if model.PendingServiceAction != nil {
+			effect = buildServiceActionEffect(model, *model.PendingServiceAction)
+		}
 		model.PendingAction = nil
 		model.PendingServiceAction = nil
-		return model, nil
+		return model, effect
 
 	case UpgradeStarted:
-		if message.Generation != model.Generation || model.Upgrade.Active {
+		if message.Generation != model.Generation || (model.Upgrade.Active && (model.upgradeResults != nil || model.Upgrade.Target != message.Target)) {
 			if message.cancel != nil {
 				message.cancel()
 			}
@@ -906,20 +957,7 @@ func Update(model Model, message Message) (Model, Effect) {
 		}
 		model.Nodes.Status = Loading
 		model.Nodes.Err = ""
-		return model, loadNodes(model.nodeReader, model.Generation)
-
-	case RecoveryUncordonSucceeded:
-		if message.Generation != model.Generation || model.Upgrade.Target != message.Target || model.Upgrade.Warning == "" {
-			return model, nil
-		}
-		model.Upgrade.Warning = ""
-		return model, nil
-
-	case RecoveryUncordonFailed:
-		// A single failed attempt is not escalated to the operator: it is
-		// usually transient, and the existing warning already promises a
-		// retry. The next heartbeat tick tries again automatically.
-		return model, nil
+		return model, loadNodeSnapshot(model)
 
 	case UpgradeFailed:
 		if message.Generation != model.Generation || !model.Upgrade.Active || message.Target != model.Upgrade.Target {
@@ -984,6 +1022,12 @@ func Update(model Model, message Message) (Model, Effect) {
 		return model, nil
 
 	case SelectResourceKind:
+		if model.ResourceBrowser.SelectedKind != message.Kind || model.ResourceBrowser.SelectedNode != message.Node {
+			model.ResourceBrowser.Instances = domain.ResourceInstanceSet{}
+			model.ResourceBrowser.Detail = domain.ResourceInstanceSnapshot{}
+			model.ResourceBrowser.DetailStatus = Idle
+			model.ResourceBrowser.DetailErr = ""
+		}
 		model.ResourceBrowser.InstancesStatus = Loading
 		model.ResourceBrowser.InstancesErr = ""
 		model.ResourceBrowser.SelectedKind = message.Kind
@@ -1125,35 +1169,6 @@ func serviceLoadStatus(services domain.ServiceSet) LoadStatus {
 	return Ready
 }
 
-func loadKubernetesNodesIfAvailable(model Model) Effect {
-	if model.kubernetesReader == nil {
-		return nil
-	}
-	return loadKubernetesNodes(model.kubernetesReader, model.Generation)
-}
-
-// recoveryEffectIfReady closes the loop left by an applied-with-warning
-// upgrade: once a later Kubernetes node refresh shows the pending target is
-// Ready again, it fires an opportunistic uncordon instead of leaving the
-// operator to run kubectl by hand. Uncordon is idempotent, so retrying it on
-// every refresh until the warning clears is safe.
-func recoveryEffectIfReady(model Model) Effect {
-	if model.Upgrade.Warning == "" || model.Upgrade.Active {
-		return nil
-	}
-	target := model.Upgrade.Target
-	for _, node := range model.Nodes.Value.Nodes {
-		if node.Target() != target {
-			continue
-		}
-		if node.Kubernetes != domain.KubernetesReady {
-			return nil
-		}
-		return recoveryUncordonEffect(model.nodeController, target, model.Generation)
-	}
-	return nil
-}
-
 func mergeKubernetesCorrelation(nodes []domain.NodeSnapshot, kubernetesNodes map[string]domain.KubernetesNodeSnapshot) []domain.NodeSnapshot {
 	merged := make([]domain.NodeSnapshot, len(nodes))
 	for index, node := range nodes {
@@ -1242,12 +1257,6 @@ func appendNodeIP(target []string, node domain.NodeSnapshot) []string {
 		}
 	}
 	return target
-}
-
-// ControlPlaneHostnamesForTest exposes controlPlaneHostnames for tests in
-// package application_test, which cannot see unexported identifiers.
-func ControlPlaneHostnamesForTest(nodes []domain.NodeSnapshot) []string {
-	return controlPlaneHostnames(nodes)
 }
 
 func safeUpgradeError(_ error) string {

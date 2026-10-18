@@ -1,0 +1,55 @@
+package tui
+
+import (
+	"testing"
+
+	"github.com/m11s-io/t9s/internal/application"
+	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestSyncLogBatchLeavesUnrelatedScreensUntouched(t *testing.T) {
+	m := model{
+		application: application.Model{
+			Logs:  application.LogState{Lines: []string{"new log"}},
+			Dmesg: application.DmesgState{Lines: []string{"new dmesg"}},
+			Nodes: application.NodeState{Status: application.Ready},
+		},
+		nodes:    newNodesModel(application.NodeState{Status: application.Loading}),
+		logs:     newLogsModel(application.LogState{}),
+		dmesg:    newDmesgModel(application.DmesgState{Lines: []string{"old dmesg"}}),
+		problems: newProblemsModel([]domain.Diagnosis{{Summary: "retained diagnosis"}}),
+	}
+	m = m.syncScreens(application.ServiceLogBatchLoaded{})
+	assert.Equal(t, []string{"new log"}, m.logs.state.Lines)
+	assert.Equal(t, []string{"old dmesg"}, m.dmesg.state.Lines)
+	assert.Equal(t, application.Loading, m.nodes.state.Status)
+	assert.Equal(t, "retained diagnosis", m.problems.diagnoses[0].Summary)
+}
+
+func TestSyncNodesUpdatesHealthWithoutSyncingServices(t *testing.T) {
+	m := model{
+		application: application.Model{
+			Nodes:    application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node", Health: domain.HealthUnhealthy}}}},
+			Services: application.ServiceState{Status: application.Ready},
+		},
+		nodes:    newNodesModel(application.NodeState{}),
+		services: newServicesModel(application.ServiceState{Status: application.Loading}),
+		problems: newProblemsModel(nil),
+	}
+	m = m.syncScreens(application.NodesLoaded{})
+	assert.Equal(t, application.Ready, m.nodes.state.Status)
+	assert.Len(t, m.problems.diagnoses, 1)
+	assert.Equal(t, application.Loading, m.services.state.Status)
+}
+
+func TestSyncDiskActionSuccessUpdatesDiskLoadingStatusOnly(t *testing.T) {
+	m := model{
+		application: application.Model{Disks: application.DisksState{Status: application.Loading}},
+		disks:       newDisksModel(application.DisksState{Status: application.Ready}),
+		problems:    newProblemsModel([]domain.Diagnosis{{Summary: "retained diagnosis"}}),
+	}
+	m = m.syncScreens(application.ActionSucceeded{})
+	assert.Equal(t, application.Loading, m.disks.state.Status)
+	assert.Equal(t, "retained diagnosis", m.problems.diagnoses[0].Summary)
+}

@@ -101,3 +101,51 @@ func (f *fakeTalosDataStream) Recv() (*common.Data, error) {
 	}
 	return response, nil
 }
+
+func TestServiceLogsReassemblesChunksAndFlushesEOF(t *testing.T) {
+	raw := []byte("hello 世界\nlast")
+	source := &fakeTalosDataStream{responses: []*common.Data{{Bytes: raw[:8]}, {Bytes: raw[8:]}}, errors: []error{nil, nil, io.EOF}}
+	stream := &serviceLogStream{stream: source, cancel: func() {}}
+	batch, err := stream.Next(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"hello 世界"}, batch.Lines)
+	batch, err = stream.Next(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"last"}, batch.Lines)
+	assert.True(t, batch.EOF)
+}
+
+func TestServiceLogsDrainsLargeFramesWithoutDroppingLines(t *testing.T) {
+	source := &fakeTalosDataStream{responses: []*common.Data{{Bytes: []byte(strings.Repeat("line\n", 451))}}, errors: []error{nil, io.EOF}}
+	stream := &serviceLogStream{stream: source, cancel: func() {}}
+	var count int
+	for {
+		batch, err := stream.Next(t.Context())
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(batch.Lines), 200)
+		count += len(batch.Lines)
+		if batch.EOF {
+			break
+		}
+	}
+	assert.Equal(t, 451, count)
+}
+
+func TestServiceLogsBoundsPartialLineAndResumesAfterNewline(t *testing.T) {
+	source := &fakeTalosDataStream{responses: []*common.Data{
+		{Bytes: []byte(strings.Repeat("界", 10000))},
+		{Metadata: &common.Metadata{Error: "private upstream detail"}},
+		{Bytes: []byte("ignored suffix\nnext\n")},
+	}}
+	stream := &serviceLogStream{stream: source, cancel: func() {}}
+	batch, err := stream.Next(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "log stream error", batch.Err)
+	assert.LessOrEqual(t, len(stream.decoder.partial), maxServiceLogLineRunes*4)
+	batch, err = stream.Next(t.Context())
+	require.NoError(t, err)
+	require.Len(t, batch.Lines, 2)
+	assert.LessOrEqual(t, len([]rune(batch.Lines[0])), maxServiceLogLineRunes)
+	assert.NotContains(t, batch.Lines[0], "�")
+	assert.Equal(t, "next", batch.Lines[1])
+}

@@ -86,7 +86,6 @@ func TestContextSelectionClampsAtFirstAndLastRow(t *testing.T) {
 		"cursor must clamp at the first row (index 0, \"dev\"), not go negative")
 
 	threeContexts := newModel(t.Context(), false, application.Model{
-		Route:       application.RouteNodes,
 		ContextName: "alpha",
 		Contexts: []domain.ClusterContext{
 			{Name: "alpha", Cluster: "a", Current: true},
@@ -139,7 +138,6 @@ func TestControlCQuitsWhileCommandPaletteIsActive(t *testing.T) {
 func commandRootWithContexts(t *testing.T) model {
 	t.Helper()
 	return newModel(t.Context(), false, application.Model{
-		Route:       application.RouteNodes,
 		ContextName: "prod",
 		Contexts: []domain.ClusterContext{
 			{Name: "prod", Cluster: "production", Current: true},

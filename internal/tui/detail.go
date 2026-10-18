@@ -15,7 +15,7 @@ func renderNodeDetail(node domain.NodeSnapshot) string {
 	view.WriteString(fmt.Sprintf("ROLE       %s\n", node.Role))
 	view.WriteString(fmt.Sprintf("STAGE      %s\n", fallback(node.Stage)))
 	view.WriteString(fmt.Sprintf("HEALTH     %s\n", node.Health))
-	view.WriteString(fmt.Sprintf("SERVICES   %s\n", node.Services.String()))
+	view.WriteString(fmt.Sprintf("SERVICES   %s\n", serviceSummary(node.Services)))
 	view.WriteString(fmt.Sprintf("KUBERNETES %s\n", node.Kubernetes))
 	if node.KubernetesNode != nil {
 		view.WriteString(fmt.Sprintf("ROLES      %s\n", fallback(strings.Join(node.KubernetesNode.Roles, ", "))))

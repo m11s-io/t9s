@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/client-go/kubernetes"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/m11s-io/t9s/internal/ports"
@@ -32,10 +32,10 @@ func (*resolver) Resolve(_ context.Context, talosContext string) (ports.Kubernet
 		return nil, fmt.Errorf("build kubernetes client config for context %q: %w", talosContext, err)
 	}
 
-	clientset, err := kubernetes.NewForConfig(restConfig)
+	clientset, err := corev1.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("build kubernetes client for context %q: %w", talosContext, err)
 	}
 
-	return newNodeReader(clientset), nil
+	return newNodeReader(clientset.Nodes()), nil
 }

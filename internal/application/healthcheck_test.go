@@ -170,6 +170,6 @@ func TestClusterHealthRequestUsesNodeAddressesNotHostnames(t *testing.T) {
 // via the SessionOpened message, since application.Model has no exported
 // setter and this test file is package application_test.
 func withClusterHealthReader(model application.Model, reader ports.ClusterHealthReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ClusterHealth: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ClusterHealthReader: reader}})
 	return model
 }

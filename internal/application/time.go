@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/m11s-io/t9s/internal/domain"
@@ -82,19 +81,11 @@ func updateTime(model Model, message Message) (Model, Effect, bool) {
 			model.Time.CheckErr = err.Error()
 			return model, nil, true
 		}
-		if model.timeCheckCancel != nil {
-			model.timeCheckCancel()
-		}
-		model.timeCheckID++
-		lifetime, cancel := context.WithCancel(context.Background())
-		model.timeCheckCancel = cancel
 		model.Time.CheckStatus = Loading
 		model.Time.Check = domain.TimeCheckResult{TimeSample: domain.TimeSample{Server: server}}
 		model.Time.CheckErr = ""
-		generation, id, node, reader := model.Generation, model.timeCheckID, model.Time.Node, model.timeReader
+		generation, node, reader := model.Generation, model.Time.Node, model.timeReader
 		return model, func(ctx context.Context, _ Dependencies) Message {
-			ctx, done := timeRequestContext(ctx, lifetime, cancel)
-			defer done()
 			var value domain.TimeCheckResult
 			var err error
 			if reader == nil {
@@ -105,16 +96,13 @@ func updateTime(model Model, message Message) (Model, Effect, bool) {
 			if ctx.Err() != nil {
 				err = ctx.Err()
 			}
-			return TimeChecked{Generation: generation, RequestID: id, Node: node, Server: server, Value: value, Err: err}
+			return TimeChecked{Generation: generation, Node: node, Server: server, Value: value, Err: err}
 		}, true
 	case TimeLoaded:
-		if msg.Generation != model.Generation || msg.Node != model.Time.Node || msg.RequestID != model.timeReadID || model.Time.Status != Loading {
+		if msg.Generation != model.Generation || msg.Node != model.Time.Node || model.Time.Status != Loading {
 			return model, nil, true
 		}
-		if model.timeReadCancel != nil {
-			model.timeReadCancel()
-			model.timeReadCancel = nil
-		}
+
 		if msg.Err != nil {
 			model.Time.Status = Failed
 			model.Time.Err = "time status unavailable"
@@ -127,13 +115,10 @@ func updateTime(model Model, message Message) (Model, Effect, bool) {
 		}
 		return model, nil, true
 	case TimeChecked:
-		if msg.Generation != model.Generation || msg.Node != model.Time.Node || msg.RequestID != model.timeCheckID || msg.Server != model.Time.Check.Server || model.Time.CheckStatus != Loading {
+		if msg.Generation != model.Generation || msg.Node != model.Time.Node || msg.Server != model.Time.Check.Server || model.Time.CheckStatus != Loading {
 			return model, nil, true
 		}
-		if model.timeCheckCancel != nil {
-			model.timeCheckCancel()
-			model.timeCheckCancel = nil
-		}
+
 		if msg.Err != nil {
 			model.Time.CheckStatus = Failed
 			model.Time.CheckErr = "time check unavailable"
@@ -153,18 +138,10 @@ func updateTime(model Model, message Message) (Model, Effect, bool) {
 	return model, nil, false
 }
 func startTimeRead(model Model) (Model, Effect) {
-	if model.timeReadCancel != nil {
-		model.timeReadCancel()
-	}
-	model.timeReadID++
-	lifetime, cancel := context.WithCancel(context.Background())
-	model.timeReadCancel = cancel
 	model.Time.Status = Loading
 	model.Time.Err = ""
-	generation, id, node, reader := model.Generation, model.timeReadID, model.Time.Node, model.timeReader
+	generation, node, reader := model.Generation, model.Time.Node, model.timeReader
 	return model, func(ctx context.Context, _ Dependencies) Message {
-		ctx, done := timeRequestContext(ctx, lifetime, cancel)
-		defer done()
 		var value domain.TimeSnapshot
 		var err error
 		if reader == nil {
@@ -175,31 +152,13 @@ func startTimeRead(model Model) (Model, Effect) {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return TimeLoaded{Generation: generation, RequestID: id, Node: node, Value: value, Err: err}
+		return TimeLoaded{Generation: generation, Node: node, Value: value, Err: err}
 	}
 }
 
-// Combine request/view, runner, and deadline lifetimes. The session-bound
-// reader additionally ties each RPC to the active Talos session.
-func timeRequestContext(effectCtx, lifetime context.Context, cancel context.CancelFunc) (context.Context, func()) {
-	stop := context.AfterFunc(effectCtx, cancel)
-	if effectCtx.Err() != nil {
-		cancel()
-	}
-	ctx, timeoutCancel := context.WithTimeout(lifetime, 10*time.Second)
-	return ctx, func() { stop(); timeoutCancel(); cancel() }
-}
 func closeTimeRequests(model *Model) {
-	if model.timeReadCancel != nil {
-		model.timeReadCancel()
-		model.timeReadCancel = nil
-	}
-	if model.timeCheckCancel != nil {
-		model.timeCheckCancel()
-		model.timeCheckCancel = nil
-	}
-	model.timeReadID++
-	model.timeCheckID++
+	*model = closeRead(*model, "time")
+	*model = closeRead(*model, "time-check")
 }
 
 // ValidateTimeServer accepts a hostname or a bare IP address, never a URL,
@@ -233,35 +192,4 @@ func ValidateTimeServer(input string) (string, error) {
 		}
 	}
 	return server, nil
-}
-
-func (s managedSession) Time() ports.TimeReader {
-	if s.time == nil {
-		return nil
-	}
-	return boundTimeReader{TimeReader: s.time, ctx: s.ctx}
-}
-
-type boundTimeReader struct {
-	ports.TimeReader
-	ctx context.Context
-}
-
-func (r boundTimeReader) Read(callCtx context.Context, node string) (domain.TimeSnapshot, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	if callCtx.Err() != nil {
-		cancel()
-	}
-	defer func() { stop(); cancel() }()
-	return r.TimeReader.Read(ctx, node)
-}
-func (r boundTimeReader) Check(callCtx context.Context, node, server string) (domain.TimeCheckResult, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	if callCtx.Err() != nil {
-		cancel()
-	}
-	defer func() { stop(); cancel() }()
-	return r.TimeReader.Check(ctx, node, server)
 }

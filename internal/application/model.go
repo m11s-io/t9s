@@ -2,14 +2,11 @@ package application
 
 import (
 	"context"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
 )
-
-type Route string
-
-const RouteNodes Route = "nodes"
 
 type LoadStatus string
 
@@ -22,73 +19,42 @@ const (
 )
 
 type Model struct {
-	Route                  Route
-	ContextName            string
-	NodeFocus              string
-	OpenContextPicker      bool
-	WritesEnabled          bool
-	Contexts               []domain.ClusterContext
-	Generation             uint64
-	Nodes                  NodeState
-	Services               ServiceState
-	Events                 EventState
-	Etcd                   EtcdState
-	EtcdSnapshot           EtcdSnapshotState
-	Processes              ProcessesState
-	Disks                  DisksState
-	Network                NetworkState
-	Dmesg                  DmesgState
-	HealthCheck            ClusterHealthState
-	Netstat                SocketState
-	Mounts                 MountState
-	Time                   TimeState
-	CPU                    CPUState
-	Memory                 MemoryState
-	ResourceBrowser        ResourceBrowserState
-	Kubernetes             KubernetesState
-	nodeReader             ports.NodeReader
-	nodeController         ports.NodeController
-	serviceReader          ports.ServiceReader
-	serviceController      ports.ServiceController
-	logReader              ports.ServiceLogReader
-	eventReader            ports.EventReader
-	eventStream            ports.EventStream
-	eventCancel            context.CancelFunc
-	eventGeneration        uint64
-	eventRequestGeneration uint64
-	etcdReader             ports.EtcdReader
-	etcdOperations         ports.EtcdOperations
-	processReader          ports.ProcessReader
-	diskReader             ports.DiskReader
-	networkReader          ports.NetworkReader
-	dmesgReader            ports.DmesgReader
-	clusterHealthReader    ports.ClusterHealthReader
-	netstatReader          ports.NetstatReader
-	mountReader            ports.MountReader
-	memoryReader           ports.MemoryReader
-	timeReader             ports.TimeReader
-	cpuReader              ports.CPUReader
-	cpuRequestID           uint64
-	cpuCancel              context.CancelFunc
-	timeReadID             uint64
-	timeCheckID            uint64
-	timeReadCancel         context.CancelFunc
-	timeCheckCancel        context.CancelFunc
-	resourceKindReader     ports.ResourceKindReader
-	resourceInstanceReader ports.ResourceInstanceReader
-	kubernetesReader       ports.KubernetesNodeReader
-	logStream              ports.ServiceLogStream
-	logGeneration          uint64
-	dmesgStream            ports.DmesgStream
-	dmesgGeneration        uint64
-	clusterHealthStream    ports.ClusterHealthStream
-	healthGeneration       uint64
-	Notice                 string
-	Logs                   LogState
-	PendingAction          *PendingAction
-	PendingServiceAction   *PendingServiceAction
-	PendingEtcdAction      *PendingEtcdAction
-	ActionResults          []ActionResult
+	sessionRuntime
+	requestIDs           map[string]uint64
+	operationID          uint64
+	ContextName          string
+	NodeFocus            string
+	OpenContextPicker    bool
+	WritesEnabled        bool
+	Contexts             []domain.ClusterContext
+	Generation           uint64
+	Nodes                NodeState
+	Services             ServiceState
+	Events               EventState
+	Etcd                 EtcdState
+	EtcdSnapshot         EtcdSnapshotState
+	Processes            ProcessesState
+	Disks                DisksState
+	Network              NetworkState
+	Dmesg                DmesgState
+	HealthCheck          ClusterHealthState
+	Netstat              SocketState
+	Mounts               MountState
+	Time                 TimeState
+	CPU                  CPUState
+	Memory               MemoryState
+	ResourceBrowser      ResourceBrowserState
+	Kubernetes           KubernetesState
+	eventGeneration      uint64
+	logGeneration        uint64
+	dmesgGeneration      uint64
+	healthGeneration     uint64
+	Notice               string
+	Logs                 LogState
+	PendingAction        *PendingAction
+	PendingServiceAction *PendingServiceAction
+	PendingEtcdAction    *PendingEtcdAction
+	ActionResults        []ActionResult
 	// ActionTotal is the number of targets the currently-in-flight bulk
 	// action was confirmed against. ActionResults grows one entry at a time
 	// as ActionSucceeded/ActionFailed messages stream back independently, so
@@ -96,9 +62,6 @@ type Model struct {
 	// results are still outstanding.
 	ActionTotal int
 	Upgrade     UpgradeState
-
-	upgradeResults <-chan upgradeStreamResult
-	upgradeCancel  context.CancelFunc
 
 	// refreshDisksTarget is the node whose single-device wipe is in flight, so
 	// its success re-reads that node's :disks inventory, which otherwise would
@@ -137,6 +100,7 @@ type EtcdState struct {
 // separate from EtcdState so a local backup never disturbs the membership
 // view.
 type EtcdSnapshotState struct {
+	InFlight   bool
 	Status     LoadStatus
 	Result     domain.EtcdSnapshotResult
 	Err        string
@@ -272,6 +236,7 @@ type KubernetesState struct {
 }
 
 type KubernetesNodesLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Nodes      map[string]domain.KubernetesNodeSnapshot
 }
@@ -279,6 +244,7 @@ type KubernetesNodesLoaded struct {
 func (KubernetesNodesLoaded) applicationMessage() {}
 
 type KubernetesNodesFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
@@ -297,6 +263,7 @@ type OpenResourceBrowser struct {
 func (OpenResourceBrowser) applicationMessage() {}
 
 type ResourceKindsLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Kinds      domain.ResourceKindSet
 }
@@ -304,6 +271,7 @@ type ResourceKindsLoaded struct {
 func (ResourceKindsLoaded) applicationMessage() {}
 
 type ResourceKindsFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
@@ -318,6 +286,7 @@ type SelectResourceKind struct {
 func (SelectResourceKind) applicationMessage() {}
 
 type ResourceInstancesLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Instances  domain.ResourceInstanceSet
 }
@@ -325,6 +294,7 @@ type ResourceInstancesLoaded struct {
 func (ResourceInstancesLoaded) applicationMessage() {}
 
 type ResourceInstancesFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
@@ -338,6 +308,7 @@ type OpenResourceInstance struct {
 func (OpenResourceInstance) applicationMessage() {}
 
 type ResourceInstanceLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Instance   domain.ResourceInstanceSnapshot
 }
@@ -345,6 +316,7 @@ type ResourceInstanceLoaded struct {
 func (ResourceInstanceLoaded) applicationMessage() {}
 
 type ResourceInstanceFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
@@ -462,6 +434,7 @@ func (RequestResetPrompt) applicationMessage() {}
 // overlay. A late message is ignored by the TUI when its generation is stale
 // or a confirm is already open.
 type ResetPromptOpened struct {
+	RequestID  uint64
 	Generation uint64
 	Targets    []string
 	Preview    map[string]ResetPreview
@@ -504,116 +477,90 @@ type RequestServiceAction struct {
 func (RequestServiceAction) applicationMessage() {}
 
 type UpgradeStarted struct {
-	Generation uint64
-	Target     string
-	results    <-chan upgradeStreamResult
-	cancel     context.CancelFunc
+	OperationID uint64
+	Generation  uint64
+	Target      string
+	results     <-chan upgradeStreamResult
+	cancel      context.CancelFunc
 }
 
 func (UpgradeStarted) applicationMessage() {}
 
 type UpgradeProgressed struct {
-	Generation uint64
-	Target     string
-	Event      ports.UpgradeEvent
+	OperationID uint64
+	Generation  uint64
+	Target      string
+	Event       ports.UpgradeEvent
 }
 
 func (UpgradeProgressed) applicationMessage() {}
 
 type UpgradeSucceeded struct {
-	Generation uint64
-	Target     string
+	OperationID uint64
+	Generation  uint64
+	Target      string
 }
 
 func (UpgradeSucceeded) applicationMessage() {}
 
 type UpgradeAppliedWithRecoveryWarning struct {
-	Generation uint64
-	Target     string
-	Warning    string
+	OperationID uint64
+	Generation  uint64
+	Target      string
+	Warning     string
 }
 
 func (UpgradeAppliedWithRecoveryWarning) applicationMessage() {}
 
-// RecoveryUncordonSucceeded and RecoveryUncordonFailed report the outcome of
-// an opportunistic uncordon attempt made after a Kubernetes node refresh
-// observes a pending-recovery target has become Ready. See
-// recoveryEffectIfReady.
-type RecoveryUncordonSucceeded struct {
-	Generation uint64
-	Target     string
-}
-
-func (RecoveryUncordonSucceeded) applicationMessage() {}
-
-type RecoveryUncordonFailed struct {
-	Generation uint64
-	Target     string
-}
-
-func (RecoveryUncordonFailed) applicationMessage() {}
-
 type UpgradeFailed struct {
-	Generation uint64
-	Target     string
-	Err        error
+	OperationID uint64
+	Generation  uint64
+	Target      string
+	Err         error
 }
 
 func (UpgradeFailed) applicationMessage() {}
 
 type ActionSucceeded struct {
-	Generation uint64
-	Target     string
+	OperationID uint64
+	Generation  uint64
+	Target      string
 }
 
 func (ActionSucceeded) applicationMessage() {}
 
 type ActionFailed struct {
-	Generation uint64
-	Target     string
-	Err        error
+	OperationID uint64
+	Generation  uint64
+	Target      string
+	Err         error
 }
 
 func (ActionFailed) applicationMessage() {}
 
 type SessionOpened struct {
-	Generation        uint64
-	Nodes             ports.NodeReader
-	NodeController    ports.NodeController
-	ServiceController ports.ServiceController
-	Services          ports.ServiceReader
-	Logs              ports.ServiceLogReader
-	Events            ports.EventReader
-	Etcd              ports.EtcdReader
-	EtcdOperations    ports.EtcdOperations
-	Processes         ports.ProcessReader
-	Disks             ports.DiskReader
-	Network           ports.NetworkReader
-	Dmesg             ports.DmesgReader
-	Netstat           ports.NetstatReader
-	Mounts            ports.MountReader
-	Time              ports.TimeReader
-	CPU               ports.CPUReader
-	Memory            ports.MemoryReader
-	ClusterHealth     ports.ClusterHealthReader
-	ResourceKinds     ports.ResourceKindReader
-	Resources         ports.ResourceInstanceReader
-	KubernetesNodes   ports.KubernetesNodeReader
+	Generation      uint64
+	Session         ports.Session
+	KubernetesNodes ports.KubernetesNodeReader
+	requests        *requestOwner
 }
 
 func (SessionOpened) applicationMessage() {}
 
 type NodesLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Nodes      domain.NodeSet
 }
 
 type ServicesLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Services   domain.ServiceSet
 }
 
 type ServicesFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
@@ -627,17 +574,17 @@ type RefreshEvents struct{}
 func (RefreshEvents) applicationMessage() {}
 
 type EventsLoaded struct {
-	RequestGeneration uint64
-	Generation        uint64
-	Events            domain.EventSet
+	RequestID  uint64
+	Generation uint64
+	Events     domain.EventSet
 }
 
 func (EventsLoaded) applicationMessage() {}
 
 type EventsFailed struct {
-	RequestGeneration uint64
-	Generation        uint64
-	Err               error
+	RequestID  uint64
+	Generation uint64
+	Err        error
 }
 
 func (EventsFailed) applicationMessage() {}
@@ -647,6 +594,7 @@ type RefreshEtcd struct{}
 func (RefreshEtcd) applicationMessage() {}
 
 type EtcdLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Etcd       domain.EtcdSet
 }
@@ -654,6 +602,7 @@ type EtcdLoaded struct {
 func (EtcdLoaded) applicationMessage() {}
 
 type EtcdFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
@@ -671,6 +620,7 @@ type RefreshProcesses struct{}
 func (RefreshProcesses) applicationMessage() {}
 
 type ProcessesLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Processes  domain.ProcessSet
@@ -679,6 +629,7 @@ type ProcessesLoaded struct {
 func (ProcessesLoaded) applicationMessage() {}
 
 type ProcessesFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Err        error
@@ -694,6 +645,7 @@ type RequestEtcdSnapshotPrompt struct {
 func (RequestEtcdSnapshotPrompt) applicationMessage() {}
 
 type EtcdSnapshotPromptOpened struct {
+	RequestID      uint64
 	Generation     uint64
 	Node           string
 	MemberHostname string
@@ -711,8 +663,9 @@ type ConfirmEtcdSnapshotPrompt struct {
 func (ConfirmEtcdSnapshotPrompt) applicationMessage() {}
 
 type EtcdSnapshotSucceeded struct {
-	Generation uint64
-	Result     domain.EtcdSnapshotResult
+	OperationID uint64
+	Generation  uint64
+	Result      domain.EtcdSnapshotResult
 }
 
 func (EtcdSnapshotSucceeded) applicationMessage() {}
@@ -725,13 +678,15 @@ type CancelEtcdSnapshotPrompt struct{}
 func (CancelEtcdSnapshotPrompt) applicationMessage() {}
 
 type EtcdSnapshotFailed struct {
-	Generation uint64
-	Err        error
+	OperationID uint64
+	Generation  uint64
+	Err         error
 }
 
 func (EtcdSnapshotFailed) applicationMessage() {}
 
 type RequestEtcdAction struct {
+	requestedAt    time.Time
 	Kind           EtcdActionKind
 	MemberID       uint64
 	MemberHostname string
@@ -745,6 +700,7 @@ type ConfirmEtcdAction struct{}
 func (ConfirmEtcdAction) applicationMessage() {}
 
 type EtcdActionSucceeded struct {
+	OperationID    uint64
 	Generation     uint64
 	MemberHostname string
 }
@@ -752,6 +708,7 @@ type EtcdActionSucceeded struct {
 func (EtcdActionSucceeded) applicationMessage() {}
 
 type EtcdActionFailed struct {
+	OperationID    uint64
 	Generation     uint64
 	MemberHostname string
 	Err            error
@@ -766,6 +723,7 @@ type RequestUpgradePrompt struct {
 func (RequestUpgradePrompt) applicationMessage() {}
 
 type UpgradePromptOpened struct {
+	RequestID  uint64
 	Target     string
 	Image      string
 	Generation uint64
@@ -784,6 +742,7 @@ type RefreshDisks struct{}
 func (RefreshDisks) applicationMessage() {}
 
 type DisksLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Disks      domain.DiskSet
@@ -792,6 +751,7 @@ type DisksLoaded struct {
 func (DisksLoaded) applicationMessage() {}
 
 type DisksFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Err        error
@@ -810,6 +770,7 @@ type RefreshNetwork struct{}
 func (RefreshNetwork) applicationMessage() {}
 
 type NetworkLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Network    domain.NetworkSet
@@ -818,6 +779,7 @@ type NetworkLoaded struct {
 func (NetworkLoaded) applicationMessage() {}
 
 type NetworkFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Err        error
@@ -836,6 +798,7 @@ type RefreshNetstat struct{}
 func (RefreshNetstat) applicationMessage() {}
 
 type NetstatLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Sockets    domain.SocketSet
@@ -844,6 +807,7 @@ type NetstatLoaded struct {
 func (NetstatLoaded) applicationMessage() {}
 
 type NetstatFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Err        error
@@ -862,6 +826,7 @@ type RefreshMounts struct{}
 func (RefreshMounts) applicationMessage() {}
 
 type MountsLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Mounts     domain.MountSet
@@ -870,6 +835,7 @@ type MountsLoaded struct {
 func (MountsLoaded) applicationMessage() {}
 
 type MountsFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Err        error
@@ -888,6 +854,7 @@ type RefreshMemory struct{}
 func (RefreshMemory) applicationMessage() {}
 
 type MemoryLoaded struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Memory     domain.MemorySnapshot
@@ -896,6 +863,7 @@ type MemoryLoaded struct {
 func (MemoryLoaded) applicationMessage() {}
 
 type MemoryFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Node       string
 	Err        error
@@ -1006,8 +974,43 @@ func (serviceLogOpened) applicationMessage()      {}
 func (ServiceLogBatchLoaded) applicationMessage() {}
 
 type LoadFailed struct {
+	RequestID  uint64
 	Generation uint64
 	Err        error
 }
 
 func (LoadFailed) applicationMessage() {}
+
+// sessionRuntime contains live handles; exported Model fields are screen data.
+// The session request owner controls their I/O lifetime.
+type sessionRuntime struct {
+	requests               *requestOwner
+	nodeServices           ports.NodeServiceReader
+	nodeReader             ports.NodeReader
+	nodeController         ports.NodeController
+	serviceReader          ports.ServiceReader
+	serviceController      ports.ServiceController
+	logReader              ports.ServiceLogReader
+	eventReader            ports.EventReader
+	eventStream            ports.EventStream
+	etcdReader             ports.EtcdReader
+	etcdOperations         ports.EtcdOperations
+	processReader          ports.ProcessReader
+	diskReader             ports.DiskReader
+	networkReader          ports.NetworkReader
+	dmesgReader            ports.DmesgReader
+	clusterHealthReader    ports.ClusterHealthReader
+	netstatReader          ports.NetstatReader
+	mountReader            ports.MountReader
+	memoryReader           ports.MemoryReader
+	timeReader             ports.TimeReader
+	cpuReader              ports.CPUReader
+	resourceKindReader     ports.ResourceKindReader
+	resourceInstanceReader ports.ResourceInstanceReader
+	kubernetesReader       ports.KubernetesNodeReader
+	logStream              ports.ServiceLogStream
+	dmesgStream            ports.DmesgStream
+	clusterHealthStream    ports.ClusterHealthStream
+	upgradeResults         <-chan upgradeStreamResult
+	upgradeCancel          context.CancelFunc
+}

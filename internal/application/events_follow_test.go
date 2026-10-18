@@ -155,25 +155,23 @@ func TestEventFollowRunnerCloseCancelsRPCContext(t *testing.T) {
 	}
 }
 
-func TestEventFollowLateStartupSnapshotStillLoadsEtcd(t *testing.T) {
+func TestEventFollowLateStartupSnapshotDoesNotRestartEtcd(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(fmt.Sprint(failed), func(t *testing.T) {
 			model := application.Model{Generation: 1, Nodes: application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1", Role: domain.NodeRoleControl}}}}}
-			model, _ = application.Update(model, application.SessionOpened{Generation: 1, Etcd: &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
+			model, _ = application.Update(model, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{EtcdReader: &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
 				return domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{Hostname: "cp-1"}}}, nil
-			}}})
+			}}}})
 			model, _ = application.Update(model, application.ToggleEventFollow{})
 			var snapshot application.Message = application.EventsLoaded{Generation: 1, Events: domain.EventSet{Events: []domain.EventSnapshot{{Message: "stale"}}}}
 			if failed {
 				snapshot = application.EventsFailed{Generation: 1, Err: fmt.Errorf("unreachable")}
 			}
+			before := model.Etcd
 			model, effect := application.Update(model, snapshot)
 			assert.Empty(t, model.Events.Value.Events)
-			require.NotNil(t, effect, "discarding stale events must preserve startup's etcd/Kubernetes continuation")
-			runner := application.NewRunner(application.Dependencies{})
-			model, _ = application.Update(model, runner.Run(t.Context(), effect))
-			require.Len(t, model.Etcd.Value.Members, 1)
-			assert.Equal(t, "cp-1", model.Etcd.Value.Members[0].Hostname)
+			assert.Nil(t, effect, "etcd loading is independent of event snapshot completion")
+			assert.Equal(t, before, model.Etcd)
 		})
 	}
 }

@@ -1,10 +1,11 @@
 package talos
 
 import (
+	"bytes"
 	"context"
 	"io"
-	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -58,42 +59,93 @@ func (r *serviceLogReader) Open(ctx context.Context, request domain.LogRequest) 
 }
 
 type serviceLogStream struct {
-	stream talosDataStream
-	cancel context.CancelFunc
-	once   sync.Once
+	stream  talosDataStream
+	cancel  context.CancelFunc
+	once    sync.Once
+	decoder dataStreamDecoder
 }
 
 func (s *serviceLogStream) Next(ctx context.Context) (domain.LogBatch, error) {
 	stop := context.AfterFunc(ctx, s.cancel)
 	defer stop()
-	return readDataStreamBatch(s.stream)
+	return s.decoder.next(s.stream, false)
 }
 
-// readDataStreamBatch reads one frame from a Talos server stream of common.Data
-// and bounds it for display. Service logs and dmesg share the byte-identical
-// framing, so both map their stream through this helper.
-func readDataStreamBatch(stream talosDataStream) (domain.LogBatch, error) {
-	data, err := stream.Recv()
-	if err == io.EOF {
-		return domain.LogBatch{EOF: true}, nil
+// dataStreamDecoder retains a frame cursor and a bounded line prefix. Logs are
+// arbitrary byte chunks; dmesg frames end a record even without a newline.
+type dataStreamDecoder struct {
+	frame     []byte
+	partial   []byte
+	truncated bool
+	eof       bool
+}
+
+func (d *dataStreamDecoder) finishLine() string {
+	prefix := d.partial
+	if d.truncated {
+		// A retained byte prefix can end inside a UTF-8 rune.
+		for len(prefix) > 0 && !utf8.Valid(prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
 	}
-	if err != nil {
-		return domain.LogBatch{}, err
+	line := boundRunes(string(prefix), maxServiceLogLineRunes)
+	d.partial = nil
+	d.truncated = false
+	return line
+}
+
+func (d *dataStreamDecoder) next(stream talosDataStream, recordFrames bool) (domain.LogBatch, error) {
+	batch := domain.LogBatch{}
+	for {
+		if len(d.frame) > 0 {
+			end := bytes.IndexByte(d.frame, '\n')
+			size := len(d.frame)
+			if end >= 0 {
+				size = end
+			}
+			room := maxServiceLogLineRunes*utf8.UTFMax - len(d.partial)
+			take := min(size, room)
+			d.partial = append(d.partial, d.frame[:take]...)
+			if take < size {
+				d.truncated = true
+			}
+			d.frame = d.frame[size:]
+			if end >= 0 {
+				d.frame = d.frame[1:]
+				batch.Lines = append(batch.Lines, d.finishLine())
+			}
+			if len(d.frame) == 0 {
+				d.frame = nil
+				if recordFrames && (len(d.partial) > 0 || d.truncated) {
+					batch.Lines = append(batch.Lines, d.finishLine())
+				}
+			}
+			if len(batch.Lines) >= maxServiceLogBatch || (len(d.frame) == 0 && len(batch.Lines) > 0) {
+				return batch, nil
+			}
+			continue
+		}
+		if d.eof {
+			batch.EOF = true
+			return batch, nil
+		}
+		data, err := stream.Recv()
+		if err == io.EOF {
+			d.eof = true
+			if len(d.partial) > 0 || d.truncated {
+				batch.Lines = append(batch.Lines, d.finishLine())
+			}
+			batch.EOF = true
+			return batch, nil
+		}
+		if err != nil {
+			return domain.LogBatch{}, err
+		}
+		if metadata := data.GetMetadata(); metadata != nil && metadata.GetError() != "" {
+			return domain.LogBatch{Err: "log stream error"}, nil
+		}
+		d.frame = data.GetBytes()
 	}
-	if metadata := data.GetMetadata(); metadata != nil && metadata.GetError() != "" {
-		return domain.LogBatch{Err: "log stream error"}, nil
-	}
-	lines := strings.Split(strings.TrimSuffix(string(data.GetBytes()), "\n"), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		lines = nil
-	}
-	if len(lines) > maxServiceLogBatch {
-		lines = lines[:maxServiceLogBatch]
-	}
-	for index := range lines {
-		lines[index] = boundRunes(lines[index], maxServiceLogLineRunes)
-	}
-	return domain.LogBatch{Lines: lines}, nil
 }
 
 func (s *serviceLogStream) Close() error {

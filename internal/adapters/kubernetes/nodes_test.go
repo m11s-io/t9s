@@ -1,11 +1,11 @@
 package kubernetes
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,8 +28,7 @@ func TestNodeReaderListIndexesByNameAndInternalIP(t *testing.T) {
 			NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.31.0"},
 		},
 	}
-	clientset := fake.NewSimpleClientset(&node)
-	reader := newNodeReader(clientset)
+	reader := newNodeReader(stubNodes{items: []corev1.Node{node}})
 
 	result, err := reader.List(t.Context())
 
@@ -48,4 +47,17 @@ func TestNodeReaderListIndexesByNameAndInternalIP(t *testing.T) {
 
 	_, ok = result["worker-1.local"]
 	assert.False(t, ok, "only InternalIP addresses are indexed, not hostnames")
+}
+
+func TestKubernetesRolesAreSorted(t *testing.T) {
+	node := corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+		"node-role.kubernetes.io/worker": "", "node-role.kubernetes.io/control-plane": "", "node-role.kubernetes.io/a": "",
+	}}}
+	assert.Equal(t, []string{"a", "control-plane", "worker"}, convertKubernetesNode(node).Roles)
+}
+
+type stubNodes struct{ items []corev1.Node }
+
+func (s stubNodes) List(context.Context, metav1.ListOptions) (*corev1.NodeList, error) {
+	return &corev1.NodeList{Items: s.items}, nil
 }

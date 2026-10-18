@@ -6,8 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"charm.land/bubbles/v2/table"
-
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -16,15 +14,15 @@ type networkModel struct {
 	state     application.NetworkState
 	filter    string
 	filtering bool
-	table     table.Model
+	control   listControl
 }
 
 func newNetworkModel(state application.NetworkState) networkModel {
-	return (networkModel{state: state, table: table.New()}).normalizeSelection(0)
+	return (networkModel{state: state}).normalizeSelection(0)
 }
 
 func (m networkModel) setState(state application.NetworkState) networkModel {
-	previousIndex := m.table.Cursor()
+	previousIndex := m.control.Cursor()
 	m.state = state
 	return m.normalizeSelection(previousIndex)
 }
@@ -32,7 +30,7 @@ func (m networkModel) setState(state application.NetworkState) networkModel {
 func (m networkModel) startFilter(value string) networkModel {
 	m.filter = value
 	m.filtering = true
-	return m.normalizeSelection(m.table.Cursor())
+	return m.normalizeSelection(m.control.Cursor())
 }
 
 func (m networkModel) update(message tea.KeyPressMsg) networkModel {
@@ -42,17 +40,17 @@ func (m networkModel) update(message tea.KeyPressMsg) networkModel {
 		case "esc":
 			m.filter = ""
 			m.filtering = false
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		case "enter":
 			m.filtering = false
 			return m
 		case "backspace":
 			m.filter = trimLastRune(m.filter)
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		if text := printableText(message.Text); text != "" {
 			m.filter += text
-			return m.normalizeSelection(m.table.Cursor())
+			return m.normalizeSelection(m.control.Cursor())
 		}
 		return m
 	}
@@ -62,29 +60,29 @@ func (m networkModel) update(message tea.KeyPressMsg) networkModel {
 		m.filtering = true
 	case "esc":
 		m.filter = ""
-		m = m.normalizeSelection(m.table.Cursor())
+		m = m.normalizeSelection(m.control.Cursor())
 	case "up", "k":
-		m.table.MoveUp(1)
+		m.control.MoveUp(1)
 	case "down", "j":
-		m.table.MoveDown(1)
+		m.control.MoveDown(1)
 	case "g":
-		m.table.GotoTop()
+		m.control.GotoTop()
 	case "G":
-		m.table.GotoBottom()
+		m.control.GotoBottom()
 	}
 	return m
 }
 
 func (m networkModel) normalizeSelection(closest int) networkModel {
 	links := m.visibleLinks()
-	m.table.SetRows(make([]table.Row, len(links)))
-	m.table.SetCursor(min(max(closest, 0), max(0, len(links)-1)))
+	m.control.SetCount(len(links))
+	m.control.SetCursor(min(max(closest, 0), max(0, len(links)-1)))
 	return m
 }
 
 func (m networkModel) selected() (domain.LinkSnapshot, bool) {
 	links := m.visibleLinks()
-	cursor := m.table.Cursor()
+	cursor := m.control.Cursor()
 	if len(links) == 0 || cursor < 0 || cursor >= len(links) {
 		return domain.LinkSnapshot{}, false
 	}
@@ -111,7 +109,7 @@ func (m networkModel) visibleLinks() []domain.LinkSnapshot {
 }
 
 func (m networkModel) view(width int) string {
-	contents := renderLinkTable(width, m.visibleLinks(), m.table.Cursor())
+	contents := renderLinkTable(width, m.visibleLinks(), m.control.Cursor())
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -130,8 +128,8 @@ func (m networkModel) viewSized(size contentSize) string {
 		return "No network interfaces"
 	}
 	rowCapacity := max(0, size.Height-1)
-	start, end := resourceWindow(len(links), m.table.Cursor(), rowCapacity)
-	return renderLinkTable(size.Width, links[start:end], m.table.Cursor()-start)
+	start, end := resourceWindow(len(links), m.control.Cursor(), rowCapacity)
+	return renderLinkTable(size.Width, links[start:end], m.control.Cursor()-start)
 }
 
 const defaultNetworkWidth = 120

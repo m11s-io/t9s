@@ -434,7 +434,7 @@ func (c *nodeController) UpgradeStream(ctx context.Context, target, image string
 		} else {
 			var recoveryErr *upgradeRecoveryError
 			if errors.As(err, &recoveryErr) {
-				emit(ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically.", Done: true})
+				emit(ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually.", Done: true})
 			} else {
 				emit(ports.UpgradeResult{Err: err, Done: true})
 			}
@@ -460,23 +460,6 @@ func (c *nodeController) CurrentInstallImage(ctx context.Context, target string)
 	return image, nil
 }
 
-// Uncordon resolves the node fresh and clears scheduling disablement if any
-// remains. It is safe to call outside an upgrade: machineryUpgradeMaintenance
-// already treats uncordon as a no-op once the node is schedulable.
-func (c *nodeController) Uncordon(ctx context.Context, target string) error {
-	maintenanceClient, ok := c.client.(upgradeMaintenanceClient)
-	if !ok {
-		return errors.New("Talos client does not support safe upgrade maintenance")
-	}
-	maintenance, err := maintenanceClient.prepareUpgradeMaintenance(ctx, target)
-	if err != nil {
-		return fmt.Errorf("prepare Kubernetes node maintenance: %w", err)
-	}
-	if err := maintenance.Uncordon(ctx); err != nil {
-		return fmt.Errorf("uncordon %s: %w", target, err)
-	}
-	return nil
-}
 func parseSchematicFactoryURL(author string) string {
 	idx := strings.LastIndex(author, " (")
 	if idx < 0 || !strings.HasSuffix(author, ")") {
@@ -527,16 +510,6 @@ func validInstallerPathComponent(value string) bool {
 	return true
 }
 
-func supportsLifecycleUpgradeAPI(raw string) bool {
-	version, err := semver.Parse(strings.TrimPrefix(raw, "v"))
-	if err != nil {
-		return false
-	}
-	min, _ := semver.Parse("1.13.0-alpha.2")
-	max, _ := semver.Parse("2.0.0")
-	return version.GT(min) && version.LT(max)
-}
-
 func lifecycleUpgradeAPISupported(raw string) (bool, error) {
 	version, err := semver.Parse(strings.TrimPrefix(raw, "v"))
 	if err != nil {
@@ -566,6 +539,8 @@ func runSafeUpgradeMaintenance(ctx context.Context, maintenance upgradeMaintenan
 				progress(ports.UpgradeEvent{Phase: ports.UpgradeUncordon, Message: "uncordon failed; upgrade completed; node may remain cordoned"})
 				if retErr != nil {
 					retErr = errors.Join(retErr, fmt.Errorf("uncordon Kubernetes node: %w", err))
+				} else {
+					retErr = &upgradeRecoveryError{err: fmt.Errorf("uncordon Kubernetes node: %w", err)}
 				}
 			}
 		}()

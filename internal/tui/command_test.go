@@ -59,7 +59,7 @@ func TestCommandUnknownShowsNoticeWithoutInvokingPorts(t *testing.T) {
 			return nil, nil
 		}},
 	})
-	root := newModel(t.Context(), false, application.Model{Route: application.RouteNodes}, runner)
+	root := newModel(t.Context(), false, application.Model{}, runner)
 
 	root, _ = updateRoot(root, keyPress(':'))
 	for _, character := range "rm -rf anything" {
@@ -69,12 +69,12 @@ func TestCommandUnknownShowsNoticeWithoutInvokingPorts(t *testing.T) {
 
 	assert.Nil(t, command)
 	assert.Contains(t, root.View().Content, `Unknown command "rm -rf anything"`)
-	assert.Equal(t, application.RouteNodes, root.application.Route)
+	assert.Equal(t, viewNodes, root.views.top().Kind)
 	assert.Zero(t, catalogCalls.Load())
 }
 
 func TestCommandWhitespaceIsUnknownRatherThanEmpty(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{Route: application.RouteNodes}, nil)
+	root := newModel(t.Context(), false, application.Model{}, nil)
 	root, _ = updateRoot(root, keyPress(':'))
 	root, _ = updateRoot(root, keyPress(' '))
 
@@ -84,8 +84,8 @@ func TestCommandWhitespaceIsUnknownRatherThanEmpty(t *testing.T) {
 	assert.Contains(t, root.View().Content, `Unknown command " "`)
 }
 
-func TestCommandNodesClosesPaletteAndRetainsNodesRoute(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{Route: application.RouteNodes}, nil)
+func TestCommandNodesClosesPaletteAndShowsNodes(t *testing.T) {
+	root := newModel(t.Context(), false, application.Model{}, nil)
 	root, _ = updateRoot(root, keyPress(':'))
 	for _, character := range "nodes" {
 		root, _ = updateRoot(root, keyPress(character))
@@ -94,7 +94,7 @@ func TestCommandNodesClosesPaletteAndRetainsNodesRoute(t *testing.T) {
 	root, command := updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	assert.Nil(t, command)
-	assert.Equal(t, application.RouteNodes, root.application.Route)
+	assert.Equal(t, viewNodes, root.views.top().Kind)
 	assert.NotContains(t, root.View().Content, "COMMAND :")
 }
 
@@ -104,8 +104,9 @@ func TestCommandEmptyAndEscapeCloseWithoutChangingState(t *testing.T) {
 		"escape": {Code: tea.KeyEsc},
 	} {
 		t.Run(name, func(t *testing.T) {
-			initial := application.Model{Route: application.RouteNodes, ContextName: "prod", Notice: "keep"}
+			initial := application.Model{ContextName: "prod", Notice: "keep"}
 			root := newModel(t.Context(), false, initial, nil)
+			initial = root.application
 			root, _ = updateRoot(root, keyPress(':'))
 
 			root, command := updateRoot(root, closeKey)

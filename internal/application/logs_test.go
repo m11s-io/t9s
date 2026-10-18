@@ -19,11 +19,7 @@ func TestServiceLogLifecycleReadsOneBatchAtATimeAndCloses(t *testing.T) {
 	stream := &fakeApplicationLogStream{batches: []domain.LogBatch{{Lines: []string{"one", "two"}}, {EOF: true}}}
 	reader := &fakeApplicationLogReader{stream: stream}
 	model := application.Model{Generation: 7}
-	model, _ = application.Update(model, application.SessionOpened{
-		Generation: 7,
-		Nodes:      &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return domain.NodeSet{}, nil }},
-		Logs:       reader,
-	})
+	model, _ = application.Update(model, application.SessionOpened{Generation: 7, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return domain.NodeSet{}, nil }}, LogReader: reader}})
 
 	request := domain.LogRequest{Node: "cp-1", Service: "etcd"}
 	model, effect := application.Update(model, application.OpenServiceLogs{Request: request})

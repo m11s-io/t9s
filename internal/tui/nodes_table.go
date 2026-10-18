@@ -17,7 +17,7 @@ var nodeColumns = []tableColumn[domain.NodeSnapshot]{
 	{header: "ROLE", minWidth: 7, value: func(node domain.NodeSnapshot) string { return fallback(string(node.Role)) }},
 	{header: "STAGE", minWidth: 11, value: func(node domain.NodeSnapshot) string { return fallback(node.Stage) }},
 	{header: "HEALTH", minWidth: 6, value: func(node domain.NodeSnapshot) string { return healthSymbol(node.Health) }},
-	{header: "SERVICES", minWidth: 8, value: func(node domain.NodeSnapshot) string { return node.Services.CompactString() }},
+	{header: "SERVICES", minWidth: 8, value: func(node domain.NodeSnapshot) string { return compactServiceSummary(node.Services) }},
 	{header: "K8S", minWidth: 7, value: func(node domain.NodeSnapshot) string { return fallback(string(node.Kubernetes)) }},
 	{header: "VERSION", minWidth: 8, value: func(node domain.NodeSnapshot) string { return fallback(node.Version) }},
 }

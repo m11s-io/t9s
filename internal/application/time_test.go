@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"github.com/m11s-io/t9s/internal/testkit"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestTimeCheckPermissionDeniedPreservesStatus(t *testing.T) {
 		return domain.TimeCheckResult{}, ports.ErrTimePermissionDenied
 	}}
 	m := application.Model{Generation: 1, Time: application.TimeState{Node: "cp-1", Status: application.Ready, Value: prior}}
-	m, _ = application.Update(m, application.SessionOpened{Generation: 1, Time: reader})
+	m, _ = application.Update(m, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{TimeReader: reader}})
 	m, e := application.Update(m, application.CheckTime{Server: "ntp.example.org"})
 	require.NotNil(t, e)
 	m, next := application.Update(m, e(t.Context(), application.Dependencies{}))
@@ -49,7 +50,7 @@ func TestTimeLateNodeResultIgnored(t *testing.T) {
 		return domain.TimeSnapshot{TimeSample: domain.TimeSample{Server: n}}, nil
 	}}
 	m := application.Model{Generation: 1}
-	m, _ = application.Update(m, application.SessionOpened{Generation: 1, Time: reader})
+	m, _ = application.Update(m, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{TimeReader: reader}})
 	m, e1 := application.Update(m, application.OpenTime{Node: "cp-1"})
 	require.NotNil(t, e1)
 	m, e2 := application.Update(m, application.OpenTime{Node: "cp-2"})
@@ -66,7 +67,7 @@ func TestTimeRefreshRejectsOlderSameNodeResult(t *testing.T) {
 		return domain.TimeSnapshot{TimeSample: domain.TimeSample{Server: "old.example.org"}}, nil
 	}}
 	m := application.Model{Generation: 7}
-	m, _ = application.Update(m, application.SessionOpened{Generation: 7, Time: reader})
+	m, _ = application.Update(m, application.SessionOpened{Generation: 7, Session: &testkit.FakeSession{TimeReader: reader}})
 	m, first := application.Update(m, application.OpenTime{Node: "cp-1"})
 	old := first(t.Context(), application.Dependencies{})
 	m, second := application.Update(m, application.RefreshTime{})
@@ -91,7 +92,7 @@ func TestTimeCheckAndStatusHaveSeparateRequestIdentities(t *testing.T) {
 		},
 	}
 	m := application.Model{Generation: 1}
-	m, _ = application.Update(m, application.SessionOpened{Generation: 1, Time: reader})
+	m, _ = application.Update(m, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{TimeReader: reader}})
 	m, read := application.Update(m, application.OpenTime{Node: "cp-1"})
 	m, check1 := application.Update(m, application.CheckTime{Server: "ntp.example.org"})
 	old := check1(t.Context(), application.Dependencies{})
@@ -125,7 +126,7 @@ func TestTimeRequestsCancelOnCloseAndContextChange(t *testing.T) {
 			},
 		}
 		m := application.Model{Generation: 1}
-		m, _ = application.Update(m, application.SessionOpened{Generation: 1, Time: reader})
+		m, _ = application.Update(m, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{TimeReader: reader}})
 		m, read := application.Update(m, application.OpenTime{Node: "cp-1"})
 		m, check := application.Update(m, application.CheckTime{Server: "ntp.example.org"})
 		results := make(chan application.Message, 2)
@@ -151,7 +152,7 @@ func TestTimePartialAndCanceledResultsAreNotReady(t *testing.T) {
 			return domain.TimeSnapshot{SyncKnown: true, Synced: true, TimeSample: domain.TimeSample{Problems: []string{"measurement unavailable"}}}, readErr
 		}}
 		m := application.Model{Generation: 1}
-		m, _ = application.Update(m, application.SessionOpened{Generation: 1, Time: reader})
+		m, _ = application.Update(m, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{TimeReader: reader}})
 		m, e := application.Update(m, application.OpenTime{Node: "cp-1"})
 		m, _ = application.Update(m, e(t.Context(), application.Dependencies{}))
 		assert.NotEqual(t, application.Ready, m.Time.Status)

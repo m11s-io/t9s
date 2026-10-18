@@ -28,7 +28,7 @@ func etcdTestModel(t *testing.T, writesEnabled bool, operations *testkit.FakeEtc
 			{Hostname: "cp-2", MemberID: 2, StatusKnown: true},
 		}},
 	})
-	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, EtcdOperations: operations})
+	appModel, _ = application.Update(appModel, application.SessionOpened{Generation: appModel.Generation, Session: &testkit.FakeSession{EtcdOps: operations}})
 	runner := application.NewRunner(application.Dependencies{})
 	root := newModel(t.Context(), false, appModel, runner)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})

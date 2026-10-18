@@ -39,7 +39,6 @@ type FakeNodeController struct {
 	UpgradeFunc             func(ctx context.Context, target, image string) error
 	UpgradeStreamFunc       func(ctx context.Context, target, image string) ports.UpgradeStream
 	CurrentInstallImageFunc func(ctx context.Context, target string) (string, error)
-	UncordonFunc            func(ctx context.Context, target string) error
 }
 
 func (f *FakeNodeController) Reboot(ctx context.Context, target string, mode ports.RebootMode) error {
@@ -85,13 +84,6 @@ func (f *FakeNodeController) UpgradeStream(ctx context.Context, target, image st
 
 func (f *FakeNodeController) CurrentInstallImage(ctx context.Context, target string) (string, error) {
 	return f.CurrentInstallImageFunc(ctx, target)
-}
-
-func (f *FakeNodeController) Uncordon(ctx context.Context, target string) error {
-	if f.UncordonFunc != nil {
-		return f.UncordonFunc(ctx, target)
-	}
-	return nil
 }
 
 type FakeServiceController struct {

@@ -25,6 +25,14 @@ The suggestion preserves the running node's Image Factory repository details: fa
 
 For Talos versions supporting `LifecycleService`, the notice area streams image pull, install, Kubernetes drain, reboot, readiness wait, and uncordon. Byte progress is shown when totals are available. Success requires lifecycle exit code zero and completion of cleanup; interrupted streams and non-zero exits fail. Nodes outside the lifecycle API range use the legacy upgrade RPC.
 
+If the image was applied but readiness or scheduling cleanup remains incomplete,
+t9s keeps an `Applied — recovery warning` notice. Check the node's readiness and
+scheduling state manually before resuming workloads. The upgrade attempts to undo
+only a cordon it created; an existing operator cordon is preserved. Once the
+upgrade attempt finishes, refreshing the node view does not retry uncordon or
+clear the warning. Switching Talos context or starting another upgrade replaces
+the notice.
+
 A parseable target tag more than one minor ahead receives an advisory warning that intermediate Talos minor releases are skipped. Talos remains the authority for compatibility checks. This action upgrades Talos only; Kubernetes control-plane upgrades are separate.
 
 ## Reset/wipe a Talos node

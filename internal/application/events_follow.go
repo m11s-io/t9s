@@ -41,9 +41,6 @@ func updateEventFollow(model Model, message Message) (Model, Effect, bool) {
 			return next, effect, true
 		}
 		model.eventGeneration++
-		followCtx, cancel := context.WithCancel(context.Background())
-		model.eventCancel = cancel
-		model.eventRequestGeneration++ // invalidate snapshot loads already in flight
 		model.Events.Following = true
 		model.Events.FollowAttempted = true
 		model.Events.Err = ""
@@ -55,17 +52,9 @@ func updateEventFollow(model Model, message Message) (Model, Effect, bool) {
 		generation, streamGeneration, reader := model.Generation, model.eventGeneration, model.eventReader
 		return model, func(ctx context.Context, _ Dependencies) Message {
 			if reader == nil {
-				cancel()
 				return eventFollowOpened{Generation: generation, StreamGeneration: streamGeneration, Err: errors.New("event reader unavailable")}
 			}
-			stop := context.AfterFunc(ctx, cancel)
-			stream, err := reader.Open(followCtx)
-			if err != nil || stream == nil {
-				stop()
-				cancel()
-			} else {
-				stream = &boundEventStream{EventStream: stream, cancel: cancel, stop: stop}
-			}
+			stream, err := reader.Open(ctx)
 			return eventFollowOpened{Generation: generation, StreamGeneration: streamGeneration, Stream: stream, Err: err}
 		}, true
 	case StopEventFollow:
@@ -77,10 +66,7 @@ func updateEventFollow(model Model, message Message) (Model, Effect, bool) {
 		}
 		if msg.Err != nil || msg.Stream == nil {
 			model.Events.Following = false
-			if model.eventCancel != nil {
-				model.eventCancel()
-				model.eventCancel = nil
-			}
+
 			model.Events.Err = "event stream unavailable"
 			model.Events.Status = Partial
 			return model, closeEventStream(msg.Stream), true
@@ -113,10 +99,7 @@ func updateEventFollow(model Model, message Message) (Model, Effect, bool) {
 			model.Events.Status = Partial
 		}
 		if msg.Err != nil {
-			if model.eventCancel != nil {
-				model.eventCancel()
-				model.eventCancel = nil
-			}
+
 			model.Events.Following = false
 			if !errors.Is(msg.Err, io.EOF) {
 				model.Events.Err = "event stream unavailable"
@@ -131,10 +114,7 @@ func updateEventFollow(model Model, message Message) (Model, Effect, bool) {
 	return model, nil, false
 }
 func stopEventFollow(model Model) (Model, Effect) {
-	if model.eventCancel != nil {
-		model.eventCancel()
-		model.eventCancel = nil
-	}
+
 	stream := model.eventStream
 	model.eventStream = nil
 	model.eventGeneration++
@@ -152,36 +132,4 @@ func readEventFollow(stream ports.EventStream, generation, streamGeneration uint
 		batch, err := stream.Next(ctx)
 		return eventFollowBatch{Generation: generation, StreamGeneration: streamGeneration, Batch: batch, Err: err}
 	}
-}
-
-// Bind both call and session lifetimes, so context switching/quit cancels RPCs
-// even while an Open result is still waiting to be delivered to the reducer.
-func (r boundEventReader) Open(callCtx context.Context) (ports.EventStream, error) {
-	ctx, cancel := context.WithCancel(r.ctx)
-	stop := context.AfterFunc(callCtx, cancel)
-	stream, err := r.EventReader.Open(ctx)
-	if err != nil {
-		stop()
-		cancel()
-		return nil, err
-	}
-	return &boundEventStream{EventStream: stream, cancel: cancel, stop: stop}, nil
-}
-
-type boundEventStream struct {
-	ports.EventStream
-	cancel context.CancelFunc
-	stop   func() bool
-}
-
-func (s *boundEventStream) Close() error { s.stop(); s.cancel(); return s.EventStream.Close() }
-
-// Snapshot loading also advances initial etcd/Kubernetes hydration. Ignoring
-// superseded event rows must not drop that unrelated continuation.
-func continueAfterEventSnapshot(model Model) Effect {
-	nodes := controlPlaneHostnames(model.Nodes.Value.Nodes)
-	if len(nodes) == 0 {
-		return loadKubernetesNodesIfAvailable(model)
-	}
-	return loadEtcd(model.etcdReader, nodes, model.Generation)
 }

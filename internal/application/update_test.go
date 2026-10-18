@@ -20,7 +20,6 @@ import (
 func TestUpdateLoadsNodesForCurrentGeneration(t *testing.T) {
 	model, effect := application.NewModel("prod")
 	require.NotNil(t, effect)
-	assert.Equal(t, application.RouteNodes, model.Route)
 	assert.Equal(t, application.Loading, model.Nodes.Status)
 
 	model, _ = application.Update(model, application.NodesLoaded{
@@ -102,12 +101,9 @@ func TestUpdateIgnoresSessionFromOlderGeneration(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.Generation = 2
 
-	got, effect := application.Update(model, application.SessionOpened{
-		Generation: 1,
-		Nodes: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-			return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "old"}}}, nil
-		}},
-	})
+	got, effect := application.Update(model, application.SessionOpened{Generation: 1, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "old"}}}, nil
+	}}}})
 
 	assert.Equal(t, model, got)
 	assert.Nil(t, effect)
@@ -121,10 +117,7 @@ func TestUpdateSessionOpenedSchedulesNodeReadWithoutCallingIt(t *testing.T) {
 	}}
 	model, _ := application.NewModel("prod")
 
-	got, effect := application.Update(model, application.SessionOpened{
-		Generation: model.Generation,
-		Nodes:      reader,
-	})
+	got, effect := application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeReader: reader}})
 
 	assert.Equal(t, model.Nodes, got.Nodes)
 	assert.Equal(t, model.ContextName, got.ContextName)
@@ -144,13 +137,9 @@ func TestRefreshServicesLoadsANewerSnapshot(t *testing.T) {
 		Status: application.Ready,
 		Value:  domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "old-service"}}},
 	}
-	model, _ = application.Update(model, application.SessionOpened{
-		Generation: model.Generation,
-		Nodes: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-			return domain.NodeSet{}, nil
-		}},
-		Services: reader,
-	})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{}, nil
+	}}, ServiceReader: reader}})
 
 	model, effect := application.Update(model, application.RefreshServices{})
 
@@ -162,7 +151,7 @@ func TestRefreshServicesLoadsANewerSnapshot(t *testing.T) {
 	message := application.NewRunner(application.Dependencies{}).Run(context.Background(), effect)
 	model, effect = application.Update(model, message)
 
-	assert.NotNil(t, effect, "ServicesLoaded now chains into loading events")
+	assert.Nil(t, effect, "service completion must not restart independent event loading")
 	assert.Equal(t, application.Ready, model.Services.Status)
 	assert.Equal(t, "etcd", model.Services.Value.Services[0].Name)
 	assert.Equal(t, int32(1), calls.Load())
@@ -179,10 +168,7 @@ func TestRefreshNodesLoadsANewerSnapshot(t *testing.T) {
 		Status: application.Ready,
 		Value:  domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "old", Name: "old-node"}}},
 	}
-	model, _ = application.Update(model, application.SessionOpened{
-		Generation: model.Generation,
-		Nodes:      reader,
-	})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeReader: reader}})
 
 	model, effect := application.Update(model, application.RefreshNodes{})
 
@@ -211,7 +197,7 @@ func TestServicesLoadedWithNodeProblemsIsPartial(t *testing.T) {
 		Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "services unavailable"}},
 	}})
 
-	assert.NotNil(t, effect, "ServicesLoaded now chains into loading events")
+	assert.Nil(t, effect, "service completion must not restart independent event loading")
 	assert.Equal(t, application.Partial, updated.Services.Status)
 	assert.Equal(t, application.Ready, updated.Nodes.Status)
 	assert.Len(t, updated.Services.Value.Services, 1)
@@ -285,10 +271,9 @@ func TestRunnerLoadsCatalogBeforeOpeningSelectedSession(t *testing.T) {
 	assert.Equal(t, int32(1), openCalls.Load())
 
 	model, effect = application.Update(model, sessionMessage)
-	nodesMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, nodesMessage)
-	servicesMessage := runner.Run(context.Background(), effect)
-	model, _ = application.Update(model, servicesMessage)
+	for effect != nil {
+		model, effect = runUpdate(t, runner, model, effect)
+	}
 
 	assert.Equal(t, application.Ready, model.Nodes.Status)
 	assert.Equal(t, "prod-cp-1", model.Nodes.Value.Nodes[0].Name)
@@ -610,7 +595,22 @@ func runUpdate(t *testing.T, runner *application.Runner, model application.Model
 	t.Helper()
 	require.NotNil(t, effect)
 
-	return application.Update(model, runner.Run(context.Background(), effect))
+	message := runner.Run(t.Context(), effect)
+	if effects, ok := message.(application.EffectBatch); ok {
+		var followups application.EffectBatch
+		for _, child := range effects {
+			var next application.Effect
+			model, next = runUpdate(t, runner, model, child)
+			if next != nil {
+				followups = append(followups, next)
+			}
+		}
+		if len(followups) == 0 {
+			return model, nil
+		}
+		return model, func(context.Context, application.Dependencies) application.Message { return followups }
+	}
+	return application.Update(model, message)
 }
 
 func waitForSignal(t *testing.T, signal <-chan struct{}, description string) {
@@ -653,22 +653,16 @@ func waitForContext(t *testing.T, contexts <-chan context.Context) context.Conte
 	}
 }
 
-func TestServicesLoadedChainsIntoLoadingEvents(t *testing.T) {
-	model := application.Model{Generation: 1}
-	model = withEventReader(model, &testkit.FakeEventReader{
-		ListFunc: func(context.Context) (domain.EventSet, error) {
-			return domain.EventSet{Events: []domain.EventSnapshot{{Node: "cp-1", Kind: "Task", Message: "install START"}}}, nil
-		},
-	})
-
+func TestServicesLoadedDoesNotRestartEvents(t *testing.T) {
+	model := withEventReader(application.Model{Generation: 1}, &testkit.FakeEventReader{ListFunc: func(context.Context) (domain.EventSet, error) {
+		t.Fatal("service completion must not call the event reader")
+		return domain.EventSet{}, nil
+	}})
+	before := model.Events
 	model, effect := application.Update(model, application.ServicesLoaded{Generation: 1, Services: domain.ServiceSet{}})
-	require.NotNil(t, effect)
-	message := effect(t.Context(), application.Dependencies{})
-
-	loaded, ok := message.(application.EventsLoaded)
-	require.True(t, ok)
-	assert.Equal(t, uint64(1), loaded.Generation)
-	assert.Len(t, loaded.Events.Events, 1)
+	assert.Nil(t, effect)
+	assert.Equal(t, before, model.Events)
+	assert.Equal(t, application.Ready, model.Services.Status)
 }
 
 func TestRefreshEventsReloadsFromTheCurrentReader(t *testing.T) {
@@ -713,7 +707,7 @@ func TestSelectContextResetsEvents(t *testing.T) {
 // SessionOpened message, since application.Model has no exported setter and
 // this test file is package application_test (no access to unexported fields).
 func withEventReader(model application.Model, reader ports.EventReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Events: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{EventReader: reader}})
 	return model
 }
 
@@ -730,7 +724,7 @@ func TestControlPlaneHostnamesFiltersToControlRoleWithAddressFallback(t *testing
 	assert.Equal(t, []string{"cp-1", "10.0.0.5"}, hostnames)
 }
 
-func TestEventsLoadedChainsIntoLoadingEtcdWhenControlPlaneNodesExist(t *testing.T) {
+func TestNodesLoadedSchedulesEtcdWhenControlPlaneNodesExist(t *testing.T) {
 	model := application.Model{Generation: 1}
 	model = withNodesAndEtcdReader(model, domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{Name: "cp-1", Role: domain.NodeRoleControl},
@@ -742,7 +736,7 @@ func TestEventsLoadedChainsIntoLoadingEtcdWhenControlPlaneNodesExist(t *testing.
 		},
 	})
 
-	model, effect := application.Update(model, application.EventsLoaded{Generation: 1, Events: domain.EventSet{}})
+	model, effect := application.Update(model, application.NodesLoaded{Generation: 1, Nodes: model.Nodes.Value})
 	require.NotNil(t, effect)
 	message := effect(t.Context(), application.Dependencies{})
 
@@ -818,7 +812,7 @@ func TestSelectContextResetsEtcd(t *testing.T) {
 // technique withEventReader already uses for eventReader).
 func withNodesAndEtcdReader(model application.Model, nodes domain.NodeSet, reader ports.EtcdReader) application.Model {
 	model, _ = application.Update(model, application.NodesLoaded{Generation: model.Generation, Nodes: nodes})
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Etcd: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{EtcdReader: reader}})
 	return model
 }
 
@@ -901,7 +895,7 @@ func TestSelectContextResetsProcesses(t *testing.T) {
 // this test file is package application_test (no access to unexported
 // fields) — the same technique withEventReader already uses for eventReader.
 func withProcessReader(model application.Model, reader ports.ProcessReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Processes: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ProcessReader: reader}})
 	return model
 }
 
@@ -984,7 +978,7 @@ func TestSelectContextResetsDisks(t *testing.T) {
 // this test file is package application_test (no access to unexported
 // fields) — the same technique withProcessReader already uses for processReader.
 func withDiskReader(model application.Model, reader ports.DiskReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Disks: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{DiskReader: reader}})
 	return model
 }
 
@@ -1013,7 +1007,7 @@ func TestOpenNetworkLoadsTheRequestedNode(t *testing.T) {
 // this test file is package application_test (no access to unexported
 // fields) — the same technique withDiskReader already uses for diskReader.
 func withNetworkReader(model application.Model, reader ports.NetworkReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Network: reader})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NetworkReader: reader}})
 	return model
 }
 
@@ -1090,7 +1084,7 @@ func TestOpenResourceBrowserWithoutKindLoadsKindsOnly(t *testing.T) {
 }
 
 func withResourceReaders(model application.Model, kinds ports.ResourceKindReader, instances ports.ResourceInstanceReader) application.Model {
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, ResourceKinds: kinds, Resources: instances})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{ResourceKindReader: kinds, ResourceInstanceReader: instances}})
 	return model
 }
 
@@ -1166,7 +1160,7 @@ func TestSelectContextResetsResourceBrowser(t *testing.T) {
 	assert.Equal(t, application.ResourceBrowserState{}, model.ResourceBrowser)
 }
 
-func TestSessionOpenResolvesKubernetesAndFetchesAfterEtcdLoads(t *testing.T) {
+func TestSessionOpenSchedulesIndependentSnapshotsAndCorrelatesNodes(t *testing.T) {
 	catalog := &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
 		return []domain.ClusterContext{{Name: "prod", Current: true}}, nil
 	}}
@@ -1193,41 +1187,25 @@ func TestSessionOpenResolvesKubernetesAndFetchesAfterEtcdLoads(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, runner.Close()) })
 
 	model, effect := application.NewModel("prod")
-	contextsMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, contextsMessage)
-	sessionMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, sessionMessage)
-	nodesMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, nodesMessage)
-	servicesMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, servicesMessage)
-	eventsMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, eventsMessage)
-	etcdMessage := runner.Run(context.Background(), effect)
-	model, effect = application.Update(model, etcdMessage)
-	require.NotNil(t, effect)
-	kubernetesMessage := runner.Run(context.Background(), effect)
-	model, _ = application.Update(model, kubernetesMessage)
+	for effect != nil {
+		model, effect = runUpdate(t, runner, model, effect)
+	}
 
 	assert.Equal(t, application.Ready, model.Kubernetes.Status)
 	assert.Equal(t, "v1.31.0", model.Kubernetes.Nodes["cp-1"].KubeletVersion)
-	assert.NotNil(t, model.Nodes.Value.Nodes[0].KubernetesNode, "the eager chain must also have merged correlation onto the node")
+	assert.NotNil(t, model.Nodes.Value.Nodes[0].KubernetesNode, "independent snapshot completions must merge correlation onto the node")
 }
 
-func TestEventsLoadedFetchesKubernetesNodesWhenNoControlPlaneNodesExist(t *testing.T) {
-	model := application.Model{Generation: 1}
-	model = withKubernetesReader(model, &testkit.FakeKubernetesNodeReader{
-		ListFunc: func(context.Context) (map[string]domain.KubernetesNodeSnapshot, error) {
-			return map[string]domain.KubernetesNodeSnapshot{}, nil
-		},
-	})
-
-	_, effect := application.Update(model, application.EventsLoaded{Generation: 1, Events: domain.EventSet{}})
-
-	require.NotNil(t, effect)
-	message := effect(t.Context(), application.Dependencies{})
-	_, ok := message.(application.KubernetesNodesLoaded)
-	assert.True(t, ok)
+func TestEventsLoadedDoesNotRestartKubernetesNodes(t *testing.T) {
+	model := withKubernetesReader(application.Model{Generation: 1}, &testkit.FakeKubernetesNodeReader{ListFunc: func(context.Context) (map[string]domain.KubernetesNodeSnapshot, error) {
+		t.Fatal("event completion must not call the Kubernetes reader")
+		return nil, nil
+	}})
+	before := model.Kubernetes
+	model, effect := application.Update(model, application.EventsLoaded{Generation: 1, Events: domain.EventSet{}})
+	assert.Nil(t, effect)
+	assert.Equal(t, before, model.Kubernetes)
+	assert.Equal(t, application.Ready, model.Events.Status)
 }
 
 func TestKubernetesNodesFailedSetsFailedStatus(t *testing.T) {
@@ -1533,8 +1511,9 @@ func TestConfirmPendingActionUnblocksAfterQuorumRecovers(t *testing.T) {
 		{Hostname: "cp-5", StatusKnown: true},
 	}}}
 
-	confirmed, _ := application.Update(opened, application.ConfirmPendingAction{})
+	confirmed, effect := application.Update(opened, application.ConfirmPendingAction{})
 
+	assert.NotNil(t, effect)
 	assert.Nil(t, confirmed.PendingAction, "a prompt that became quorum-safe must be allowed")
 	assert.Equal(t, 2, confirmed.ActionTotal)
 }
@@ -1606,25 +1585,27 @@ func TestCancelPendingActionClearsWithoutEffect(t *testing.T) {
 	assert.Nil(t, effect)
 }
 
-func TestConfirmPendingActionClearsPendingLeavingEffectsToCaller(t *testing.T) {
+func TestConfirmPendingActionClearsPendingAndReturnsExecutionEffect(t *testing.T) {
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model.PendingAction = &application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}}
 
 	got, effect := application.Update(model, application.ConfirmPendingAction{})
 
 	assert.Nil(t, got.PendingAction)
-	assert.Nil(t, effect)
+	assert.NotNil(t, effect)
 }
 
 func TestConfirmPendingActionSetsActionTotalFromTargetCount(t *testing.T) {
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model.PendingAction = &application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2", "worker-1"}}
 
 	got, effect := application.Update(model, application.ConfirmPendingAction{})
 
 	assert.Nil(t, got.PendingAction)
 	assert.Equal(t, 3, got.ActionTotal)
-	assert.Nil(t, effect)
+	assert.NotNil(t, effect)
 }
 
 func TestSelectContextClearsPendingActionAndResults(t *testing.T) {
@@ -1755,13 +1736,14 @@ func TestRequestServiceActionNoWarningForEtcdStart(t *testing.T) {
 
 func TestConfirmPendingServiceActionSetsActionTotalToOne(t *testing.T) {
 	model, _ := application.NewModel("prod")
+	model.WritesEnabled = true
 	model.PendingServiceAction = &application.PendingServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "kubelet"}
 
 	got, effect := application.Update(model, application.ConfirmPendingAction{})
 
 	assert.Nil(t, got.PendingServiceAction)
 	assert.Equal(t, 1, got.ActionTotal)
-	assert.Nil(t, effect)
+	assert.NotNil(t, effect)
 }
 
 func TestCancelPendingActionClearsPendingServiceAction(t *testing.T) {
@@ -1783,13 +1765,18 @@ func TestRequestUpgradePromptFetchesCurrentImage(t *testing.T) {
 	}
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 
 	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1"})
 
 	require.NotNil(t, effect)
 	message := effect(t.Context(), application.Dependencies{})
-	assert.Equal(t, application.UpgradePromptOpened{Target: "cp-1", Image: "ghcr.io/siderolabs/installer:v1.13.2", Generation: model.Generation}, message)
+	opened, ok := message.(application.UpgradePromptOpened)
+	require.True(t, ok)
+	assert.Equal(t, model.Generation, opened.Generation)
+	assert.Equal(t, "cp-1", opened.Target)
+	assert.Equal(t, "ghcr.io/siderolabs/installer:v1.13.2", opened.Image)
+	assert.Positive(t, opened.RequestID)
 }
 
 func TestRequestUpgradePromptOpensBlankOnFetchError(t *testing.T) {
@@ -1800,12 +1787,17 @@ func TestRequestUpgradePromptOpensBlankOnFetchError(t *testing.T) {
 	}
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 
 	_, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1"})
 
 	message := effect(t.Context(), application.Dependencies{})
-	assert.Equal(t, application.UpgradePromptOpened{Target: "cp-1", Image: "", Generation: model.Generation}, message, "a prefill fetch failure must still open the prompt, just blank")
+	opened, ok := message.(application.UpgradePromptOpened)
+	require.True(t, ok)
+	assert.Equal(t, model.Generation, opened.Generation)
+	assert.Equal(t, "cp-1", opened.Target)
+	assert.Equal(t, "", opened.Image)
+	assert.Positive(t, opened.RequestID)
 }
 
 func TestRequestUpgradePromptIsInertWhenWritesDisabled(t *testing.T) {
@@ -1816,10 +1808,57 @@ func TestRequestUpgradePromptIsInertWhenWritesDisabled(t *testing.T) {
 	}
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = false
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: controller})
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: controller}})
 
 	got, effect := application.Update(model, application.RequestUpgradePrompt{Target: "cp-1"})
 
 	assert.Nil(t, effect, "RequestUpgradePrompt must be inert at the reducer level when WritesEnabled is false, regardless of what the TUI layer sent")
 	assert.Equal(t, model, got)
+}
+
+func TestSessionStartupSchedulesSnapshotsIndependentlyOfFailures(t *testing.T) {
+	for _, failed := range []string{"nodes", "services", "events", "kubernetes"} {
+		t.Run(failed, func(t *testing.T) {
+			failure := func(key string) error {
+				if failed == key {
+					return assert.AnError
+				}
+				return nil
+			}
+			session := &testkit.FakeSession{
+				NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+					return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}, failure("nodes")
+				}},
+				ServiceReader: &testkit.FakeServiceReader{ListFunc: func(context.Context) (domain.ServiceSet, error) {
+					return domain.ServiceSet{Services: []domain.ServiceSnapshot{{Name: "kubelet"}}}, failure("services")
+				}},
+				EventReader: &testkit.FakeEventReader{ListFunc: func(context.Context) (domain.EventSet, error) {
+					return domain.EventSet{Events: []domain.EventSnapshot{{Message: "ready"}}}, failure("events")
+				}},
+			}
+			kubernetes := &testkit.FakeKubernetesNodeReader{ListFunc: func(context.Context) (map[string]domain.KubernetesNodeSnapshot, error) {
+				return map[string]domain.KubernetesNodeSnapshot{"cp-1": {KubeletVersion: "v1.31.0"}}, failure("kubernetes")
+			}}
+			model, effect := application.Update(application.Model{Generation: 1}, application.SessionOpened{Generation: 1, Session: session, KubernetesNodes: kubernetes})
+			require.NotNil(t, effect)
+			effects, ok := effect(t.Context(), application.Dependencies{}).(application.EffectBatch)
+			require.True(t, ok)
+			require.Len(t, effects, 4, "all snapshot requests must be scheduled before any result arrives")
+			// Complete in reverse order so later readers cannot depend on node results.
+			for index := len(effects) - 1; index >= 0; index-- {
+				message := effects[index](t.Context(), application.Dependencies{})
+				var next application.Effect
+				model, next = application.Update(model, message)
+				assert.Nil(t, next, "a snapshot completion must not restart the other readers")
+			}
+			statuses := map[string]application.LoadStatus{"nodes": model.Nodes.Status, "services": model.Services.Status, "events": model.Events.Status, "kubernetes": model.Kubernetes.Status}
+			for key, status := range statuses {
+				if key == failed {
+					assert.Equal(t, application.Failed, status, key)
+				} else {
+					assert.Equal(t, application.Ready, status, key)
+				}
+			}
+		})
+	}
 }

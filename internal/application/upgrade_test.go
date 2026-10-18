@@ -39,9 +39,9 @@ func TestUpgradeBridgeStreamsProgressAndRefreshesNodesOnSuccess(t *testing.T) {
 	close(results)
 	var nodeLoads int
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Nodes: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { nodeLoads++; return domain.NodeSet{}, nil }}, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { nodeLoads++; return domain.NodeSet{}, nil }}, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 		return &controlledUpgradeStream{results: results}
-	}}})
+	}}}})
 
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
 	start, ok := started.(application.UpgradeStarted)
@@ -75,7 +75,7 @@ func TestUpgradeAppliedWithRecoveryWarningCompletesWithoutUpgradeError(t *testin
 	model, _ := application.NewModel("prod")
 	model.Upgrade = application.UpgradeState{Active: true, Target: "cp-1"}
 
-	got, effect := application.Update(model, application.UpgradeAppliedWithRecoveryWarning{Generation: model.Generation, Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."})
+	got, effect := application.Update(model, application.UpgradeAppliedWithRecoveryWarning{Generation: model.Generation, Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually."})
 
 	assert.False(t, got.Upgrade.Active)
 	assert.Empty(t, got.Upgrade.Err)
@@ -84,53 +84,24 @@ func TestUpgradeAppliedWithRecoveryWarningCompletesWithoutUpgradeError(t *testin
 	assert.Nil(t, effect)
 }
 
-func TestKubernetesNodesLoadedRetriesUncordonWhenPendingWarningTargetBecomesReady(t *testing.T) {
+func TestKubernetesRefreshPreservesRecoveryWarningWithoutSchedulingMutation(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."}
-	var uncordonTarget string
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UncordonFunc: func(_ context.Context, target string) error {
-		uncordonTarget = target
-		return nil
-	}}})
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; check node recovery and scheduling manually."}
 
 	got, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
 		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}},
 	}})
 
-	require.NotNil(t, effect)
-	message := effect(t.Context(), application.Dependencies{})
-	assert.Equal(t, "cp-1", uncordonTarget)
-	assert.Equal(t, application.RecoveryUncordonSucceeded{Generation: model.Generation, Target: "cp-1"}, message)
-
-	got, _ = application.Update(got, message)
-	assert.Empty(t, got.Upgrade.Warning)
-}
-
-func TestKubernetesNodesLoadedLeavesWarningUnchangedWhenUncordonFails(t *testing.T) {
-	originalWarning := "Talos upgrade applied; node recovery is pending — t9s will retry automatically."
-	model, _ := application.NewModel("prod")
-	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: originalWarning}
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UncordonFunc: func(context.Context, string) error {
-		return errors.New("api unavailable")
-	}}})
-
-	_, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
-		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}},
-	}})
-
-	require.NotNil(t, effect)
-	message := effect(t.Context(), application.Dependencies{})
-	assert.Equal(t, application.RecoveryUncordonFailed{Generation: model.Generation, Target: "cp-1"}, message)
-	got, _ := application.Update(model, message)
-	assert.Equal(t, originalWarning, got.Upgrade.Warning, "a transient failure must not overwrite the retry-in-progress warning; the next heartbeat tick tries again")
+	assert.Nil(t, effect, "a display refresh must not schedule a write")
+	assert.Equal(t, domain.KubernetesReady, got.Nodes.Value.Nodes[0].Kubernetes)
+	assert.Equal(t, model.Upgrade.Warning, got.Upgrade.Warning)
 }
 
 func TestKubernetesNodesLoadedDoesNotRetryUncordonWhileStillNotReady(t *testing.T) {
 	model, _ := application.NewModel("prod")
 	model.Nodes = application.NodeState{Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "cp-1"}}}}
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — t9s will retry automatically."}
+	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually."}
 
 	_, effect := application.Update(model, application.KubernetesNodesLoaded{Generation: model.Generation, Nodes: map[string]domain.KubernetesNodeSnapshot{
 		"cp-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "False"}}},
@@ -150,26 +121,13 @@ func TestKubernetesNodesLoadedDoesNothingWithoutPendingWarning(t *testing.T) {
 	assert.Nil(t, effect)
 }
 
-func TestRecoveryUncordonMessagesIgnoreStaleGenerationOrTarget(t *testing.T) {
-	model, _ := application.NewModel("prod")
-	model.Upgrade = application.UpgradeState{Target: "cp-1", Warning: "pending recovery"}
-
-	got, effect := application.Update(model, application.RecoveryUncordonSucceeded{Generation: model.Generation - 1, Target: "cp-1"})
-	assert.Equal(t, "pending recovery", got.Upgrade.Warning)
-	assert.Nil(t, effect)
-
-	got, effect = application.Update(model, application.RecoveryUncordonSucceeded{Generation: model.Generation, Target: "cp-2"})
-	assert.Equal(t, "pending recovery", got.Upgrade.Warning)
-	assert.Nil(t, effect)
-}
-
 func TestUpgradeBridgeFailsWhenStreamClosesWithoutTerminalResult(t *testing.T) {
 	results := make(chan ports.UpgradeResult)
 	close(results)
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 		return &controlledUpgradeStream{results: results}
-	}}})
+	}}}})
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
 	model, next := application.Update(model, started)
 	failed := next(t.Context(), application.Dependencies{})
@@ -192,9 +150,9 @@ func TestUpgradeBridgeGatesCompetingWriteRequestsWhileActive(t *testing.T) {
 	results := make(chan ports.UpgradeResult)
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 		return &controlledUpgradeStream{results: results}
-	}}})
+	}}}})
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](t.Context(), application.Dependencies{})
 	model, _ = application.Update(model, started)
 	for _, message := range []application.Message{application.RequestAction{Kind: application.ActionReboot, Targets: []string{"cp-2"}}, application.RequestServiceAction{Kind: application.ServiceActionRestart, Node: "cp-2", Service: "kubelet"}, application.RequestUpgradePrompt{Target: "cp-2"}} {
@@ -212,9 +170,9 @@ func TestUpgradeBridgeCancellationFailsAndCancelsControllerStream(t *testing.T) 
 	results := make(chan ports.UpgradeResult)
 	canceled := make(chan struct{})
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 		return &controlledUpgradeStream{results: results, cancel: func() { close(canceled); close(results) }}
-	}}})
+	}}}})
 	ctx, cancel := context.WithCancel(t.Context())
 	started := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}, Image: "image:v1.13.3"})[0](ctx, application.Dependencies{})
 	model, next := application.Update(model, started)
@@ -235,10 +193,10 @@ func TestUpgradeBridgeCancellationFailsAndCancelsControllerStream(t *testing.T) 
 func TestUpgradeBridgeRejectsBlankImageWithoutCallingController(t *testing.T) {
 	called := false
 	model, _ := application.NewModel("prod")
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 		called = true
 		return nil
-	}}})
+	}}}})
 
 	effects := application.BuildActionEffects(model, application.PendingAction{Kind: application.ActionUpgrade, Targets: []string{"cp-1"}})
 	require.Len(t, effects, 1)
@@ -257,14 +215,14 @@ func TestUpgradeBridgeReturnsStartedBeforeBlockingStreamConstruction(t *testing.
 	defer close(release)
 	model, _ := application.NewModel("prod")
 	model.WritesEnabled = true
-	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+	model, _ = application.Update(model, application.SessionOpened{Generation: model.Generation, Session: &testkit.FakeSession{NodeController: &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 		close(entered)
 		<-release
 		results := make(chan ports.UpgradeResult, 1)
 		results <- ports.UpgradeResult{Done: true}
 		close(results)
 		return &controlledUpgradeStream{results: results}
-	}}})
+	}}}})
 
 	returned := make(chan application.Message, 1)
 	go func() {
