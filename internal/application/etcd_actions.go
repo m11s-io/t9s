@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -62,7 +63,15 @@ func (s *Session) PrepareEtcdAction(ctx context.Context, request EtcdActionReque
 		return nil, err
 	}
 	node, ok := resolveNodeTarget(nodes.Nodes, request.Node)
-	if !ok || node.Role != domain.NodeRoleControl {
+	if !ok {
+		if request.Kind != EtcdActionRemoveMember {
+			return nil, fmt.Errorf("etcd action node %q does not resolve to one control-plane node", request.Node)
+		}
+		// A force-removed member may be absent from node discovery. Its etcd
+		// identity is resolved below, independently of the live RPC gateway.
+		node = domain.NodeSnapshot{Name: request.Node, Role: domain.NodeRoleControl}
+	}
+	if node.Role != domain.NodeRoleControl {
 		return nil, fmt.Errorf("etcd action node %q does not resolve to one control-plane node", request.Node)
 	}
 	request.Node = node.Target()
@@ -77,7 +86,11 @@ func (s *Session) PrepareEtcdAction(ctx context.Context, request EtcdActionReque
 		request.MemberID = facts.memberID
 		request.MemberHostname = facts.memberHost
 	}
-	assessment := Assessment{Targets: []string{request.Node}, Warning: facts.warning, Blocked: facts.blocked, SnapshotPath: request.SnapshotPath}
+	target := request.Node
+	if facts.hasMember {
+		target = facts.memberHost
+	}
+	assessment := Assessment{Targets: []string{target}, Warning: facts.warning, Blocked: facts.blocked, SnapshotPath: request.SnapshotPath}
 	plan := newPreparedEtcdAction(s, request, assessment)
 	plan.state.etcdFacts = &facts
 	return &plan, nil
@@ -91,15 +104,7 @@ func (s *Session) ExecuteEtcdAction(ctx context.Context, plan *PreparedEtcdActio
 		return MutationResult{}, ErrInvalidPlan
 	}
 	request := *plan.state.etcdRequest
-	budget := controlOperationTimeout
-	switch request.Kind {
-	case EtcdActionSnapshot:
-		budget = snapshotTimeout
-	case EtcdActionRemoveMember, EtcdActionLeaveCluster:
-		budget = snapshotTimeout + controlOperationTimeout + 2*unaryReadTimeout
-	case EtcdActionDefragment:
-		budget = defragmentTimeout
-	}
+	budget := etcdActionBudget(request.Kind)
 	operationCtx, release, err := s.admit(ctx, plan.state, confirmation, budget)
 	if err != nil {
 		return MutationResult{}, err
@@ -187,6 +192,9 @@ func (s *Session) ExecuteEtcdAction(ctx context.Context, plan *PreparedEtcdActio
 		outcome = domain.OperationUnconfirmed
 	}
 	result := MutationResult{Targets: []TargetResult{{Target: target, Outcome: outcome, Err: rpcErr, Warning: current.warning}}, Snapshot: snapshotResult}
+	if current.hasMember {
+		result.Targets[0].Target = current.memberHost
+	}
 	if rpcErr != nil {
 		return result, rpcErr
 	}
@@ -219,6 +227,19 @@ func validateEtcdActionRequest(request EtcdActionRequest) error {
 	return nil
 }
 
+func etcdActionBudget(kind EtcdActionKind) time.Duration {
+	switch kind {
+	case EtcdActionSnapshot:
+		return snapshotTimeout + unaryReadTimeout
+	case EtcdActionRemoveMember, EtcdActionLeaveCluster:
+		return snapshotTimeout + controlOperationTimeout + 2*unaryReadTimeout
+	case EtcdActionDefragment:
+		return defragmentTimeout + unaryReadTimeout
+	default:
+		return controlOperationTimeout + unaryReadTimeout
+	}
+}
+
 func (s *Session) readCurrentEtcdActionFacts(ctx context.Context, request EtcdActionRequest) (etcdActionFacts, error) {
 	readCtx, cancel := context.WithTimeout(ctx, unaryReadTimeout)
 	defer cancel()
@@ -236,6 +257,10 @@ func (s *Session) readCurrentEtcdActionFacts(ctx context.Context, request EtcdAc
 		return etcdActionFacts{}, err
 	}
 	node, ok := resolveNodeTarget(nodes.Nodes, request.Node)
+	if !ok && request.Kind == EtcdActionRemoveMember {
+		node = domain.NodeSnapshot{Name: request.Node, Role: domain.NodeRoleControl}
+		ok = true
+	}
 	if !ok || node.Role != domain.NodeRoleControl {
 		return etcdActionFacts{}, ErrAssessmentChanged
 	}
@@ -277,11 +302,25 @@ func (s *Session) readEtcdActionFacts(ctx context.Context, nodes []domain.NodeSn
 	if !ok || member.Hostname == "" {
 		return facts, ErrAssessmentChanged
 	}
-	memberNode, ok := resolveNodeTarget(nodes, member.Hostname)
-	if !ok || memberNode.Role != domain.NodeRoleControl || memberNode.Target() != node.Target() {
+	memberNode, memberNodeOK := resolveNodeTarget(nodes, member.Hostname)
+	selectedNode, selectedNodeOK := resolveNodeTarget(nodes, request.Node)
+	if request.Kind == EtcdActionRemoveMember {
+		if !selectedNodeOK && request.Node != member.Hostname {
+			return facts, ErrAssessmentChanged
+		}
+		if selectedNodeOK && selectedNode.Role != domain.NodeRoleControl {
+			return facts, ErrAssessmentChanged
+		}
+	} else if !memberNodeOK || memberNode.Role != domain.NodeRoleControl || memberNode.Target() != node.Target() {
 		return facts, ErrAssessmentChanged
 	}
-	memberHostname := memberNode.Target()
+	if request.Kind == EtcdActionSnapshot && (!memberNodeOK || memberNode.Target() != node.Target()) {
+		return facts, ErrAssessmentChanged
+	}
+	memberHostname := member.Hostname
+	if memberNodeOK {
+		memberHostname = memberNode.Target()
+	}
 	facts.memberID = member.MemberID
 	facts.memberHost = member.Hostname
 	facts.hasMember = true
@@ -299,16 +338,19 @@ func (s *Session) readEtcdActionFacts(ctx context.Context, nodes []domain.NodeSn
 		facts.snapshotNode = etcdSnapshotNodeForFacts(etcd, request.MemberID, member.Hostname)
 		if request.Kind == EtcdActionLeaveCluster {
 			facts.rpcNode = memberHostname
-		} else if facts.snapshotNode == member.Hostname || facts.snapshotNode == memberHostname {
-			facts.rpcNode = firstOtherControlPlaneHostname(nodes, member.Hostname)
-		} else {
-			facts.rpcNode = facts.snapshotNode
 		}
 		source, sourceOK := resolveNodeTarget(nodes, facts.snapshotNode)
 		if !sourceOK || source.Role != domain.NodeRoleControl {
-			return facts, ErrAssessmentChanged
+			fallback := firstOtherControlPlaneHostname(nodes, member.Hostname)
+			source, sourceOK = resolveNodeTarget(nodes, fallback)
+			if !sourceOK || source.Role != domain.NodeRoleControl {
+				return facts, ErrAssessmentChanged
+			}
 		}
 		facts.snapshotNode = source.Target()
+		if request.Kind == EtcdActionRemoveMember {
+			facts.rpcNode = facts.snapshotNode
+		}
 		gateway, gatewayOK := resolveNodeTarget(nodes, facts.rpcNode)
 		if !gatewayOK || gateway.Role != domain.NodeRoleControl {
 			if facts.blocked != "" {

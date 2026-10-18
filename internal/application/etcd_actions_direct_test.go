@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,14 @@ func directEtcdAdapter(members domain.EtcdSet, ops *testkit.FakeEtcdOperations) 
 		EtcdReader: &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) { return members, nil }},
 		EtcdOps:    ops,
 	}
+}
+
+func nodesOnly(names ...string) domain.NodeSet {
+	set := domain.NodeSet{}
+	for i, name := range names {
+		set.Nodes = append(set.Nodes, domain.NodeSnapshot{ID: fmt.Sprintf("id-%d", i+1), Name: name, Role: domain.NodeRoleControl})
+	}
+	return set
 }
 
 func openDirectEtcdSession(t *testing.T, adapter *testkit.FakeSession) *application.Session {
@@ -219,4 +228,109 @@ func TestEtcdLocalPathRemainsProcessLocal(t *testing.T) {
 	now := time.Date(2026, 10, 18, 12, 13, 14, 0, time.UTC)
 	path := application.DefaultEtcdSnapshotPath("prod/eu", "cp-1", now)
 	assert.Equal(t, "etcd-prod-eu-cp-1-20261018T121314Z.db", path)
+}
+
+func TestRemoveOrphanMemberUsesDiscoveredHealthyGateway(t *testing.T) {
+	for _, selectedNode := range []string{"cp-1", "cp-2"} {
+		t.Run(selectedNode, func(t *testing.T) {
+			var snapshotNode, removeNode string
+			var removeID uint64
+			adapter := directEtcdAdapter(directEtcdMembers(), &testkit.FakeEtcdOperations{
+				SnapshotFunc: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+					snapshotNode = node
+					return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 32, SHA256: strings.Repeat("a", 64)}, nil
+				},
+				RemoveMemberByIDFunc: func(_ context.Context, node string, memberID uint64) error {
+					removeNode, removeID = node, memberID
+					return nil
+				},
+			})
+			adapter.NodeReader = &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) { return nodesOnly("cp-2", "cp-3"), nil }}
+			session := openDirectEtcdSession(t, adapter)
+			plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{Kind: application.EtcdActionRemoveMember, Node: selectedNode, MemberID: 1, MemberHostname: "cp-1", SnapshotPath: "/tmp/orphan.db"})
+			require.NoError(t, err)
+			result, err := session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+			require.NoError(t, err)
+			assert.Equal(t, "cp-2", snapshotNode)
+			assert.Equal(t, "cp-2", removeNode)
+			assert.Equal(t, uint64(1), removeID)
+			assert.Equal(t, "cp-1", result.Targets[0].Target, "the outcome names the etcd member, not its RPC gateway")
+		})
+	}
+}
+
+func TestRemoveDoesNotUseGatewayThatChangedAfterSnapshot(t *testing.T) {
+	read := 0
+	var removeCalls int
+	var snapshotNode string
+	adapter := directEtcdAdapter(directEtcdMembers(), &testkit.FakeEtcdOperations{
+		SnapshotFunc: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+			snapshotNode = node
+			return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 32, SHA256: strings.Repeat("b", 64)}, nil
+		},
+		RemoveMemberByIDFunc: func(context.Context, string, uint64) error { removeCalls++; return nil },
+	})
+	adapter.NodeReader = &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		read++
+		if read >= 3 { // post-snapshot read: the selected gateway disappeared
+			return nodesOnly("cp-3"), nil
+		}
+		return nodesOnly("cp-2", "cp-3"), nil
+	}}
+	session := openDirectEtcdSession(t, adapter)
+	plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{Kind: application.EtcdActionRemoveMember, Node: "cp-1", MemberID: 1, MemberHostname: "cp-1", SnapshotPath: "/tmp/changed-gateway.db"})
+	require.NoError(t, err)
+	result, err := session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+	assert.Error(t, err)
+	assert.Equal(t, "cp-2", snapshotNode)
+	assert.NotNil(t, result.Snapshot)
+	assert.Zero(t, removeCalls)
+}
+
+func TestEtcdSnapshotAndMaintenanceDeadlinesIncludeFreshReadBudget(t *testing.T) {
+	t.Run("snapshot", func(t *testing.T) {
+		var remaining time.Duration
+		adapter := directEtcdAdapter(directEtcdMembers(), &testkit.FakeEtcdOperations{SnapshotFunc: func(ctx context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok)
+			remaining = time.Until(deadline)
+			return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 32, SHA256: strings.Repeat("c", 64)}, nil
+		}})
+		session := openDirectEtcdSession(t, adapter)
+		plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{Kind: application.EtcdActionSnapshot, Node: "cp-1", SnapshotPath: "/tmp/deadline.db"})
+		require.NoError(t, err)
+		_, err = session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+		require.NoError(t, err)
+		assert.Greater(t, remaining, 9*time.Minute+50*time.Second)
+	})
+	t.Run("defragment", func(t *testing.T) {
+		var remaining time.Duration
+		adapter := directEtcdAdapter(directEtcdMembers(), &testkit.FakeEtcdOperations{DefragmentFunc: func(ctx context.Context, _ string) error {
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok)
+			remaining = time.Until(deadline)
+			return nil
+		}})
+		session := openDirectEtcdSession(t, adapter)
+		plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{Kind: application.EtcdActionDefragment, Node: "cp-1"})
+		require.NoError(t, err)
+		_, err = session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+		require.NoError(t, err)
+		assert.Greater(t, remaining, 9*time.Minute+50*time.Second)
+	})
+	t.Run("forfeit", func(t *testing.T) {
+		var remaining time.Duration
+		adapter := directEtcdAdapter(directEtcdMembers(), &testkit.FakeEtcdOperations{ForfeitLeadershipFunc: func(ctx context.Context, _ string) error {
+			deadline, ok := ctx.Deadline()
+			require.True(t, ok)
+			remaining = time.Until(deadline)
+			return nil
+		}})
+		session := openDirectEtcdSession(t, adapter)
+		plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{Kind: application.EtcdActionForfeitLeadership, Node: "cp-1", MemberID: 1, MemberHostname: "cp-1"})
+		require.NoError(t, err)
+		_, err = session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+		require.NoError(t, err)
+		assert.Greater(t, remaining, 25*time.Second)
+	})
 }
