@@ -87,6 +87,7 @@ type preparedState struct {
 	session        *Session
 	consumed       bool // guarded by session.mu
 	assessment     Assessment
+	serviceFacts   *serviceActionFacts
 	nodeRequest    *NodeActionRequest
 	serviceRequest *ServiceActionRequest
 	etcdRequest    *EtcdActionRequest
@@ -99,6 +100,12 @@ func newPreparedNodeAction(session *Session, request NodeActionRequest, assessme
 
 func newPreparedServiceAction(session *Session, request ServiceActionRequest, assessment Assessment) PreparedServiceAction {
 	return PreparedServiceAction{state: &preparedState{session: session, serviceRequest: &request, assessment: cloneAssessment(assessment)}}
+}
+
+func newPreparedServiceActionWithFacts(session *Session, request ServiceActionRequest, assessment Assessment, facts serviceActionFacts) PreparedServiceAction {
+	plan := newPreparedServiceAction(session, request, assessment)
+	plan.state.serviceFacts = &facts
+	return plan
 }
 
 func newPreparedEtcdAction(session *Session, request EtcdActionRequest, assessment Assessment) PreparedEtcdAction {
