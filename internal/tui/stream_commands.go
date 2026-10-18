@@ -69,7 +69,7 @@ func (m *directModel) reconnectDirectLogs(dmesg bool) tea.Cmd {
 }
 
 func (m *directModel) reconnectDirectClusterHealth() tea.Cmd {
-	target := m.healthStream.target
+	target := pureClusterHealthRequestFromNodes(m.cluster.nodes.Value.Nodes, m.healthStream.target.WaitTimeout)
 	m.closeDirectHealth()
 	request, _ := m.requests.beginWithContext("cluster-health", m.generation(), m.sessionCtx)
 	m.healthStream = directHealthStreamState{request: request, target: target}
@@ -178,6 +178,7 @@ func (m *directModel) openDirectEventFollow() tea.Cmd {
 	m.cluster.events.Value.Problems = nil
 	m.cluster.events.Status = directReady
 	m.cluster.events.Err = ""
+	m.events = m.events.normalizeSelection(eventRows(m.cluster.events.Value), len(eventRows(m.cluster.events.Value))-1)
 	return directFollowEventsCommand(m.session, request)
 }
 
@@ -213,7 +214,13 @@ func (m *directModel) applyDirectEventBatch(batch domain.EventSet, err error) {
 		m.cluster.events.Status = directPartial
 		m.cluster.events.Err = m.eventFollow.err
 	}
-	m.events = m.events.normalizeSelection(eventRows(m.cluster.events.Value), m.events.control.Cursor())
+	rows := eventRows(m.cluster.events.Value)
+	closest := m.events.control.Cursor()
+	if m.eventFollow.following {
+		m.events.selectedKey = ""
+		closest = len(rows) - 1
+	}
+	m.events = m.events.normalizeSelection(rows, closest)
 }
 
 func appendBoundedEvents(current, batch []domain.EventSnapshot, limit int) []domain.EventSnapshot {

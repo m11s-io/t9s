@@ -563,7 +563,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering && !m.cpu.filtering && !m.time.filtering && !m.resourceKinds.filtering && !m.resourceInstances.filtering && !m.logs.filtering && !m.dmesg.filtering {
+		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.healthcheck.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering && !m.cpu.filtering && !m.time.filtering && !m.resourceKinds.filtering && !m.resourceInstances.filtering && !m.logs.filtering && !m.dmesg.filtering {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
