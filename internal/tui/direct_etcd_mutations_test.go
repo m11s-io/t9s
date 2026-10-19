@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -103,7 +104,7 @@ func TestDirectEtcdActionKeysPrepareTypedPlansAndExecuteBySelectedMember(t *test
 			require.NotNil(t, model.mutation.prompt)
 			assert.Equal(t, test.kind, model.mutation.prompt.etcdKind)
 			if test.kind == application.EtcdActionSnapshot || test.kind == application.EtcdActionRemoveMember || test.kind == application.EtcdActionLeaveCluster {
-				assert.Contains(t, renderDirectMutationPrompt(model.mutation.prompt), "/tmp/direct-etcd.db")
+				assert.Equal(t, "y confirm · n cancel", renderDirectMutationPrompt(model.mutation.prompt))
 			}
 			if test.kind == application.EtcdActionRemoveMember || test.kind == application.EtcdActionLeaveCluster || test.kind == application.EtcdActionForfeitLeadership {
 				assert.Equal(t, []string{"cp-1"}, model.mutation.prompt.assessment.Targets)
@@ -123,11 +124,11 @@ func TestDirectEtcdActionKeysPrepareTypedPlansAndExecuteBySelectedMember(t *test
 			assert.Nil(t, model.mutation.prompt)
 			if test.kind == application.EtcdActionSnapshot {
 				assert.Contains(t, model.mutation.notice, "completed")
-				assert.Contains(t, model.mutation.notice, "snapshot completed: /tmp/direct-etcd.db")
+				assert.Contains(t, ansi.Strip(model.View().Content), "/tmp/direct-etcd.db")
 			} else {
 				assert.Contains(t, model.mutation.notice, "accepted")
 				if test.kind == application.EtcdActionRemoveMember || test.kind == application.EtcdActionLeaveCluster {
-					assert.Contains(t, model.mutation.notice, "snapshot completed: /tmp/direct-etcd.db")
+					assert.Contains(t, ansi.Strip(model.View().Content), "/tmp/direct-etcd.db")
 				}
 			}
 			switch test.kind {
@@ -209,6 +210,10 @@ func TestDirectEtcdActionPreparationHonorsSessionReadOnlyAndBlockedPlan(t *testi
 	blocked, _ = applyDirectCommand(t, blocked, command)
 	require.NotNil(t, blocked.mutation.prompt)
 	require.NotEmpty(t, blocked.mutation.prompt.assessment.Blocked)
+	blockedContent := compactEtcdView(blocked.View().Content)
+	assert.Contains(t, blockedContent, "Actionblocked")
+	assert.Contains(t, blockedContent, "n/Esccancel")
+	assert.NotContains(t, blockedContent, "yconfirm")
 	blocked, command = updateDirect(blocked, keyPress('y'))
 	assert.Nil(t, command)
 	assert.Contains(t, blocked.view.notice, "refused")
@@ -232,7 +237,92 @@ func TestDirectMembershipFailureRetainsSuccessfulSnapshotMetadata(t *testing.T) 
 	model, _ = applyDirectCommand(t, model, command)
 	assert.NotNil(t, model.mutation.snapshot)
 	assert.Equal(t, "/tmp/retained.db", model.mutation.snapshot.Path)
-	assert.Contains(t, model.mutation.notice, "snapshot completed: /tmp/retained.db")
+	assert.Contains(t, ansi.Strip(model.View().Content), "/tmp/retained.db")
 	assert.Contains(t, model.mutation.notice, "unconfirmed")
+	assert.Equal(t, 1, strings.Count(model.mutation.notice, "unconfirmed"))
 	assert.NotContains(t, model.mutation.notice, "secret transport detail")
+}
+
+func TestDirectEtcdPreparationFailureAndCancelReplacePreparingFooter(t *testing.T) {
+	readOnly := directEtcdModel(directEtcdMutationSession(t, false, &testkit.FakeEtcdOperations{}), true)
+	readOnly.width, readOnly.height = 80, 24
+	readOnly, command := updateDirect(readOnly, keyPress('F'))
+	readOnly, _ = applyDirectCommand(t, readOnly, command)
+	content := ansi.Strip(readOnly.View().Content)
+	assert.NotContains(t, content, "Preparing mutation")
+	assert.Contains(t, content, "writes are disabled for this session")
+
+	model := directEtcdModel(directEtcdMutationSession(t, true, &testkit.FakeEtcdOperations{}), true)
+	model.width, model.height = 80, 24
+	model, command = updateDirect(model, keyPress('F'))
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.prompt)
+	model, _ = updateDirect(model, keyPress('n'))
+	content = ansi.Strip(model.View().Content)
+	assert.NotContains(t, content, "Preparing mutation")
+	assert.Contains(t, content, "Action canceled")
+}
+
+func TestDirectEtcdRemoveConfirmationShowsMemberWarningAndPathAt80Columns(t *testing.T) {
+	model := directEtcdModel(directEtcdMutationSession(t, true, &testkit.FakeEtcdOperations{}), true)
+	model.width, model.height = 80, 24
+	model, _ = updateDirect(model, keyPress('R'))
+	require.NotNil(t, model.etcdPathPrompt)
+	defaultPath := model.etcdPathPrompt.input.Value()
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.prompt)
+	require.NotEmpty(t, model.mutation.prompt.assessment.Warning, "fixture must represent the normal no-fault-tolerance warning")
+
+	content := compactEtcdView(model.View().Content)
+	assert.Contains(t, content, "cp-1")
+	assert.Contains(t, content, "ID1")
+	assert.Contains(t, content, strings.ReplaceAll(model.mutation.prompt.assessment.Warning, " ", ""))
+	assert.Contains(t, content, strings.ReplaceAll(defaultPath, " ", ""))
+	assert.Contains(t, content, "yconfirm")
+	assert.Contains(t, content, "n/Esccancel")
+}
+
+func TestDirectEtcdReceiptPanelPagesFullMetadataAfterMembershipFailure(t *testing.T) {
+	path := "/var/backups/" + strings.Repeat("nested-dir-", 10) + strings.Repeat("snapshot-file-", 8) + "etcd.db"
+	hash := strings.Repeat("c", 64)
+	ops := &testkit.FakeEtcdOperations{
+		SnapshotFunc: func(_ context.Context, node, suppliedPath string) (domain.EtcdSnapshotResult, error) {
+			return domain.EtcdSnapshotResult{Node: node, Path: suppliedPath, Size: 3 * 1024 * 1024 * 1024, SHA256: hash}, nil
+		},
+		RemoveMemberByIDFunc: func(context.Context, string, uint64) error { return errors.New("private membership transport error") },
+	}
+	model := directEtcdModel(directEtcdMutationSession(t, true, ops), true)
+	model.width, model.height = 80, 14
+	model, _ = updateDirect(model, keyPress('R'))
+	model.etcdPathPrompt.input.SetValue(path)
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = applyDirectCommand(t, model, command)
+	model, command = updateDirect(model, keyPress('y'))
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.snapshot)
+	assert.Equal(t, path, model.mutation.snapshot.Path)
+
+	views := []string{compactEtcdView(model.View().Content)}
+	for range 12 {
+		model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+		views = append(views, compactEtcdView(model.View().Content))
+	}
+	pathVisible := false
+	for _, page := range views {
+		pathVisible = pathVisible || strings.Contains(page, strings.ReplaceAll(path, " ", ""))
+	}
+	assert.True(t, pathVisible, "the complete receipt path must be readable on at least one scroll page")
+	allPages := strings.Join(views, "")
+	assert.Contains(t, allPages, hash)
+	assert.Contains(t, allPages, "3.0GiB")
+	assert.Contains(t, allPages, "unconfirmed")
+	assert.NotContains(t, allPages, "unconfirmed; check state before retrying —")
+	assert.NotContains(t, allPages, "private membership transport error")
+}
+
+func compactEtcdView(content string) string {
+	content = ansi.Strip(content)
+	return strings.NewReplacer("\n", "", " ", "", "│", "", "┌", "", "┐", "", "└", "", "┘", "", "─", "").Replace(content)
 }

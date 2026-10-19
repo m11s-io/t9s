@@ -262,14 +262,16 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mutation.busy = false
+		m.mutation.notice = ""
 		if message.err != nil || message.plan == nil {
+			m.mutation.etcdKind = ""
 			m.view.notice = mutationErrorMessage(message.err)
 			return m, nil
 		}
 		m.mutation.prompt = &directMutationPrompt{
 			operation: message.operation, generation: message.generation, etcd: message.plan, etcdKind: message.request.Kind,
 			assessment: message.plan.Assessment(), session: m.session, confirm: application.Confirmation{Approved: true},
-			label: message.request.MemberHostname,
+			label: message.request.MemberHostname, etcdMemberID: message.memberID, etcdMemberHostname: message.memberHostname,
 		}
 		return m, nil
 	case directMutationProgress:
@@ -287,20 +289,23 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mutation.prompt = nil
 		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
 		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
-		if len(m.mutation.results) == 0 && message.err != nil {
+		if m.mutation.etcdKind != "" {
+			failure := ""
+			if message.err != nil {
+				failure = mutationErrorMessage(message.err)
+			}
+			m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.etcdKind, m.mutation.snapshot, failure)
+			m.view.notice = ""
+		} else if len(m.mutation.results) == 0 && message.err != nil {
 			if m.mutation.snapshot != nil {
-				m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.total, m.mutation.snapshot, mutationErrorMessage(message.err))
+				m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
 				m.view.notice = ""
 			} else {
 				m.view.notice = mutationErrorMessage(message.err)
 				m.mutation.notice = ""
 			}
 		} else {
-			failure := ""
-			if message.err != nil {
-				failure = mutationErrorMessage(message.err)
-			}
-			m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.total, m.mutation.snapshot, failure)
+			m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
 		}
 		m.mutationWork = directMutationWork{}
 		return m, nil
@@ -607,6 +612,8 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			switch message.String() {
 			case "esc":
 				m.etcdPathPrompt = nil
+				m.mutation.notice = ""
+				m.mutation.etcdKind = ""
 				m.view.notice = "Action canceled"
 				return m, nil
 			case "enter":
@@ -623,7 +630,8 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				request := application.EtcdActionRequest{Kind: kind, Node: prompt.node, MemberHostname: prompt.member, SnapshotPath: path}
 				request.MemberID = prompt.memberID
-				return m, m.prepareDirectEtcdMutation(request)
+				member := domain.EtcdMemberSnapshot{MemberID: prompt.memberID, Hostname: prompt.member}
+				return m, m.prepareDirectEtcdMutation(request, member)
 			}
 			var command tea.Cmd
 			*m.etcdPathPrompt, command = m.etcdPathPrompt.update(message)
@@ -648,6 +656,8 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.mutation.total = len(prompt.assessment.Targets)
 				m.mutation.results = nil
 				m.mutation.snapshot = nil
+				m.mutation.etcdKind = prompt.etcdKind
+				m.mutation.receiptOffset = 0
 				m.mutation.notice = "Mutation in progress…"
 				capacity := m.mutation.total
 				if capacity < 1 {
@@ -658,6 +668,8 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if message.String() == "n" || message.String() == "N" || message.String() == "esc" {
 				m.mutation.prompt = nil
+				m.mutation.notice = ""
+				m.mutation.etcdKind = ""
 				m.view.notice = "Action canceled"
 			}
 			return m, nil
@@ -877,6 +889,18 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				request, _ := m.requests.beginWithContext("cluster-etcd", m.generation(), m.sessionCtx)
 				return m, directEtcdCommand(m.session, request)
 			}
+			if m.mutation.snapshot != nil && !m.mutation.busy && m.mutation.prompt == nil && (message.Code == tea.KeyPgDown || message.Code == tea.KeyPgUp) {
+				frame := layoutResourceFrame(m.width, layoutShell(m.width, m.height).ContentHeight, "etcd receipt")
+				pageSize := max(1, frame.InnerHeight-1)
+				lines := etcdReceiptLines(m.mutation, frame.InnerWidth)
+				maxOffset := max(0, len(lines)-pageSize)
+				if message.Code == tea.KeyPgDown {
+					m.mutation.receiptOffset = min(maxOffset, m.mutation.receiptOffset+pageSize)
+				} else {
+					m.mutation.receiptOffset = max(0, m.mutation.receiptOffset-pageSize)
+				}
+				return m, nil
+			}
 			if !m.etcd.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
 				if member, ok := m.etcd.selected(m.cluster.etcd.Value.Members); ok {
 					var kind application.EtcdActionKind
@@ -900,6 +924,10 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 							pathPrompt := newSnapshotPromptModel(member.Hostname, member.Hostname, defaultPath)
 							pathPrompt.kind = kind
 							pathPrompt.memberID = member.MemberID
+							m.mutation.notice = ""
+							m.mutation.etcdKind = ""
+							m.mutation.snapshot = nil
+							m.mutation.receiptOffset = 0
 							m.etcdPathPrompt = &pathPrompt
 							return m, nil
 						}
@@ -907,7 +935,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 						if kind == application.EtcdActionForfeitLeadership {
 							request.MemberID, request.MemberHostname = member.MemberID, member.Hostname
 						}
-						return m, m.prepareDirectEtcdMutation(request)
+						return m, m.prepareDirectEtcdMutation(request, member)
 					}
 				}
 			}
@@ -1059,15 +1087,17 @@ func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapsho
 	return directPrepareServiceCommand(m.session, m.sessionCtx, operation, m.generation(), application.ServiceActionRequest{Kind: kind, Node: service.Node, Service: service.Name})
 }
 
-func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRequest) tea.Cmd {
+func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRequest, member domain.EtcdMemberSnapshot) tea.Cmd {
 	operation := m.nextMutationOperation()
 	m.mutation.operation = operation
 	m.mutation.busy = true
 	m.mutation.notice = "Preparing mutation…"
 	m.mutation.results = nil
 	m.mutation.snapshot = nil
+	m.mutation.etcdKind = request.Kind
+	m.mutation.receiptOffset = 0
 	m.view.notice = ""
-	return directPrepareEtcdCommand(m.session, m.sessionCtx, operation, m.generation(), request)
+	return directPrepareEtcdCommand(m.session, m.sessionCtx, operation, m.generation(), request, member)
 }
 
 func (m *directModel) nextMutationOperation() uint64 {
@@ -1131,6 +1161,12 @@ func (m directModel) View() tea.View {
 		}
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, title)
 		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt, frame.InnerHeight), m.styles.k9s)
+	} else if prompt := m.mutation.prompt; prompt != nil && prompt.etcd != nil {
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd action")
+		content = renderResourceFrame(frame, renderDirectEtcdMutationOverlay(prompt, frame.InnerWidth), m.styles.k9s)
+	} else if m.mutation.snapshot != nil && !m.mutation.busy && m.views.top().Kind == viewEtcd {
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd receipt")
+		content = renderResourceFrame(frame, renderDirectEtcdReceiptOverlay(m.mutation, frame.InnerWidth, frame.InnerHeight), m.styles.k9s)
 	}
 	if m.palette.active {
 		content += "\n" + m.palette.view()
@@ -1198,6 +1234,8 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.logs.filter
 	} else if !m.palette.active && m.views.top().Kind == viewDmesg && (m.dmesg.filtering || m.dmesg.filter != "") {
 		prompt = "/" + m.dmesg.filter
+	} else if m.mutation.snapshot != nil && !m.mutation.busy && m.views.top().Kind == viewEtcd {
+		prompt = "Receipt details above · PgUp/PgDn"
 	} else if m.mutation.notice != "" {
 		prompt = m.mutation.notice
 	} else if m.mutation.busy {

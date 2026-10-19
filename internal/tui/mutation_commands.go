@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -199,36 +200,40 @@ func resetPreviewRows(previews []application.ResetPreview) []string {
 // directMutationPrompt is frontend-owned and stores the concrete prepared
 // backend plan. Its assessment is a snapshot used only to render the prompt.
 type directMutationPrompt struct {
-	operation     uint64
-	generation    uint64
-	node          *application.PreparedNodeAction
-	service       *application.PreparedServiceAction
-	etcd          *application.PreparedEtcdAction
-	etcdKind      application.EtcdActionKind
-	assessment    application.Assessment
-	session       *application.Session
-	serviceKind   application.ServiceActionKind
-	nodeKind      application.ActionKind
-	label         string
-	reset         *ports.ResetOptions
-	deviceWipe    *ports.DeviceWipeOptions
-	intent        textinput.Model
-	intentReady   bool
-	confirm       application.Confirmation
-	needsPrepare  bool
-	field         int
-	previewOffset int
-	err           string
+	operation          uint64
+	generation         uint64
+	node               *application.PreparedNodeAction
+	service            *application.PreparedServiceAction
+	etcd               *application.PreparedEtcdAction
+	etcdKind           application.EtcdActionKind
+	etcdMemberID       uint64
+	etcdMemberHostname string
+	assessment         application.Assessment
+	session            *application.Session
+	serviceKind        application.ServiceActionKind
+	nodeKind           application.ActionKind
+	label              string
+	reset              *ports.ResetOptions
+	deviceWipe         *ports.DeviceWipeOptions
+	intent             textinput.Model
+	intentReady        bool
+	confirm            application.Confirmation
+	needsPrepare       bool
+	field              int
+	previewOffset      int
+	err                string
 }
 
 type directMutationState struct {
-	prompt    *directMutationPrompt
-	busy      bool
-	operation uint64
-	results   []application.TargetResult
-	snapshot  *domain.EtcdSnapshotResult
-	total     int
-	notice    string
+	prompt        *directMutationPrompt
+	busy          bool
+	operation     uint64
+	results       []application.TargetResult
+	snapshot      *domain.EtcdSnapshotResult
+	etcdKind      application.EtcdActionKind
+	receiptOffset int
+	total         int
+	notice        string
 }
 
 func cloneEtcdSnapshotResult(result *domain.EtcdSnapshotResult) *domain.EtcdSnapshotResult {
@@ -250,6 +255,8 @@ type directEtcdPrepared struct {
 	operation, generation uint64
 	plan                  *application.PreparedEtcdAction
 	request               application.EtcdActionRequest
+	memberID              uint64
+	memberHostname        string
 	err                   error
 }
 
@@ -304,13 +311,13 @@ func directPrepareNodeCommand(session *application.Session, ctx context.Context,
 	}
 }
 
-func directPrepareEtcdCommand(session *application.Session, ctx context.Context, operation, generation uint64, request application.EtcdActionRequest) tea.Cmd {
+func directPrepareEtcdCommand(session *application.Session, ctx context.Context, operation, generation uint64, request application.EtcdActionRequest, member domain.EtcdMemberSnapshot) tea.Cmd {
 	return func() tea.Msg {
 		if ctx == nil || ctx.Err() != nil {
 			return nil
 		}
 		plan, err := session.PrepareEtcdAction(ctx, request)
-		return directEtcdPrepared{operation: operation, generation: generation, plan: plan, request: request, err: err}
+		return directEtcdPrepared{operation: operation, generation: generation, plan: plan, request: request, memberID: member.MemberID, memberHostname: member.Hostname, err: err}
 	}
 }
 
@@ -383,19 +390,10 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 		return ""
 	}
 	if prompt.etcd != nil {
-		verb, target := etcdActionLabel(prompt.etcdKind), strings.Join(prompt.assessment.Targets, ", ")
-		if prompt.assessment.SnapshotPath != "" {
-			verb += "; snapshot to " + sanitizeUntrustedText(prompt.assessment.SnapshotPath)
+		if prompt.assessment.Blocked != "" {
+			return "Action blocked · n cancel"
 		}
-		if prompt.etcdKind == application.EtcdActionSnapshot || prompt.etcdKind == application.EtcdActionRemoveMember || prompt.etcdKind == application.EtcdActionLeaveCluster {
-			if prompt.assessment.Blocked != "" {
-				return "!! " + truncateWarningTail(prompt.assessment.Blocked, pendingActionWarningBudget) + " — action refused (n to cancel)"
-			}
-		}
-		if prompt.assessment.Warning != "" {
-			return "!! " + truncateWarningTail(prompt.assessment.Warning, pendingActionWarningBudget) + " — " + verb + " " + target + "? (y/n)"
-		}
-		return verb + " " + target + "? (y/n)"
+		return "y confirm · n cancel"
 	}
 	a := prompt.assessment
 	destructive := prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice
@@ -608,31 +606,104 @@ func renderMutationResults(results []application.TargetResult, total int) string
 	return strings.Join(parts, "; ") + " — " + strings.Join(details, ", ")
 }
 
-func renderEtcdMutationSummary(results []application.TargetResult, total int, snapshot *domain.EtcdSnapshotResult, failure string) string {
-	parts := make([]string, 0, 3)
-	if len(results) > 0 {
-		parts = append(parts, renderMutationResults(results, total))
-	}
-	if snapshot != nil {
-		path := sanitizeUntrustedText(snapshot.Path)
-		status := "completed"
-		for _, result := range results {
-			if result.Target == snapshot.Node && result.Outcome == domain.OperationUnconfirmed {
-				status = "unconfirmed; verify the snapshot file"
-				break
-			}
+func renderEtcdMutationSummary(results []application.TargetResult, kind application.EtcdActionKind, snapshot *domain.EtcdSnapshotResult, failure string) string {
+	if len(results) == 0 {
+		if snapshot != nil && kind == application.EtcdActionSnapshot {
+			return "Snapshot completed"
 		}
-		metadata := "snapshot " + status + ": " + path
-		if snapshot.Size > 0 {
-			metadata += " (" + formatBytes(snapshot.Size) + ")"
+		if snapshot != nil {
+			return etcdActionLabel(kind) + " failed after the snapshot; " + failure
 		}
-		if snapshot.SHA256 != "" {
-			metadata += " · SHA256 " + sanitizeUntrustedText(snapshot.SHA256)
+		return failure
+	}
+	result := results[len(results)-1]
+	target := sanitizeUntrustedText(result.Target)
+	var outcome string
+	switch result.Outcome {
+	case domain.OperationAccepted:
+		outcome = "accepted; completion not verified"
+	case domain.OperationCompleted:
+		outcome = "completed"
+	case domain.OperationUnconfirmed:
+		outcome = "unconfirmed; check state before retrying"
+	default:
+		outcome = "failed"
+	}
+	summary := etcdActionLabel(kind) + " " + target + " " + outcome
+	if result.Outcome != domain.OperationUnconfirmed && failure != "" {
+		summary += "; " + failure
+	}
+	return summary
+}
+
+func etcdPanelLines(values []string, width int) []string {
+	lines := make([]string, 0, len(values))
+	for _, value := range values {
+		value = sanitizeUntrustedText(value)
+		if width <= 0 {
+			lines = append(lines, value)
+			continue
 		}
-		parts = append(parts, metadata)
+		lines = append(lines, strings.Split(ansi.Hardwrap(value, width, true), "\n")...)
 	}
-	if failure != "" {
-		parts = append(parts, failure)
+	return lines
+}
+
+func renderDirectEtcdMutationOverlay(prompt *directMutationPrompt, width int) string {
+	lines := []string{"ACTION: " + etcdActionLabel(prompt.etcdKind)}
+	if prompt.etcdMemberHostname != "" {
+		lines = append(lines, fmt.Sprintf("MEMBER: %s (ID %d)", prompt.etcdMemberHostname, prompt.etcdMemberID))
+	} else if len(prompt.assessment.Targets) > 0 {
+		lines = append(lines, "TARGET: "+strings.Join(prompt.assessment.Targets, ", "))
 	}
-	return strings.Join(parts, "; ")
+	if prompt.assessment.Blocked != "" {
+		lines = append(lines, "BLOCKED: "+prompt.assessment.Blocked)
+	} else if prompt.assessment.Warning != "" {
+		lines = append(lines, "WARNING: "+prompt.assessment.Warning)
+	}
+	if prompt.assessment.SnapshotPath != "" {
+		lines = append(lines, "SNAPSHOT: "+prompt.assessment.SnapshotPath)
+	}
+	if prompt.assessment.Blocked != "" {
+		lines = append(lines, "Action blocked · n/Esc cancel")
+	} else {
+		lines = append(lines, "y confirm · n/Esc cancel")
+	}
+	return strings.Join(etcdPanelLines(lines, width), "\n")
+}
+
+func etcdReceiptLines(state directMutationState, width int) []string {
+	lines := []string{"RESULT: " + state.notice, "SNAPSHOT RECEIPT"}
+	snapshot := state.snapshot
+	status := "completed"
+	for _, result := range state.results {
+		if result.Target == snapshot.Node && result.Outcome == domain.OperationUnconfirmed {
+			status = "unconfirmed; verify the snapshot file"
+			break
+		}
+	}
+	lines = append(lines,
+		"Status: "+status,
+		"Node: "+snapshot.Node,
+		"Path: "+snapshot.Path,
+		"Size: "+formatBytes(snapshot.Size),
+		"SHA256: "+snapshot.SHA256,
+	)
+	return etcdPanelLines(lines, width)
+}
+
+func renderDirectEtcdReceiptOverlay(state directMutationState, width, height int) string {
+	lines := etcdReceiptLines(state, width)
+	if height <= 0 {
+		return ""
+	}
+	pageSize := max(1, height-1)
+	maxOffset := max(0, len(lines)-pageSize)
+	offset := min(maxOffset, max(0, state.receiptOffset))
+	end := min(len(lines), offset+pageSize)
+	visible := append([]string(nil), lines[offset:end]...)
+	if len(lines) > pageSize {
+		visible = append(visible, fmt.Sprintf("Receipt %d-%d/%d · PgUp/PgDn", offset+1, end, len(lines)))
+	}
+	return strings.Join(visible, "\n")
 }
