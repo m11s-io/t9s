@@ -88,9 +88,15 @@ func (s *tuiDmesgStream) Next(context.Context) (domain.DmesgBatch, error) {
 }
 func (s *tuiDmesgStream) Close() error { s.closes.Add(1); return nil }
 
-type tuiDmesgReader struct{ stream ports.DmesgStream }
+type tuiDmesgReader struct {
+	stream ports.DmesgStream
+	open   func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error)
+}
 
-func (r tuiDmesgReader) Open(context.Context, domain.DmesgRequest) (ports.DmesgStream, error) {
+func (r tuiDmesgReader) Open(ctx context.Context, request domain.DmesgRequest) (ports.DmesgStream, error) {
+	if r.open != nil {
+		return r.open(ctx, request)
+	}
 	return r.stream, nil
 }
 
@@ -241,6 +247,143 @@ func TestDirectPaletteNavigationClosesLogStream(t *testing.T) {
 	assert.Equal(t, viewNodes, model.views.top().Kind)
 	assert.ErrorIs(t, model.logStream.request.ctx.Err(), context.Canceled)
 	assert.Equal(t, int32(1), stream.closes.Load())
+}
+
+func TestDirectPaletteNavigationClosesStreamBehindHelp(t *testing.T) {
+	for _, kind := range []viewKind{viewServiceLogs, viewDmesg, viewEvents, viewClusterHealth} {
+		t.Run(frameLabel(kind), func(t *testing.T) {
+			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			var request directRequest
+			var closeCount func() int32
+			switch kind {
+			case viewServiceLogs:
+				request, _ = model.requests.begin("service-logs", model.generation())
+				stream := &tuiLogStream{}
+				closeCount = func() int32 { return stream.closes.Load() }
+				model.logStream = directLogStreamState{request: request, stream: stream}
+			case viewDmesg:
+				request, _ = model.requests.begin("dmesg", model.generation())
+				stream := &tuiDmesgStream{}
+				closeCount = func() int32 { return stream.closes.Load() }
+				model.dmesgStream = directDmesgStreamState{request: request, stream: stream}
+			case viewEvents:
+				request, _ = model.requests.begin("cluster-events-follow", model.generation())
+				stream := &directEventStreamFake{}
+				closeCount = func() int32 { return int32(stream.closed) }
+				model.eventFollow = directEventFollowState{request: request, stream: stream, following: true}
+			case viewClusterHealth:
+				request, _ = model.requests.begin("cluster-health", model.generation())
+				stream := &directHealthStreamFake{}
+				closeCount = func() int32 { return int32(stream.closed) }
+				model.healthStream = directHealthStreamState{request: request, stream: stream}
+			}
+			model.views = newViewStack(viewFrame{Kind: viewNodes, Label: "nodes"}).push(viewFrame{Kind: kind, Label: frameLabel(kind)})
+			model, _ = updateDirect(model, keyPress('?'))
+			assert.True(t, model.requests.current(request.stamp), "help retains the underlying stream request")
+
+			model, _ = runDirectPaletteCommand(t, model, "nodes")
+			assert.Equal(t, viewNodes, model.views.top().Kind)
+			assert.False(t, model.requests.current(request.stamp), "navigation that removes the stream frame cancels its request")
+			assert.Equal(t, int32(1), closeCount())
+			switch kind {
+			case viewServiceLogs:
+				assert.Nil(t, model.logStream.stream)
+			case viewDmesg:
+				assert.Nil(t, model.dmesgStream.stream)
+			case viewEvents:
+				assert.False(t, model.eventFollow.following)
+				assert.Nil(t, model.eventFollow.stream)
+			case viewClusterHealth:
+				assert.Nil(t, model.healthStream.stream)
+			}
+		})
+	}
+}
+
+func TestDirectPendingLogAndDmesgOpenSurvivesHelpAndLateRemovedOpenClosesOnce(t *testing.T) {
+	for _, kind := range []viewKind{viewServiceLogs, viewDmesg} {
+		for _, exit := range []string{"help back", "help palette navigation"} {
+			t.Run(frameLabel(kind)+"/"+exit, func(t *testing.T) {
+				entered := make(chan struct{})
+				release := make(chan struct{})
+				var logStream *tuiLogStream
+				var dmesgStream *tuiDmesgStream
+				openSession := func(context.Context, string) (ports.Session, error) {
+					adapter := &testkit.FakeSession{}
+					if kind == viewServiceLogs {
+						logStream = &tuiLogStream{}
+						adapter.LogReader = tuiLogReader{open: func(context.Context, domain.LogRequest) (ports.ServiceLogStream, error) {
+							close(entered)
+							<-release
+							return logStream, nil
+						}}
+					} else {
+						dmesgStream = &tuiDmesgStream{}
+						adapter.DmesgReader = tuiDmesgReader{open: func(context.Context, domain.DmesgRequest) (ports.DmesgStream, error) {
+							close(entered)
+							<-release
+							return dmesgStream, nil
+						}}
+					}
+					return adapter, nil
+				}
+				client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: openSession}})
+				session, err := client.Open(context.Background(), "prod", application.Options{})
+				require.NoError(t, err)
+				model := newDirectModel(context.Background(), client, LaunchOptions{})
+				model.session, model.sessionCtx = session, context.Background()
+				var open tea.Cmd
+				if kind == viewServiceLogs {
+					open = model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"})
+				} else {
+					open = model.openDirectDmesg("node-a")
+				}
+				result := make(chan tea.Msg, 1)
+				go func() { result <- open() }()
+				<-entered
+				model, _ = updateDirect(model, keyPress('?'))
+				if exit == "help back" {
+					model, _ = updateDirect(model, keyPress('q'))
+				} else {
+					model, _ = runDirectPaletteCommand(t, model, "nodes")
+				}
+				close(release)
+				opened := <-result
+				model, next := updateDirect(model, opened)
+				if exit == "help back" {
+					assert.Equal(t, kind, model.views.top().Kind)
+					assert.NotNil(t, next, "retained owner frame accepts the opened stream and continues reading")
+					if kind == viewServiceLogs {
+						assert.NotNil(t, model.logStream.stream)
+						assert.Equal(t, application.Ready, model.logStream.status)
+					} else {
+						assert.NotNil(t, model.dmesgStream.stream)
+						assert.Equal(t, application.Ready, model.dmesgStream.status)
+					}
+				} else if kind == viewServiceLogs {
+					assert.Equal(t, int32(1), logStream.closes.Load(), "late result for a removed owner is disposed once")
+				} else {
+					assert.Equal(t, int32(1), dmesgStream.closes.Load(), "late result for a removed owner is disposed once")
+				}
+				_ = session.Close()
+			})
+		}
+	}
+}
+
+func frameLabel(kind viewKind) string {
+	switch kind {
+	case viewServiceLogs:
+		return "logs"
+	case viewDmesg:
+		return "dmesg"
+	case viewEvents:
+		return "events"
+	case viewClusterHealth:
+		return "health"
+	default:
+		return "unknown"
+	}
 }
 
 func TestDirectLogStreamClosesOnContextSwitchAndQuit(t *testing.T) {

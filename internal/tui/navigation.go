@@ -61,6 +61,15 @@ func (s viewStack) top() viewFrame {
 	return s[len(s)-1]
 }
 
+func (s viewStack) contains(kind viewKind) bool {
+	for _, frame := range s {
+		if frame.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func (s viewStack) replaceRoot(root viewFrame) viewStack { return viewStack{root} }
 
 func (s viewStack) push(frame viewFrame) viewStack {

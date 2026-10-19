@@ -104,16 +104,16 @@ func appendBoundedLines(current, batch []string, limit int) []string {
 }
 
 func (m *directModel) closeStreamsOutsideView(previous viewStack) {
-	if previous.top().Kind == viewServiceLogs && m.views.top().Kind != viewServiceLogs {
+	if previous.contains(viewServiceLogs) && !m.views.contains(viewServiceLogs) {
 		m.closeDirectLogs(false)
 	}
-	if previous.top().Kind == viewDmesg && m.views.top().Kind != viewDmesg {
+	if previous.contains(viewDmesg) && !m.views.contains(viewDmesg) {
 		m.closeDirectLogs(true)
 	}
-	if previous.top().Kind == viewEvents && m.views.top().Kind != viewEvents {
+	if previous.contains(viewEvents) && !m.views.contains(viewEvents) {
 		m.closeDirectEventFollow()
 	}
-	if previous.top().Kind == viewClusterHealth && m.views.top().Kind != viewClusterHealth {
+	if previous.contains(viewClusterHealth) && !m.views.contains(viewClusterHealth) {
 		m.closeDirectHealth()
 	}
 }
@@ -315,9 +315,13 @@ func directClusterHealthNextCommand(stream ports.ClusterHealthStream, request di
 func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case directEventFollowOpened:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
+		current := m.requests.current(message.request) && message.request.generation == m.generation() && message.request == m.eventFollow.request.stamp && m.eventFollow.following
+		if !current || !m.views.contains(viewEvents) {
 			if message.stream != nil {
 				_ = message.stream.Close()
+			}
+			if m.requests.current(message.request) {
+				m.requests.cancelSlot("cluster-events-follow")
 			}
 			return m, nil
 		}
@@ -350,9 +354,13 @@ func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Mode
 		}
 		return m, directEventFollowNextCommand(m.eventFollow.stream, m.eventFollow.request)
 	case directClusterHealthOpened:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
+		current := m.requests.current(message.request) && message.request.generation == m.generation() && message.request == m.healthStream.request.stamp
+		if !current || !m.views.contains(viewClusterHealth) {
 			if message.stream != nil {
 				_ = message.stream.Close()
+			}
+			if m.requests.current(message.request) {
+				m.requests.cancelSlot("cluster-health")
 			}
 			return m, nil
 		}
@@ -413,7 +421,7 @@ func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd
 	switch message := message.(type) {
 	case directServiceLogsOpened:
 		current := m.requests.current(message.request)
-		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewServiceLogs {
+		if !current || message.request.generation != m.generation() || !m.views.contains(viewServiceLogs) {
 			if message.stream != nil {
 				_ = message.stream.Close()
 			}
@@ -456,7 +464,7 @@ func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd
 		return m, nil
 	case directDmesgOpened:
 		current := m.requests.current(message.request)
-		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewDmesg {
+		if !current || message.request.generation != m.generation() || !m.views.contains(viewDmesg) {
 			if message.stream != nil {
 				_ = message.stream.Close()
 			}
