@@ -235,6 +235,22 @@ type directMutationState struct {
 	receiptOffset  int
 	total          int
 	notice         string
+	upgrade        directUpgradeDisplayState
+	upgradeResult  *ports.UpgradeResult
+	upgradeErr     error
+	upgradePending bool
+}
+
+// directUpgradeDisplayState owns only presentation fields needed by the direct
+// TUI. The complete backend terminal stays separately available in
+// upgradeResult and upgradeErr.
+type directUpgradeDisplayState struct {
+	Active  bool
+	Target  string
+	Event   ports.UpgradeEvent
+	Err     string
+	Warning string
+	Outcome domain.OperationOutcome
 }
 
 func cloneEtcdSnapshotResult(result *domain.EtcdSnapshotResult) *domain.EtcdSnapshotResult {
@@ -268,6 +284,13 @@ type directNodePrepared struct {
 	err                   error
 }
 
+type directCurrentInstallImage struct {
+	operation, generation uint64
+	request               directRequestStamp
+	target, image         string
+	err                   error
+}
+
 type directMutationProgress struct {
 	operation, generation uint64
 	result                application.TargetResult
@@ -277,6 +300,15 @@ type directMutationFinished struct {
 	operation, generation uint64
 	result                application.MutationResult
 	err                   error
+	upgradeTarget         string
+	upgrade               *ports.UpgradeResult
+	upgradeWaitErr        error
+}
+
+type directUpgradeProgress struct {
+	operation, generation uint64
+	target                string
+	event                 ports.UpgradeEvent
 }
 
 type directMutationWork struct {
@@ -290,6 +322,32 @@ type directMutationWork struct {
 type directMutationWorkItem struct {
 	result   *application.TargetResult
 	finished *directMutationFinished
+	upgrade  *directUpgradeProgress
+}
+
+func directCurrentInstallImageCommand(session *application.Session, request directRequest, operation, generation uint64, target string) tea.Cmd {
+	return func() tea.Msg {
+		if request.ctx == nil || request.ctx.Err() != nil {
+			return nil
+		}
+		image, err := session.CurrentInstallImage(request.ctx, target)
+		return directCurrentInstallImage{operation: operation, generation: generation, request: request.stamp, target: target, image: image, err: err}
+	}
+}
+
+func (m *directModel) beginDirectUpgrade(target string) tea.Cmd {
+	operation := m.nextMutationOperation()
+	m.mutation.operation = operation
+	m.mutation.busy = true
+	m.mutation.upgradePending = true
+	m.mutation.notice = "Reading current install image…"
+	m.mutation.results = nil
+	m.mutation.upgrade = directUpgradeDisplayState{}
+	m.mutation.upgradeResult = nil
+	m.mutation.upgradeErr = nil
+	m.view.notice = ""
+	request, _ := m.requests.beginWithContext("upgrade-image", m.generation(), m.sessionCtx)
+	return directCurrentInstallImageCommand(m.session, request, operation, m.generation(), target)
 }
 
 func directPrepareServiceCommand(session *application.Session, ctx context.Context, operation, generation uint64, request application.ServiceActionRequest) tea.Cmd {
@@ -329,6 +387,10 @@ func directMutationStartCommand(work directMutationWork) tea.Cmd {
 		}
 		go func() {
 			plan := work.plan
+			if plan.node != nil && plan.nodeKind == application.ActionUpgrade {
+				runDirectUpgrade(work, plan)
+				return
+			}
 			var result application.MutationResult
 			var err error
 			if plan.node != nil {
@@ -344,9 +406,56 @@ func directMutationStartCommand(work directMutationWork) tea.Cmd {
 				result, err = work.session.ExecuteEtcdAction(work.ctx, plan.etcd, plan.confirm)
 			}
 			finished := directMutationFinished{operation: work.operation, generation: work.generation, result: result, err: err}
-			work.events <- directMutationWorkItem{finished: &finished}
+			sendDirectMutationItem(work, directMutationWorkItem{finished: &finished})
 		}()
 		return directMutationAwaitCommand(work)()
+	}
+}
+
+func runDirectUpgrade(work directMutationWork, plan *directMutationPrompt) {
+	target := strings.Join(plan.assessment.Targets, ", ")
+	stream, startErr := work.session.ExecuteUpgrade(work.ctx, plan.node, plan.confirm)
+	if startErr != nil || stream == nil {
+		if startErr == nil {
+			startErr = application.ErrCapabilityUnavailable
+		}
+		finished := directMutationFinished{operation: work.operation, generation: work.generation, upgradeTarget: target, upgradeWaitErr: startErr}
+		sendDirectMutationItem(work, directMutationWorkItem{finished: &finished})
+		return
+	}
+	wait := make(chan directUpgradeWaitResult, 1)
+	go func() {
+		terminal, waitErr := stream.Wait(context.Background())
+		wait <- directUpgradeWaitResult{result: terminal, err: waitErr}
+	}()
+	results := stream.Results()
+	finish := func(got directUpgradeWaitResult) {
+		finished := directUpgradeFinished(work, target, got)
+		sendDirectMutationItem(work, directMutationWorkItem{finished: &finished})
+	}
+	for {
+		select {
+		case progress, ok := <-results:
+			if !ok {
+				finish(<-wait)
+				return
+			}
+			if progress.Event != nil {
+				event := *progress.Event
+				item := directMutationWorkItem{upgrade: &directUpgradeProgress{operation: work.operation, generation: work.generation, target: target, event: event}}
+				select {
+				case work.events <- item:
+				default:
+				}
+			}
+		case got := <-wait:
+			finish(got)
+			return
+		case <-work.ctx.Done():
+			stream.Cancel()
+			finish(<-wait)
+			return
+		}
 	}
 }
 
@@ -357,12 +466,39 @@ func directMutationAwaitCommand(work directMutationWork) tea.Cmd {
 			if item.result != nil {
 				return directMutationProgress{operation: work.operation, generation: work.generation, result: *item.result}
 			}
+			if item.upgrade != nil {
+				return *item.upgrade
+			}
 			if item.finished != nil {
 				return *item.finished
 			}
 			return nil
 		}
 	}
+}
+
+type directUpgradeWaitResult struct {
+	result ports.UpgradeResult
+	err    error
+}
+
+func directUpgradeFinished(work directMutationWork, target string, got directUpgradeWaitResult) directMutationFinished {
+	terminal := got.result
+	return directMutationFinished{operation: work.operation, generation: work.generation, upgradeTarget: target, upgrade: &terminal, upgradeWaitErr: got.err}
+}
+
+func sendDirectMutationItem(work directMutationWork, item directMutationWorkItem) {
+	select {
+	case work.events <- item:
+	case <-work.ctx.Done():
+	}
+}
+
+func upgradeEventValue(event *ports.UpgradeEvent) ports.UpgradeEvent {
+	if event == nil {
+		return ports.UpgradeEvent{}
+	}
+	return *event
 }
 
 func mutationErrorMessage(err error) string {
@@ -419,6 +555,9 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 		}
 		if prompt.nodeKind == application.ActionRollback {
 			verb = "Rollback"
+		}
+		if prompt.nodeKind == application.ActionUpgrade {
+			verb = "Upgrade to " + sanitizeUntrustedText(prompt.label)
 		}
 		if prompt.nodeKind == application.ActionReset {
 			verb = "Reset"

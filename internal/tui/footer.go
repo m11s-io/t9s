@@ -7,44 +7,56 @@ import (
 
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 // renderUpgradeNotice creates the compact global upgrade status shown while an
 // upgrade is running and after it fails. The adapter only reports byte totals
 // when Talos supplies them, so a percentage is intentionally absent otherwise.
 func renderUpgradeNotice(upgrade application.UpgradeState) string {
-	if upgrade.Active {
-		phase := sanitizeUntrustedText(string(upgrade.Event.Phase))
+	return renderUpgradeStatus(upgrade.Active, upgrade.Target, upgrade.Event.Phase, upgrade.Event.Message, upgrade.Event.Current, upgrade.Event.Total, upgrade.Err, upgrade.Warning, upgrade.Outcome)
+}
+
+func renderDirectUpgradeNotice(upgrade directUpgradeDisplayState) string {
+	return renderUpgradeStatus(upgrade.Active, upgrade.Target, upgrade.Event.Phase, upgrade.Event.Message, upgrade.Event.Current, upgrade.Event.Total, upgrade.Err, upgrade.Warning, upgrade.Outcome)
+}
+
+func renderUpgradeStatus(active bool, target string, eventPhase ports.UpgradePhase, eventMessage string, current, total int64, errMessage, warning string, outcome domain.OperationOutcome) string {
+	if active {
+		phase := sanitizeUntrustedText(string(eventPhase))
 		if phase == "" {
 			phase = "starting"
 		}
 		progress := phase
-		if percent, known := upgradePercent(upgrade.Event.Current, upgrade.Event.Total); known {
+		if percent, known := upgradePercent(current, total); known {
 			progress = fmt.Sprintf("%s %d%%", phase, percent)
 		}
-		notice := fmt.Sprintf("Upgrading %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), progress)
-		if upgrade.Event.Message != "" {
-			notice += " — " + sanitizeUntrustedText(upgrade.Event.Message)
+		notice := fmt.Sprintf("Upgrading %s: %s", fallback(sanitizeUntrustedText(target)), progress)
+		if eventMessage != "" {
+			notice += " — " + sanitizeUntrustedText(eventMessage)
 		}
 		return notice
 	}
-	if upgrade.Warning != "" {
-		return fmt.Sprintf("Upgrade %s Applied — recovery warning: %s", fallback(sanitizeUntrustedText(upgrade.Target)), sanitizeUntrustedText(upgrade.Warning))
+	if warning != "" {
+		return fmt.Sprintf("Upgrade %s Applied — recovery warning: %s", fallback(sanitizeUntrustedText(target)), sanitizeUntrustedText(warning))
 	}
-	if upgrade.Outcome == domain.OperationAccepted {
-		return fmt.Sprintf("Upgrade %s accepted — completion not verified", fallback(sanitizeUntrustedText(upgrade.Target)))
+	if outcome == domain.OperationAccepted {
+		return fmt.Sprintf("Upgrade %s accepted — completion not verified", fallback(sanitizeUntrustedText(target)))
 	}
-	if upgrade.Err == "" {
+	if outcome == domain.OperationCompleted {
+		return fmt.Sprintf("Upgrade %s applied", fallback(sanitizeUntrustedText(target)))
+	}
+	if errMessage == "" {
 		return ""
 	}
-	phase := sanitizeUntrustedText(string(upgrade.Event.Phase))
+	phase := sanitizeUntrustedText(string(eventPhase))
 	if phase == "" {
 		phase = "upgrade"
 	}
-	if upgrade.Outcome == domain.OperationUnconfirmed {
-		return fmt.Sprintf("Upgrade %s unconfirmed during %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), phase, sanitizeUntrustedText(upgrade.Err))
+	if outcome == domain.OperationUnconfirmed {
+		return fmt.Sprintf("Upgrade %s unconfirmed during %s: %s", fallback(sanitizeUntrustedText(target)), phase, sanitizeUntrustedText(errMessage))
 	}
-	return fmt.Sprintf("Upgrade %s failed during %s: %s", fallback(sanitizeUntrustedText(upgrade.Target)), phase, sanitizeUntrustedText(upgrade.Err))
+	return fmt.Sprintf("Upgrade %s failed during %s: %s", fallback(sanitizeUntrustedText(target)), phase, sanitizeUntrustedText(errMessage))
 }
 
 // upgradePercent returns a percentage only when Talos supplied a positive byte

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -44,6 +45,7 @@ type directModel struct {
 	time                timeModel
 	cpu                 cpuModel
 	timePrompt          *timePromptModel
+	upgradePrompt       *upgradePromptModel
 	etcdPathPrompt      *snapshotPromptModel
 	resourceKinds       resourceKindsModel
 	resourceInstances   resourceInstancesModel
@@ -212,6 +214,23 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = message.session
 		m.cluster.contextName = message.contextName
 		return m, m.startClusterObservations(message.session, message.request.generation)
+	case directCurrentInstallImage:
+		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.requests.current(message.request) {
+			return m, nil
+		}
+		m.requests.cancelSlot("upgrade-image")
+		m.mutation.busy = false
+		m.mutation.upgradePending = false
+		prompt := newUpgradePromptModel(message.target, message.image)
+		prompt.operation, prompt.generation = message.operation, message.generation
+		m.upgradePrompt = &prompt
+		if message.err != nil {
+			m.upgradePrompt.notice = "current install image unavailable"
+			m.view.notice = "current install image is unavailable; enter an image to continue"
+		} else {
+			m.view.notice = ""
+		}
+		return m, prompt.input.Focus()
 	case directServicePrepared:
 		if message.generation != m.generation() || message.operation != m.mutation.operation {
 			return m, nil
@@ -227,8 +246,15 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.generation != m.generation() || message.operation != m.mutation.operation {
 			return m, nil
 		}
+		if message.request.Kind == application.ActionUpgrade {
+			m.requests.cancelSlot("upgrade-prepare")
+			m.mutation.upgradePending = false
+		}
 		m.mutation.busy = false
 		if message.err != nil || message.plan == nil {
+			if message.request.Kind == application.ActionUpgrade {
+				m.mutation.notice = ""
+			}
 			m.view.notice = mutationErrorMessage(message.err)
 			return m, nil
 		}
@@ -236,6 +262,9 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind,
 			assessment: message.plan.Assessment(), session: m.session,
 			confirm: application.Confirmation{Approved: message.request.Kind != application.ActionReset && message.request.Kind != application.ActionWipeDevice},
+		}
+		if message.request.Kind == application.ActionUpgrade {
+			prompt.label = message.request.Image
 		}
 		if message.request.Reset != nil {
 			options := *message.request.Reset
@@ -281,11 +310,48 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mutation.results = appendMutationResult(m.mutation.results, message.result)
 		m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
 		return m, directMutationAwaitCommand(m.mutationWork)
+	case directUpgradeProgress:
+		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
+			return m, nil
+		}
+		m.mutation.upgrade = directUpgradeDisplayState{Active: true, Target: message.target, Event: message.event}
+		m.mutation.notice = renderDirectUpgradeNotice(m.mutation.upgrade)
+		return m, directMutationAwaitCommand(m.mutationWork)
 	case directMutationFinished:
 		if message.generation != m.generation() || message.operation != m.mutation.operation {
 			return m, nil
 		}
 		m.mutation.busy = false
+		if message.upgrade != nil || message.upgradeWaitErr != nil {
+			m.mutation.upgradePending = false
+			m.mutation.upgradeResult = message.upgrade
+			m.mutation.upgradeErr = message.upgradeWaitErr
+			state := directUpgradeDisplayState{Target: message.upgradeTarget}
+			if message.upgrade != nil {
+				state.Event = upgradeEventValue(message.upgrade.Event)
+				switch message.upgrade.Outcome {
+				case ports.UpgradeOutcomeAppliedWithRecoveryWarning:
+					state.Warning = "upgrade applied; node recovery is incomplete — check node readiness and scheduling manually"
+				case ports.UpgradeOutcomeApplied:
+					state.Outcome = domain.OperationCompleted
+				case ports.UpgradeOutcomeAccepted:
+					state.Outcome = domain.OperationAccepted
+				default:
+					state.Outcome = domain.OperationUnconfirmed
+				}
+				if state.Warning == "" && message.upgrade.Outcome != ports.UpgradeOutcomeAccepted && message.upgrade.Outcome != ports.UpgradeOutcomeApplied {
+					state.Err = "request failed; check node state before retrying"
+				}
+			}
+			if message.upgradeWaitErr != nil {
+				state.Outcome = domain.OperationUnconfirmed
+				state.Err = "request failed; check node state before retrying"
+			}
+			m.mutation.upgrade = state
+			m.mutation.notice = renderDirectUpgradeNotice(state)
+			m.mutationWork = directMutationWork{}
+			return m, nil
+		}
 		m.mutation.prompt = nil
 		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
 		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
@@ -609,6 +675,17 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.String() == "ctrl+c" {
 			return m, m.cleanup(tea.Quit())
 		}
+		if m.mutation.upgradePending && message.String() == "esc" {
+			m.requests.cancelSlot("upgrade-image")
+			m.requests.cancelSlot("upgrade-prepare")
+			m.upgradePrompt = nil
+			m.mutation.busy = false
+			m.mutation.upgradePending = false
+			m.mutation.operation = m.nextMutationOperation()
+			m.mutation.notice = ""
+			m.view.notice = "Action canceled"
+			return m, nil
+		}
 		if m.etcdPathPrompt != nil {
 			switch message.String() {
 			case "esc":
@@ -636,6 +713,37 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var command tea.Cmd
 			*m.etcdPathPrompt, command = m.etcdPathPrompt.update(message)
+			return m, command
+		}
+		if m.upgradePrompt != nil {
+			prompt := m.upgradePrompt
+			switch message.String() {
+			case "esc":
+				m.requests.cancelSlot("upgrade-image")
+				m.requests.cancelSlot("upgrade-prepare")
+				m.upgradePrompt = nil
+				m.mutation.busy = false
+				m.mutation.upgradePending = false
+				m.mutation.operation = m.nextMutationOperation()
+				m.mutation.notice = ""
+				m.view.notice = "Action canceled"
+				return m, nil
+			case "enter":
+				image := strings.TrimSpace(prompt.input.Value())
+				if image == "" {
+					m.view.notice = "enter an installer image"
+					return m, nil
+				}
+				m.upgradePrompt = nil
+				m.mutation.busy = true
+				m.mutation.upgradePending = true
+				m.mutation.operation = prompt.operation
+				m.mutation.notice = "Preparing upgrade…"
+				request, _ := m.requests.beginWithContext("upgrade-prepare", prompt.generation, m.sessionCtx)
+				return m, directPrepareNodeCommand(m.session, request.ctx, prompt.operation, prompt.generation, application.NodeActionRequest{Kind: application.ActionUpgrade, Targets: []string{prompt.target}, Image: image})
+			}
+			var command tea.Cmd
+			*prompt, command = prompt.update(message)
 			return m, command
 		}
 		if m.mutation.prompt != nil {
@@ -779,7 +887,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if message.String() == "r" && !m.nodes.filtering && m.session != nil {
 				return m, m.refreshDirectNodes()
 			}
-			if !m.nodes.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
+			if !m.nodes.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.upgradePrompt == nil && m.options.WritesEnabled && m.session != nil {
 				var kind application.ActionKind
 				switch message.String() {
 				case "R":
@@ -790,6 +898,10 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					kind = application.ActionRollback
 				case "W":
 					kind = application.ActionReset
+				case "U":
+					if node, ok := m.nodes.selected(m.cluster.nodes.Value.Nodes); ok {
+						return m, m.beginDirectUpgrade(node.Target())
+					}
 				}
 				if kind != "" {
 					targets := m.nodes.actionTargets(m.cluster.nodes.Value.Nodes)
@@ -1199,7 +1311,7 @@ func (m directModel) View() tea.View {
 			}
 		}
 	}
-	writesAvailable := m.options.WritesEnabled && !m.mutation.busy && m.mutation.prompt == nil
+	writesAvailable := m.options.WritesEnabled && !m.mutation.busy && m.mutation.prompt == nil && m.upgradePrompt == nil
 	writesAvailable = writesAvailable && m.etcdPathPrompt == nil
 	header := renderK9sHeader(layoutK9sHeader(layout.Width), metadata, directActionHints(headerKind, writesAvailable), m.styles.k9s)
 	breadcrumb := m.views.breadcrumb(m.cluster.contextName)
@@ -1209,6 +1321,8 @@ func (m directModel) View() tea.View {
 	prompt := ""
 	if m.mutation.prompt != nil {
 		prompt = renderDirectMutationPrompt(m.mutation.prompt)
+	} else if m.upgradePrompt != nil {
+		prompt = m.upgradePrompt.view()
 	} else if m.etcdPathPrompt != nil {
 		prompt = m.etcdPathPrompt.view()
 	} else if m.timePrompt != nil {
@@ -1271,12 +1385,16 @@ func (m directModel) canShowDirectEtcdReceipt() bool {
 }
 
 func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
+	m.requests.cancelSlot("upgrade-image")
+	m.requests.cancelSlot("upgrade-prepare")
 	m.closeDirectLogs(false)
 	m.closeDirectLogs(true)
 	m.closeDirectEventFollow()
 	m.closeDirectHealth()
 	m.pendingResourceKind = ""
 	m.mutation.prompt = nil
+	m.upgradePrompt = nil
+	m.mutation.upgradePending = false
 	m.etcdPathPrompt = nil
 	m.mutation.busy = false
 	m.mutation.results = nil

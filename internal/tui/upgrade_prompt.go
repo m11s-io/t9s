@@ -10,8 +10,11 @@ import (
 // and submitted with Enter into the same PendingAction confirm flow Rollback
 // and Reboot/Shutdown already use.
 type upgradePromptModel struct {
-	target string
-	input  textinput.Model
+	target     string
+	operation  uint64
+	generation uint64
+	notice     string
+	input      textinput.Model
 }
 
 func newUpgradePromptModel(target, prefill string) upgradePromptModel {
@@ -31,5 +34,8 @@ func (m upgradePromptModel) update(message tea.Msg) (upgradePromptModel, tea.Cmd
 }
 
 func (m upgradePromptModel) view() string {
+	if m.notice != "" {
+		return m.input.View() + " · " + m.notice
+	}
 	return m.input.View()
 }
