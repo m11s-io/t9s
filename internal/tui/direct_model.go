@@ -2,11 +2,8 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"image/color"
-	"io"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -146,7 +143,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 
 func (m directModel) Init() tea.Cmd {
 	request, _ := m.requests.beginWithContext("contexts", 0, m.rootCtx)
-	return directContextsCommand(m.client, request)
+	return tea.Batch(directContextsCommand(m.client, request), splashTimer(), nodeAutoRefreshTick())
 }
 
 func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -156,11 +153,18 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeDirectResourceDetail()
 		m.syncDirectStreamViewports()
 		return m, nil
+	case splashDoneMsg:
+		m.splash = false
+		return m, nil
+	case nodeAutoRefreshTickMsg:
+		if m.views.top().Kind == viewNodes && !m.directFilterEditing() && m.session != nil {
+			return m, tea.Batch(m.refreshDirectNodes(), nodeAutoRefreshTick())
+		}
+		return m, nodeAutoRefreshTick()
 	case directContextsLoaded:
 		if !m.requests.current(message.request) {
 			return m, nil
 		}
-		m.splash = false
 		m.requests.cancelSlot("contexts")
 		m.cluster.contexts = append([]domain.ClusterContext(nil), message.contexts...)
 		if message.err != nil {
@@ -214,471 +218,18 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.session = message.session
 		m.cluster.contextName = message.contextName
 		return m, m.startClusterObservations(message.session, message.request.generation)
-	case directCurrentInstallImage:
-		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.requests.current(message.request) {
-			return m, nil
-		}
-		m.requests.cancelSlot("upgrade-image")
-		m.mutation.busy = false
-		m.mutation.upgradePending = false
-		prompt := newUpgradePromptModel(message.target, message.image)
-		prompt.operation, prompt.generation = message.operation, message.generation
-		m.upgradePrompt = &prompt
-		if message.err != nil {
-			m.upgradePrompt.notice = "current install image unavailable"
-			m.view.notice = "current install image is unavailable; enter an image to continue"
-		} else {
-			m.view.notice = ""
-		}
-		return m, prompt.input.Focus()
-	case directServicePrepared:
-		if message.generation != m.generation() || message.operation != m.mutation.operation {
-			return m, nil
-		}
-		m.mutation.busy = false
-		if message.err != nil || message.plan == nil {
-			m.view.notice = mutationErrorMessage(message.err)
-			return m, nil
-		}
-		m.mutation.prompt = &directMutationPrompt{operation: message.operation, generation: message.generation, service: message.plan, serviceKind: message.request.Kind, label: message.request.Service + "@" + message.request.Node, assessment: message.plan.Assessment(), session: m.session}
-		return m, nil
-	case directNodePrepared:
-		if message.generation != m.generation() || message.operation != m.mutation.operation {
-			return m, nil
-		}
-		if message.request.Kind == application.ActionUpgrade {
-			m.requests.cancelSlot("upgrade-prepare")
-			m.mutation.upgradePending = false
-		}
-		m.mutation.busy = false
-		if message.err != nil || message.plan == nil {
-			if message.request.Kind == application.ActionUpgrade {
-				m.mutation.notice = ""
-			}
-			m.view.notice = mutationErrorMessage(message.err)
-			return m, nil
-		}
-		prompt := &directMutationPrompt{
-			operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind,
-			assessment: message.plan.Assessment(), session: m.session,
-			confirm: application.Confirmation{Approved: message.request.Kind != application.ActionReset && message.request.Kind != application.ActionWipeDevice},
-		}
-		if message.request.Kind == application.ActionUpgrade {
-			prompt.label = message.request.Image
-		}
-		if message.request.Reset != nil {
-			options := *message.request.Reset
-			options.UserDisks = append([]string(nil), options.UserDisks...)
-			options.SystemPartitions = append([]string(nil), options.SystemPartitions...)
-			prompt.reset = &options
-		}
-		if message.request.DeviceWipe != nil {
-			options := *message.request.DeviceWipe
-			prompt.deviceWipe = &options
-		}
-		if message.request.Kind == application.ActionReset || message.request.Kind == application.ActionWipeDevice {
-			prompt.intent = destructiveIntentInput()
-			if message.request.Kind == application.ActionReset {
-				prompt.field = 3
-			} else {
-				prompt.field = 1
-			}
-		}
-		m.mutation.prompt = prompt
-		return m, nil
-	case directEtcdPrepared:
-		if message.generation != m.generation() || message.operation != m.mutation.operation {
-			return m, nil
-		}
-		m.mutation.busy = false
-		m.mutation.notice = ""
-		if message.err != nil || message.plan == nil {
-			m.mutation.etcdKind = ""
-			m.view.notice = mutationErrorMessage(message.err)
-			return m, nil
-		}
-		m.mutation.prompt = &directMutationPrompt{
-			operation: message.operation, generation: message.generation, etcd: message.plan, etcdKind: message.request.Kind,
-			assessment: message.plan.Assessment(), session: m.session, confirm: application.Confirmation{Approved: true},
-			label: message.request.MemberHostname, etcdMemberID: message.memberID, etcdMemberHostname: message.memberHostname,
-		}
-		return m, nil
-	case directMutationProgress:
-		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
-			return m, nil
-		}
-		m.mutation.results = appendMutationResult(m.mutation.results, message.result)
-		m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
-		return m, directMutationAwaitCommand(m.mutationWork)
-	case directUpgradeProgress:
-		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
-			return m, nil
-		}
-		m.mutation.upgrade = directUpgradeDisplayState{Active: true, Target: message.target, Event: message.event}
-		m.mutation.notice = renderDirectUpgradeNotice(m.mutation.upgrade)
-		return m, directMutationAwaitCommand(m.mutationWork)
-	case directMutationCanceled:
-		// A session switch or root shutdown can stop the TUI waiter before
-		// backend cleanup has published its retained terminal result. The
-		// session still owns that wait and mutation lease.
-		return m, nil
-	case directMutationFinished:
-		if message.generation != m.generation() || message.operation != m.mutation.operation {
-			return m, nil
-		}
-		m.mutation.busy = false
-		if message.upgradeStartErr != nil {
-			m.mutation.upgradePending = false
-			m.mutation.upgradeErr = message.upgradeStartErr
-			m.mutation.upgrade = directUpgradeDisplayState{Target: message.upgradeTarget}
-			m.mutation.notice = directUpgradeAdmissionNotice(message.upgradeTarget, message.upgradeStartErr)
-			m.mutationWork = directMutationWork{}
-			return m, nil
-		}
-		if message.upgrade != nil || message.upgradeWaitErr != nil {
-			m.mutation.upgradePending = false
-			m.mutation.upgradeResult = message.upgrade
-			m.mutation.upgradeErr = message.upgradeWaitErr
-			state := directUpgradeDisplayState{Target: message.upgradeTarget}
-			if message.upgrade != nil {
-				state.Event = upgradeEventValue(message.upgrade.Event)
-				switch message.upgrade.Outcome {
-				case ports.UpgradeOutcomeAppliedWithRecoveryWarning:
-					state.Warning = "upgrade applied; node recovery is incomplete — check node readiness and scheduling manually"
-				case ports.UpgradeOutcomeApplied:
-					state.Outcome = domain.OperationCompleted
-				case ports.UpgradeOutcomeAccepted:
-					state.Outcome = domain.OperationAccepted
-				default:
-					state.Outcome = domain.OperationUnconfirmed
-				}
-				if state.Warning == "" && message.upgrade.Outcome != ports.UpgradeOutcomeAccepted && message.upgrade.Outcome != ports.UpgradeOutcomeApplied {
-					state.Err = "request failed; check node state before retrying"
-				}
-			}
-			if message.upgradeWaitErr != nil {
-				state.Outcome = domain.OperationUnconfirmed
-				state.Err = "request failed; check node state before retrying"
-			}
-			m.mutation.upgrade = state
-			m.mutation.notice = renderDirectUpgradeNotice(state)
-			m.mutationWork = directMutationWork{}
-			return m, nil
-		}
-		m.mutation.prompt = nil
-		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
-		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
-		m.mutation.receiptVisible = m.mutation.snapshot != nil && m.canShowDirectEtcdReceipt()
-		if m.mutation.etcdKind != "" {
-			failure := ""
-			if message.err != nil {
-				failure = mutationErrorMessage(message.err)
-			}
-			m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.etcdKind, m.mutation.snapshot, failure)
-			m.view.notice = ""
-		} else if len(m.mutation.results) == 0 && message.err != nil {
-			if m.mutation.snapshot != nil {
-				m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
-				m.view.notice = ""
-			} else {
-				m.view.notice = mutationErrorMessage(message.err)
-				m.mutation.notice = ""
-			}
-		} else {
-			m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
-		}
-		m.mutationWork = directMutationWork{}
-		return m, nil
-	case directEventFollowOpened:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			return m, nil
-		}
-		if message.err != nil || message.stream == nil {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			m.eventFollow.following = false
-			m.eventFollow.err = "Event stream is unavailable"
-			m.cluster.events.Status = directPartial
-			m.cluster.events.Err = m.eventFollow.err
-			m.requests.cancelSlot("cluster-events-follow")
-			return m, nil
-		}
-		m.eventFollow.stream = message.stream
-		return m, directEventFollowNextCommand(message.stream, m.eventFollow.request)
-	case directEventFollowBatch:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
-			return m, nil
-		}
-		m.applyDirectEventBatch(message.batch, message.err)
-		if message.err != nil || m.eventFollow.err != "" {
-			m.eventFollow.following = false
-			if m.eventFollow.stream != nil {
-				_ = m.eventFollow.stream.Close()
-				m.eventFollow.stream = nil
-			}
-			m.requests.cancelSlot("cluster-events-follow")
-			return m, nil
-		}
-		return m, directEventFollowNextCommand(m.eventFollow.stream, m.eventFollow.request)
-	case directClusterHealthOpened:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			return m, nil
-		}
-		if message.err != nil || message.stream == nil {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Failed, Request: m.healthStream.target, Err: "Cluster health check is unavailable"})
-			m.requests.cancelSlot("cluster-health")
-			return m, nil
-		}
-		m.healthStream.stream = message.stream
-		m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Ready, Request: m.healthStream.target})
-		return m, directClusterHealthNextCommand(message.stream, m.healthStream.request)
-	case directClusterHealthBatch:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
-			return m, nil
-		}
-		state := m.healthcheck.state
-		if message.progress.Message != "" {
-			state.Lines = appendBoundedLines(state.Lines, []string{message.progress.Message}, 500)
-		}
-		if (message.err != nil && !errors.Is(message.err, io.EOF)) || message.progress.Err != "" {
-			state.Status = application.Failed
-			state.Err = "Cluster health check is unavailable"
-			if message.progress.Err != "" {
-				state.Err = message.progress.Err
-			}
-			state.VerdictReady = false
-			m.healthcheck = m.healthcheck.setStreamState(state)
-			m.syncDirectStreamViewports()
-			m.closeDirectHealth()
-			return m, nil
-		}
-		if message.progress.EOF {
-			state.EOF = true
-			state.VerdictReady = true
-			state.Status = application.Ready
-			m.healthcheck = m.healthcheck.setStreamState(state)
-			m.syncDirectStreamViewports()
-			m.closeDirectHealth()
-			return m, nil
-		}
-		m.healthcheck = m.healthcheck.setStreamState(state)
-		m.syncDirectStreamViewports()
-		if errors.Is(message.err, io.EOF) {
-			state.EOF = true
-			m.healthcheck = m.healthcheck.setStreamState(state)
-			m.closeDirectHealth()
-			return m, nil
-		}
-		return m, directClusterHealthNextCommand(m.healthStream.stream, m.healthStream.request)
-	case directNodeServicesLoaded:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() {
-			return m, nil
-		}
-		m.requests.cancelSlot("cluster-nodes-services")
-		nodeStatus := directNodeLoadStatus(message.nodes)
-		state := application.NodeState{Status: application.Ready, Value: message.nodes}
-		if nodeStatus == directPartial {
-			state.Status = application.Partial
-			state.Err = "Some nodes report problems"
-		}
-		serviceStatus := directServiceLoadStatus(message.services)
-		serviceState := directServiceState{Status: serviceStatus, Value: message.services}
-		if serviceStatus == directPartial {
-			serviceState.Err = "Some services report problems"
-		}
-		if message.err != nil {
-			state.Status = application.Failed
-			state.Err = "Node data is unavailable"
-			if nodeStatus == directPartial || len(message.nodes.Nodes) > 0 || !message.nodes.ObservedAt.IsZero() {
-				state.Status = application.Partial
-				state.Err = "Some node data is unavailable"
-			}
-			serviceState.Status = directFailed
-			serviceState.Err = "Service data is unavailable"
-			if serviceStatus == directPartial || len(message.services.Services) > 0 || !message.services.ObservedAt.IsZero() {
-				serviceState.Status = directPartial
-				serviceState.Err = "Some service data is unavailable"
-			}
-		}
-		state.Value = application.EnrichNodes(state.Value, m.cluster.kubernetes.Nodes)
-		m.cluster.nodes = state
-		m.cluster.services = serviceState
-		m.services = m.services.normalizeSelection(serviceState.Value.Services, m.services.control.Cursor())
-		previousCursor := m.nodes.control.Cursor()
-		m.nodes = m.nodes.normalizeSelection(state.Value.Nodes, previousCursor)
-		if m.options.NodeFocus != "" {
-			if focusedID := resolveNodeFocus(state.Value.Nodes, m.options.NodeFocus); focusedID != "" {
-				m.nodes = m.nodes.selectID(focusedID, state.Value.Nodes)
-			}
-			m.options.NodeFocus = ""
-		}
-		return m, nil
-	case directEventsLoaded:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() {
-			return m, nil
-		}
-		m.requests.cancelSlot("cluster-events")
-		state := directEventState{Value: message.events, Status: directReady}
-		if len(message.events.Problems) > 0 {
-			state.Status = directPartial
-			state.Err = "Some event streams are unavailable"
-		}
-		if message.err != nil {
-			state.Status = directFailed
-			state.Err = "Event data is unavailable"
-			if len(message.events.Events) > 0 || len(message.events.Problems) > 0 {
-				state.Status = directPartial
-				state.Err = "Some event data is unavailable"
-			}
-		}
-		m.cluster.events = state
-		m.events = m.events.normalizeSelection(eventRows(state.Value), m.events.control.Cursor())
-		return m, nil
-	case directEtcdLoaded:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() {
-			return m, nil
-		}
-		m.requests.cancelSlot("cluster-etcd")
-		state := directEtcdState{Value: message.etcd, Status: directEtcdLoadStatus(message.etcd)}
-		if state.Status == directPartial {
-			state.Err = "Some etcd members are unavailable"
-		}
-		if message.err != nil {
-			state.Status = directFailed
-			state.Err = "Etcd data is unavailable"
-			if len(message.etcd.Members) > 0 || state.Status == directPartial {
-				state.Status = directPartial
-				state.Err = "Some etcd data is unavailable"
-			}
-		}
-		m.cluster.etcd = state
-		m.etcd = m.etcd.normalizeSelection(state.Value.Members, m.etcd.control.Cursor())
-		return m, nil
-	case directKubernetesNodesLoaded:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() {
-			return m, nil
-		}
-		m.requests.cancelSlot("cluster-kubernetes")
-		state := directKubernetesState{Status: directReady, Nodes: cloneKubernetesSnapshots(message.nodes)}
-		if message.err != nil {
-			state.Status = directFailed
-			state.Err = "Kubernetes data is unavailable"
-		}
-		m.cluster.kubernetes = state
-		m.cluster.nodes.Value = application.EnrichNodes(m.cluster.nodes.Value, state.Nodes)
-		m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
-		return m, nil
+	case directCurrentInstallImage, directServicePrepared, directNodePrepared, directEtcdPrepared, directMutationProgress, directUpgradeProgress, directMutationCanceled, directMutationFinished:
+		return m.updateDirectMutationResult(message)
+	case directEventFollowOpened, directEventFollowBatch, directClusterHealthOpened, directClusterHealthBatch:
+		return m.updateDirectEventAndHealthResult(message)
+	case directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded:
+		return m.updateDirectClusterResult(message)
 	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded, directSocketsLoaded, directMountsLoaded, directMemoryLoaded,
 		directCPULoaded, directTimeLoaded, directTimeCheckLoaded:
 		m.applyDiagnosticResult(message)
 		return m, nil
-	case directServiceLogsOpened:
-		current := m.requests.current(message.request)
-		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewServiceLogs {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			if current {
-				m.requests.cancelSlot("service-logs")
-			}
-			return m, nil
-		}
-		if message.err != nil {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			m.logStream.status, m.logStream.err = application.Failed, "Service logs are unavailable"
-			m.logs = m.logs.setStreamState(application.Failed, nil, m.logStream.err, false)
-			m.syncDirectStreamViewports()
-			m.requests.cancelSlot("service-logs")
-			return m, nil
-		}
-		m.logStream.stream = message.stream
-		m.logStream.status = application.Ready
-		return m, directServiceLogNextCommand(message.stream, m.logStream.request)
-	case directServiceLogBatch:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.logStream.request.stamp {
-			return m, nil
-		}
-		lines := appendBoundedLines(m.logs.state.Lines, message.batch.Lines, 5000)
-		if message.batch.Err != "" {
-			m.logStream.status, m.logStream.err = application.Failed, message.batch.Err
-		}
-		if message.err != nil && !errors.Is(message.err, io.EOF) {
-			m.logStream.status, m.logStream.err = application.Failed, "Service log stream failed"
-		}
-		m.logStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
-		m.logs = m.logs.setStreamState(m.logStream.status, lines, m.logStream.err, m.logStream.eof)
-		m.syncDirectStreamViewports()
-		if !m.logStream.eof && m.logStream.status != application.Failed {
-			return m, directServiceLogNextCommand(m.logStream.stream, m.logStream.request)
-		}
-		m.requests.cancelSlot("service-logs")
-		return m, nil
-	case directDmesgOpened:
-		current := m.requests.current(message.request)
-		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewDmesg {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			if current {
-				m.requests.cancelSlot("dmesg")
-			}
-			return m, nil
-		}
-		if message.err != nil {
-			if message.stream != nil {
-				_ = message.stream.Close()
-			}
-			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream is unavailable"
-			m.dmesg = m.dmesg.setStreamState(application.Failed, nil, m.dmesgStream.err, false)
-			m.syncDirectStreamViewports()
-			m.requests.cancelSlot("dmesg")
-			return m, nil
-		}
-		m.dmesgStream.stream = message.stream
-		m.dmesgStream.status = application.Ready
-		return m, directDmesgNextCommand(message.stream, m.dmesgStream.request)
-	case directDmesgBatch:
-		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.dmesgStream.request.stamp {
-			return m, nil
-		}
-		lines := appendBoundedLines(m.dmesg.state.Lines, message.batch.Lines, 5000)
-		if message.batch.Err != "" {
-			m.dmesgStream.status, m.dmesgStream.err = application.Failed, message.batch.Err
-		}
-		if message.err != nil && !errors.Is(message.err, io.EOF) {
-			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream failed"
-		}
-		m.dmesgStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
-		m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, lines, m.dmesgStream.err, m.dmesgStream.eof)
-		m.syncDirectStreamViewports()
-		if !m.dmesgStream.eof && m.dmesgStream.status != application.Failed {
-			return m, directDmesgNextCommand(m.dmesgStream.stream, m.dmesgStream.request)
-		}
-		m.requests.cancelSlot("dmesg")
-		return m, nil
-	case directClearLogs:
-		if message.dmesg {
-			m.dmesgStream.err = ""
-			m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, nil, "", false)
-			m.syncDirectStreamViewports()
-		} else {
-			m.logStream.err = ""
-			m.logs = m.logs.setStreamState(m.logStream.status, nil, "", false)
-			m.syncDirectStreamViewports()
-		}
-		return m, nil
+	case directServiceLogsOpened, directServiceLogBatch, directDmesgOpened, directDmesgBatch, directClearLogs:
+		return m.updateDirectLogsResult(message)
 	case directResourceKindsLoaded, directResourceInstancesLoaded, directResourceDetailLoaded:
 		return m, m.applyResourceResult(message)
 	case directRunCommand:
@@ -688,114 +239,8 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.String() == "ctrl+c" {
 			return m, m.cleanup(tea.Quit())
 		}
-		if m.mutation.upgradePending && message.String() == "esc" {
-			m.requests.cancelSlot("upgrade-image")
-			m.requests.cancelSlot("upgrade-prepare")
-			m.upgradePrompt = nil
-			m.mutation.busy = false
-			m.mutation.upgradePending = false
-			m.mutation.operation = m.nextMutationOperation()
-			m.mutation.notice = ""
-			m.view.notice = "Action canceled"
-			return m, nil
-		}
-		if m.etcdPathPrompt != nil {
-			switch message.String() {
-			case "esc":
-				m.etcdPathPrompt = nil
-				m.mutation.notice = ""
-				m.mutation.etcdKind = ""
-				m.view.notice = "Action canceled"
-				return m, nil
-			case "enter":
-				path := m.etcdPathPrompt.input.Value()
-				if err := application.ValidateEtcdSnapshotPath(path); err != nil {
-					m.etcdPathPrompt.err = "invalid snapshot path"
-					return m, nil
-				}
-				prompt := m.etcdPathPrompt
-				m.etcdPathPrompt = nil
-				kind := prompt.kind
-				if kind == "" {
-					kind = application.EtcdActionSnapshot
-				}
-				request := application.EtcdActionRequest{Kind: kind, Node: prompt.node, MemberHostname: prompt.member, SnapshotPath: path}
-				request.MemberID = prompt.memberID
-				member := domain.EtcdMemberSnapshot{MemberID: prompt.memberID, Hostname: prompt.member}
-				return m, m.prepareDirectEtcdMutation(request, member)
-			}
-			var command tea.Cmd
-			*m.etcdPathPrompt, command = m.etcdPathPrompt.update(message)
+		if command, handled := m.handleDirectMutationInput(message); handled {
 			return m, command
-		}
-		if m.upgradePrompt != nil {
-			prompt := m.upgradePrompt
-			switch message.String() {
-			case "esc":
-				m.requests.cancelSlot("upgrade-image")
-				m.requests.cancelSlot("upgrade-prepare")
-				m.upgradePrompt = nil
-				m.mutation.busy = false
-				m.mutation.upgradePending = false
-				m.mutation.operation = m.nextMutationOperation()
-				m.mutation.notice = ""
-				m.view.notice = "Action canceled"
-				return m, nil
-			case "enter":
-				image := strings.TrimSpace(prompt.input.Value())
-				if image == "" {
-					m.view.notice = "enter an installer image"
-					return m, nil
-				}
-				m.upgradePrompt = nil
-				m.mutation.busy = true
-				m.mutation.upgradePending = true
-				m.mutation.operation = prompt.operation
-				m.mutation.notice = "Preparing upgrade…"
-				request, _ := m.requests.beginWithContext("upgrade-prepare", prompt.generation, m.sessionCtx)
-				return m, directPrepareNodeCommand(m.session, request.ctx, prompt.operation, prompt.generation, application.NodeActionRequest{Kind: application.ActionUpgrade, Targets: []string{prompt.target}, Image: image})
-			}
-			var command tea.Cmd
-			*prompt, command = prompt.update(message)
-			return m, command
-		}
-		if m.mutation.prompt != nil {
-			prompt := m.mutation.prompt
-			if prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice {
-				command, handled := m.updateDirectDestructivePrompt(message)
-				if handled {
-					return m, command
-				}
-			}
-			if message.String() == "y" || message.String() == "Y" {
-				if prompt.assessment.Blocked != "" {
-					m.view.notice = "Action refused: " + prompt.assessment.Blocked
-					return m, nil
-				}
-				m.mutation.prompt = nil
-				m.mutation.busy = true
-				m.mutation.operation = prompt.operation
-				m.mutation.total = len(prompt.assessment.Targets)
-				m.mutation.results = nil
-				m.mutation.snapshot = nil
-				m.mutation.receiptVisible = false
-				m.mutation.etcdKind = prompt.etcdKind
-				m.mutation.receiptOffset = 0
-				m.mutation.notice = "Mutation in progress…"
-				capacity := m.mutation.total
-				if capacity < 1 {
-					capacity = 1
-				}
-				m.mutationWork = directMutationWork{operation: prompt.operation, generation: prompt.generation, plan: prompt, session: prompt.session, ctx: m.sessionCtx, events: make(chan directMutationWorkItem, capacity+1)}
-				return m, directMutationStartCommand(m.mutationWork)
-			}
-			if message.String() == "n" || message.String() == "N" || message.String() == "esc" {
-				m.mutation.prompt = nil
-				m.mutation.notice = ""
-				m.mutation.etcdKind = ""
-				m.view.notice = "Action canceled"
-			}
-			return m, nil
 		}
 		if m.timePrompt != nil {
 			switch message.String() {
@@ -822,7 +267,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.contexts.active {
 			switch message.String() {
-			case "esc":
+			case "esc", "q":
 				m.contexts.active = false
 			case "up", "k":
 				m.contexts.control.MoveUp(1)
@@ -854,10 +299,20 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.palette, command = m.palette.update(message)
 			return m, command
 		}
-		if message.String() == ":" && !m.nodes.filtering && !m.services.filtering && !m.events.filtering && !m.healthcheck.filtering && !m.etcd.filtering && !m.problems.filtering && !m.processes.filtering && !m.disks.filtering && !m.network.filtering && !m.netstat.filtering && !m.mounts.filtering && !m.memory.filtering && !m.cpu.filtering && !m.time.filtering && !m.resourceKinds.filtering && !m.resourceInstances.filtering && !m.logs.filtering && !m.dmesg.filtering {
+		if message.String() == ":" && !m.directFilterEditing() {
 			var command tea.Cmd
 			m.palette, command = m.palette.open()
 			return m, command
+		}
+		if message.String() == "?" && !m.directFilterEditing() {
+			m.views = m.views.push(viewFrame{Kind: viewHelp, Label: "help"})
+			return m, nil
+		}
+		if m.views.top().Kind == viewHelp {
+			if message.String() == "q" || message.String() == "esc" {
+				m.popDirectView()
+			}
+			return m, nil
 		}
 		if command, handled := m.handleDiagnosticKey(message); handled {
 			return m, command
@@ -1277,6 +732,8 @@ func (m directModel) View() tea.View {
 			} else {
 				content = "SERVICE DETAIL\nService unavailable"
 			}
+		} else if m.views.top().Kind == viewHelp {
+			content = "HELP\n\n" + renderActionHints(actionHints(viewNodes, m.options.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.options.WritesEnabled))
 		} else if m.views.top().Kind == viewServiceLogs {
 			content = m.logs.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
 		} else if m.views.top().Kind == viewDmesg {

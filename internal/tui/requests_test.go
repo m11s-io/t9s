@@ -36,7 +36,10 @@ func TestDirectStartupRendersBeforeIO(t *testing.T) {
 	command := model.Init()
 	require.NotNil(t, command)
 	done := make(chan struct{})
-	go func() { defer close(done); _ = command() }()
+	startup, ok := command().(tea.BatchMsg)
+	require.True(t, ok)
+	require.Len(t, startup, 3)
+	go func() { defer close(done); _ = startup[0]() }()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -77,7 +80,8 @@ func TestDirectContextSwitchClosesLateSessionOpen(t *testing.T) {
 	})
 	model := newDirectModel(context.Background(), client, LaunchOptions{})
 
-	contexts := model.Init()()
+	startup := model.Init()().(tea.BatchMsg)
+	contexts := startup[0]()
 	updated, open := model.Update(contexts)
 	model = updated.(directModel)
 	require.NotNil(t, open)
@@ -405,6 +409,13 @@ func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (direc
 	message := command()
 	require.NotNil(t, message)
 	if batch, ok := message.(tea.BatchMsg); ok {
+		// Startup batches include two real timers. Drive the context discovery
+		// command here; Bubble Tea itself owns the timers in production.
+		if model.generation() == 0 && model.session == nil && len(batch) == 3 {
+			model, next := applyDirectCommand(t, model, batch[0])
+			updated, _ := model.Update(splashDoneMsg{})
+			return updated.(directModel), next
+		}
 		for _, command := range batch {
 			model, _ = applyDirectCommand(t, model, command)
 		}

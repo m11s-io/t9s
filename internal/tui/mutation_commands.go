@@ -880,3 +880,297 @@ func renderDirectEtcdReceiptOverlay(state directMutationState, width, height int
 	}
 	return strings.Join(visible, "\n")
 }
+
+func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch message := message.(type) {
+	case directCurrentInstallImage:
+		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.requests.current(message.request) {
+			return m, nil
+		}
+		m.requests.cancelSlot("upgrade-image")
+		m.mutation.busy = false
+		m.mutation.upgradePending = false
+		prompt := newUpgradePromptModel(message.target, message.image)
+		prompt.operation, prompt.generation = message.operation, message.generation
+		m.upgradePrompt = &prompt
+		if message.err != nil {
+			m.upgradePrompt.notice = "current install image unavailable"
+			m.view.notice = "current install image is unavailable; enter an image to continue"
+		} else {
+			m.view.notice = ""
+		}
+		return m, prompt.input.Focus()
+	case directServicePrepared:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		if message.err != nil || message.plan == nil {
+			m.view.notice = mutationErrorMessage(message.err)
+			return m, nil
+		}
+		m.mutation.prompt = &directMutationPrompt{operation: message.operation, generation: message.generation, service: message.plan, serviceKind: message.request.Kind, label: message.request.Service + "@" + message.request.Node, assessment: message.plan.Assessment(), session: m.session}
+		return m, nil
+	case directNodePrepared:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		if message.request.Kind == application.ActionUpgrade {
+			m.requests.cancelSlot("upgrade-prepare")
+			m.mutation.upgradePending = false
+		}
+		m.mutation.busy = false
+		if message.err != nil || message.plan == nil {
+			if message.request.Kind == application.ActionUpgrade {
+				m.mutation.notice = ""
+			}
+			m.view.notice = mutationErrorMessage(message.err)
+			return m, nil
+		}
+		prompt := &directMutationPrompt{
+			operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind,
+			assessment: message.plan.Assessment(), session: m.session,
+			confirm: application.Confirmation{Approved: message.request.Kind != application.ActionReset && message.request.Kind != application.ActionWipeDevice},
+		}
+		if message.request.Kind == application.ActionUpgrade {
+			prompt.label = message.request.Image
+		}
+		if message.request.Reset != nil {
+			options := *message.request.Reset
+			options.UserDisks = append([]string(nil), options.UserDisks...)
+			options.SystemPartitions = append([]string(nil), options.SystemPartitions...)
+			prompt.reset = &options
+		}
+		if message.request.DeviceWipe != nil {
+			options := *message.request.DeviceWipe
+			prompt.deviceWipe = &options
+		}
+		if message.request.Kind == application.ActionReset || message.request.Kind == application.ActionWipeDevice {
+			prompt.intent = destructiveIntentInput()
+			if message.request.Kind == application.ActionReset {
+				prompt.field = 3
+			} else {
+				prompt.field = 1
+			}
+		}
+		m.mutation.prompt = prompt
+		return m, nil
+	case directEtcdPrepared:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		m.mutation.notice = ""
+		if message.err != nil || message.plan == nil {
+			m.mutation.etcdKind = ""
+			m.view.notice = mutationErrorMessage(message.err)
+			return m, nil
+		}
+		m.mutation.prompt = &directMutationPrompt{
+			operation: message.operation, generation: message.generation, etcd: message.plan, etcdKind: message.request.Kind,
+			assessment: message.plan.Assessment(), session: m.session, confirm: application.Confirmation{Approved: true},
+			label: message.request.MemberHostname, etcdMemberID: message.memberID, etcdMemberHostname: message.memberHostname,
+		}
+		return m, nil
+	case directMutationProgress:
+		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
+			return m, nil
+		}
+		m.mutation.results = appendMutationResult(m.mutation.results, message.result)
+		m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
+		return m, directMutationAwaitCommand(m.mutationWork)
+	case directUpgradeProgress:
+		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
+			return m, nil
+		}
+		m.mutation.upgrade = directUpgradeDisplayState{Active: true, Target: message.target, Event: message.event}
+		m.mutation.notice = renderDirectUpgradeNotice(m.mutation.upgrade)
+		return m, directMutationAwaitCommand(m.mutationWork)
+	case directMutationCanceled:
+		// A session switch or root shutdown can stop the TUI waiter before
+		// backend cleanup has published its retained terminal result. The
+		// session still owns that wait and mutation lease.
+		return m, nil
+	case directMutationFinished:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		if message.upgradeStartErr != nil {
+			m.mutation.upgradePending = false
+			m.mutation.upgradeErr = message.upgradeStartErr
+			m.mutation.upgrade = directUpgradeDisplayState{Target: message.upgradeTarget}
+			m.mutation.notice = directUpgradeAdmissionNotice(message.upgradeTarget, message.upgradeStartErr)
+			m.mutationWork = directMutationWork{}
+			return m, nil
+		}
+		if message.upgrade != nil || message.upgradeWaitErr != nil {
+			m.mutation.upgradePending = false
+			m.mutation.upgradeResult = message.upgrade
+			m.mutation.upgradeErr = message.upgradeWaitErr
+			state := directUpgradeDisplayState{Target: message.upgradeTarget}
+			if message.upgrade != nil {
+				state.Event = upgradeEventValue(message.upgrade.Event)
+				switch message.upgrade.Outcome {
+				case ports.UpgradeOutcomeAppliedWithRecoveryWarning:
+					state.Warning = "upgrade applied; node recovery is incomplete — check node readiness and scheduling manually"
+				case ports.UpgradeOutcomeApplied:
+					state.Outcome = domain.OperationCompleted
+				case ports.UpgradeOutcomeAccepted:
+					state.Outcome = domain.OperationAccepted
+				default:
+					state.Outcome = domain.OperationUnconfirmed
+				}
+				if state.Warning == "" && message.upgrade.Outcome != ports.UpgradeOutcomeAccepted && message.upgrade.Outcome != ports.UpgradeOutcomeApplied {
+					state.Err = "request failed; check node state before retrying"
+				}
+			}
+			if message.upgradeWaitErr != nil {
+				state.Outcome = domain.OperationUnconfirmed
+				state.Err = "request failed; check node state before retrying"
+			}
+			m.mutation.upgrade = state
+			m.mutation.notice = renderDirectUpgradeNotice(state)
+			m.mutationWork = directMutationWork{}
+			return m, nil
+		}
+		m.mutation.prompt = nil
+		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
+		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
+		m.mutation.receiptVisible = m.mutation.snapshot != nil && m.canShowDirectEtcdReceipt()
+		if m.mutation.etcdKind != "" {
+			failure := ""
+			if message.err != nil {
+				failure = mutationErrorMessage(message.err)
+			}
+			m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.etcdKind, m.mutation.snapshot, failure)
+			m.view.notice = ""
+		} else if len(m.mutation.results) == 0 && message.err != nil {
+			if m.mutation.snapshot != nil {
+				m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
+				m.view.notice = ""
+			} else {
+				m.view.notice = mutationErrorMessage(message.err)
+				m.mutation.notice = ""
+			}
+		} else {
+			m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
+		}
+		m.mutationWork = directMutationWork{}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *directModel) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, bool) {
+	if m.mutation.upgradePending && message.String() == "esc" {
+		m.requests.cancelSlot("upgrade-image")
+		m.requests.cancelSlot("upgrade-prepare")
+		m.upgradePrompt = nil
+		m.mutation.busy = false
+		m.mutation.upgradePending = false
+		m.mutation.operation = m.nextMutationOperation()
+		m.mutation.notice = ""
+		m.view.notice = "Action canceled"
+		return nil, true
+	}
+	if m.etcdPathPrompt != nil {
+		switch message.String() {
+		case "esc":
+			m.etcdPathPrompt = nil
+			m.mutation.notice = ""
+			m.mutation.etcdKind = ""
+			m.view.notice = "Action canceled"
+			return nil, true
+		case "enter":
+			path := m.etcdPathPrompt.input.Value()
+			if err := application.ValidateEtcdSnapshotPath(path); err != nil {
+				m.etcdPathPrompt.err = "invalid snapshot path"
+				return nil, true
+			}
+			prompt := m.etcdPathPrompt
+			m.etcdPathPrompt = nil
+			kind := prompt.kind
+			if kind == "" {
+				kind = application.EtcdActionSnapshot
+			}
+			request := application.EtcdActionRequest{Kind: kind, Node: prompt.node, MemberHostname: prompt.member, SnapshotPath: path}
+			request.MemberID = prompt.memberID
+			member := domain.EtcdMemberSnapshot{MemberID: prompt.memberID, Hostname: prompt.member}
+			return m.prepareDirectEtcdMutation(request, member), true
+		}
+		var command tea.Cmd
+		*m.etcdPathPrompt, command = m.etcdPathPrompt.update(message)
+		return command, true
+	}
+	if m.upgradePrompt != nil {
+		prompt := m.upgradePrompt
+		switch message.String() {
+		case "esc":
+			m.requests.cancelSlot("upgrade-image")
+			m.requests.cancelSlot("upgrade-prepare")
+			m.upgradePrompt = nil
+			m.mutation.busy = false
+			m.mutation.upgradePending = false
+			m.mutation.operation = m.nextMutationOperation()
+			m.mutation.notice = ""
+			m.view.notice = "Action canceled"
+			return nil, true
+		case "enter":
+			image := strings.TrimSpace(prompt.input.Value())
+			if image == "" {
+				m.view.notice = "enter an installer image"
+				return nil, true
+			}
+			m.upgradePrompt = nil
+			m.mutation.busy = true
+			m.mutation.upgradePending = true
+			m.mutation.operation = prompt.operation
+			m.mutation.notice = "Preparing upgrade…"
+			request, _ := m.requests.beginWithContext("upgrade-prepare", prompt.generation, m.sessionCtx)
+			return directPrepareNodeCommand(m.session, request.ctx, prompt.operation, prompt.generation, application.NodeActionRequest{Kind: application.ActionUpgrade, Targets: []string{prompt.target}, Image: image}), true
+		}
+		var command tea.Cmd
+		*prompt, command = prompt.update(message)
+		return command, true
+	}
+	if m.mutation.prompt != nil {
+		prompt := m.mutation.prompt
+		if prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice {
+			command, handled := m.updateDirectDestructivePrompt(message)
+			if handled {
+				return command, true
+			}
+		}
+		if message.String() == "y" || message.String() == "Y" {
+			if prompt.assessment.Blocked != "" {
+				m.view.notice = "Action refused: " + prompt.assessment.Blocked
+				return nil, true
+			}
+			m.mutation.prompt = nil
+			m.mutation.busy = true
+			m.mutation.operation = prompt.operation
+			m.mutation.total = len(prompt.assessment.Targets)
+			m.mutation.results = nil
+			m.mutation.snapshot = nil
+			m.mutation.receiptVisible = false
+			m.mutation.etcdKind = prompt.etcdKind
+			m.mutation.receiptOffset = 0
+			m.mutation.notice = "Mutation in progress…"
+			capacity := m.mutation.total
+			if capacity < 1 {
+				capacity = 1
+			}
+			m.mutationWork = directMutationWork{operation: prompt.operation, generation: prompt.generation, plan: prompt, session: prompt.session, ctx: m.sessionCtx, events: make(chan directMutationWorkItem, capacity+1)}
+			return directMutationStartCommand(m.mutationWork), true
+		}
+		if message.String() == "n" || message.String() == "N" || message.String() == "esc" {
+			m.mutation.prompt = nil
+			m.mutation.notice = ""
+			m.mutation.etcdKind = ""
+			m.view.notice = "Action canceled"
+		}
+		return nil, true
+	}
+	return nil, false
+}

@@ -22,6 +22,7 @@ const (
 	commandProblems
 	commandResources
 	commandClusterHealth
+	commandHelp
 )
 
 type commandModel struct {
@@ -57,6 +58,8 @@ func resolveCommand(value string) command {
 		return commandResources
 	case "healthcheck", "hc":
 		return commandClusterHealth
+	case "help", "?":
+		return commandHelp
 	default:
 		if _, ok := resourcesCommandArgument(value); ok {
 			return commandResources

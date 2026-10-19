@@ -18,6 +18,8 @@ func TestCommandResolutionIsClosedOverKnownNames(t *testing.T) {
 	assert.Equal(t, commandNodes, resolveCommand("no"))
 	assert.Equal(t, commandContexts, resolveCommand("contexts"))
 	assert.Equal(t, commandContexts, resolveCommand("ctx"))
+	assert.Equal(t, commandHelp, resolveCommand("help"))
+	assert.Equal(t, commandHelp, resolveCommand("?"))
 	assert.Equal(t, commandUnknown, resolveCommand(" nodes"))
 	assert.Equal(t, commandUnknown, resolveCommand("rm -rf anything"))
 }

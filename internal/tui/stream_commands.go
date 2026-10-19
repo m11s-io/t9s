@@ -311,3 +311,203 @@ func directClusterHealthNextCommand(stream ports.ClusterHealthStream, request di
 		return directClusterHealthBatch{request: request.stamp, progress: progress, err: err}
 	})
 }
+
+func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch message := message.(type) {
+	case directEventFollowOpened:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			return m, nil
+		}
+		if message.err != nil || message.stream == nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.eventFollow.following = false
+			m.eventFollow.err = "Event stream is unavailable"
+			m.cluster.events.Status = directPartial
+			m.cluster.events.Err = m.eventFollow.err
+			m.requests.cancelSlot("cluster-events-follow")
+			return m, nil
+		}
+		m.eventFollow.stream = message.stream
+		return m, directEventFollowNextCommand(message.stream, m.eventFollow.request)
+	case directEventFollowBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.eventFollow.request.stamp || !m.eventFollow.following {
+			return m, nil
+		}
+		m.applyDirectEventBatch(message.batch, message.err)
+		if message.err != nil || m.eventFollow.err != "" {
+			m.eventFollow.following = false
+			if m.eventFollow.stream != nil {
+				_ = m.eventFollow.stream.Close()
+				m.eventFollow.stream = nil
+			}
+			m.requests.cancelSlot("cluster-events-follow")
+			return m, nil
+		}
+		return m, directEventFollowNextCommand(m.eventFollow.stream, m.eventFollow.request)
+	case directClusterHealthOpened:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			return m, nil
+		}
+		if message.err != nil || message.stream == nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Failed, Request: m.healthStream.target, Err: "Cluster health check is unavailable"})
+			m.requests.cancelSlot("cluster-health")
+			return m, nil
+		}
+		m.healthStream.stream = message.stream
+		m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Ready, Request: m.healthStream.target})
+		return m, directClusterHealthNextCommand(message.stream, m.healthStream.request)
+	case directClusterHealthBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
+			return m, nil
+		}
+		state := m.healthcheck.state
+		if message.progress.Message != "" {
+			state.Lines = appendBoundedLines(state.Lines, []string{message.progress.Message}, 500)
+		}
+		if (message.err != nil && !errors.Is(message.err, io.EOF)) || message.progress.Err != "" {
+			state.Status = application.Failed
+			state.Err = "Cluster health check is unavailable"
+			if message.progress.Err != "" {
+				state.Err = message.progress.Err
+			}
+			state.VerdictReady = false
+			m.healthcheck = m.healthcheck.setStreamState(state)
+			m.syncDirectStreamViewports()
+			m.closeDirectHealth()
+			return m, nil
+		}
+		if message.progress.EOF {
+			state.EOF = true
+			state.VerdictReady = true
+			state.Status = application.Ready
+			m.healthcheck = m.healthcheck.setStreamState(state)
+			m.syncDirectStreamViewports()
+			m.closeDirectHealth()
+			return m, nil
+		}
+		m.healthcheck = m.healthcheck.setStreamState(state)
+		m.syncDirectStreamViewports()
+		if errors.Is(message.err, io.EOF) {
+			state.EOF = true
+			m.healthcheck = m.healthcheck.setStreamState(state)
+			m.closeDirectHealth()
+			return m, nil
+		}
+		return m, directClusterHealthNextCommand(m.healthStream.stream, m.healthStream.request)
+	}
+	return m, nil
+}
+
+func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd) {
+	switch message := message.(type) {
+	case directServiceLogsOpened:
+		current := m.requests.current(message.request)
+		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewServiceLogs {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			if current {
+				m.requests.cancelSlot("service-logs")
+			}
+			return m, nil
+		}
+		if message.err != nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.logStream.status, m.logStream.err = application.Failed, "Service logs are unavailable"
+			m.logs = m.logs.setStreamState(application.Failed, nil, m.logStream.err, false)
+			m.syncDirectStreamViewports()
+			m.requests.cancelSlot("service-logs")
+			return m, nil
+		}
+		m.logStream.stream = message.stream
+		m.logStream.status = application.Ready
+		return m, directServiceLogNextCommand(message.stream, m.logStream.request)
+	case directServiceLogBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.logStream.request.stamp {
+			return m, nil
+		}
+		lines := appendBoundedLines(m.logs.state.Lines, message.batch.Lines, 5000)
+		if message.batch.Err != "" {
+			m.logStream.status, m.logStream.err = application.Failed, message.batch.Err
+		}
+		if message.err != nil && !errors.Is(message.err, io.EOF) {
+			m.logStream.status, m.logStream.err = application.Failed, "Service log stream failed"
+		}
+		m.logStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
+		m.logs = m.logs.setStreamState(m.logStream.status, lines, m.logStream.err, m.logStream.eof)
+		m.syncDirectStreamViewports()
+		if !m.logStream.eof && m.logStream.status != application.Failed {
+			return m, directServiceLogNextCommand(m.logStream.stream, m.logStream.request)
+		}
+		m.requests.cancelSlot("service-logs")
+		return m, nil
+	case directDmesgOpened:
+		current := m.requests.current(message.request)
+		if !current || message.request.generation != m.generation() || m.views.top().Kind != viewDmesg {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			if current {
+				m.requests.cancelSlot("dmesg")
+			}
+			return m, nil
+		}
+		if message.err != nil {
+			if message.stream != nil {
+				_ = message.stream.Close()
+			}
+			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream is unavailable"
+			m.dmesg = m.dmesg.setStreamState(application.Failed, nil, m.dmesgStream.err, false)
+			m.syncDirectStreamViewports()
+			m.requests.cancelSlot("dmesg")
+			return m, nil
+		}
+		m.dmesgStream.stream = message.stream
+		m.dmesgStream.status = application.Ready
+		return m, directDmesgNextCommand(message.stream, m.dmesgStream.request)
+	case directDmesgBatch:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.dmesgStream.request.stamp {
+			return m, nil
+		}
+		lines := appendBoundedLines(m.dmesg.state.Lines, message.batch.Lines, 5000)
+		if message.batch.Err != "" {
+			m.dmesgStream.status, m.dmesgStream.err = application.Failed, message.batch.Err
+		}
+		if message.err != nil && !errors.Is(message.err, io.EOF) {
+			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream failed"
+		}
+		m.dmesgStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
+		m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, lines, m.dmesgStream.err, m.dmesgStream.eof)
+		m.syncDirectStreamViewports()
+		if !m.dmesgStream.eof && m.dmesgStream.status != application.Failed {
+			return m, directDmesgNextCommand(m.dmesgStream.stream, m.dmesgStream.request)
+		}
+		m.requests.cancelSlot("dmesg")
+		return m, nil
+	case directClearLogs:
+		if message.dmesg {
+			m.dmesgStream.err = ""
+			m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, nil, "", false)
+			m.syncDirectStreamViewports()
+		} else {
+			m.logStream.err = ""
+			m.logs = m.logs.setStreamState(m.logStream.status, nil, "", false)
+			m.syncDirectStreamViewports()
+		}
+		return m, nil
+	}
+	return m, nil
+}
