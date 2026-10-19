@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -82,6 +83,21 @@ func nodeMatchesIdentity(node domain.NodeSnapshot, identity string) bool {
 	for _, address := range node.Addresses {
 		if address == identity {
 			return true
+		}
+	}
+	return false
+}
+
+func targetsIncludeControlPlane(nodes []domain.NodeSnapshot, targets []string) bool {
+	for _, target := range targets {
+		for _, node := range nodes {
+			if node.Target() != target {
+				continue
+			}
+			if node.Role == domain.NodeRoleControl {
+				return true
+			}
+			break
 		}
 	}
 	return false
@@ -418,4 +434,41 @@ func endpointHost(raw string) string {
 		return ""
 	}
 	return parsed.Hostname()
+}
+
+func isDestructiveEtcdMembership(kind EtcdActionKind) bool {
+	return kind == EtcdActionRemoveMember || kind == EtcdActionLeaveCluster
+}
+
+func memberMatchesMember(member domain.EtcdMemberSnapshot, memberID uint64, memberHostname string) bool {
+	if memberID == 0 && memberHostname == "" {
+		return false
+	}
+	return (memberID == 0 || member.MemberID == memberID) && (memberHostname == "" || member.Hostname == memberHostname)
+}
+
+func membershipTargetForMember(member domain.EtcdMemberSnapshot) string {
+	if strings.TrimSpace(member.Hostname) != "" {
+		return member.Hostname
+	}
+	if member.MemberID != 0 {
+		return strconv.FormatUint(member.MemberID, 10)
+	}
+	return ""
+}
+
+func firstOtherControlPlaneHostname(nodes []domain.NodeSnapshot, exclude string) string {
+	for _, hostname := range controlPlaneHostnames(nodes) {
+		if hostname != exclude {
+			return hostname
+		}
+	}
+	return ""
+}
+
+func appendWarning(existing, extra string) string {
+	if existing == "" {
+		return extra
+	}
+	return existing + "; " + extra
 }

@@ -26,7 +26,7 @@ const pendingActionWarningBudget = 40
 // long for a bulk action) is the most elidable part: it is dropped in favor
 // of a count when a warning is present, or placed last when there is no
 // warning and the line is short enough not to need truncation.
-func renderPendingActionPrompt(pending application.PendingAction) string {
+func renderPendingActionPrompt(pending actionPrompt) string {
 	if pending.Blocked != "" {
 		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
 	}
@@ -61,7 +61,7 @@ func renderPendingActionPrompt(pending application.PendingAction) string {
 
 // resetPendingSuffix labels the wipe scope in the footer so the mode the
 // operator chose is visible at the final confirm, not only in the overlay.
-func resetPendingSuffix(pending application.PendingAction) string {
+func resetPendingSuffix(pending actionPrompt) string {
 	if pending.Reset == nil {
 		return ""
 	}
@@ -75,7 +75,7 @@ func resetPendingSuffix(pending application.PendingAction) string {
 	}
 }
 
-func renderPendingEtcdActionPrompt(pending application.PendingEtcdAction) string {
+func renderPendingEtcdActionPrompt(pending etcdActionPrompt) string {
 	if pending.Blocked != "" {
 		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
 	}
@@ -108,7 +108,7 @@ func renderPendingEtcdActionPrompt(pending application.PendingEtcdAction) string
 	return verb + " " + target + suffix + "? (y/n)"
 }
 
-func renderPendingServiceActionPrompt(pending application.PendingServiceAction) string {
+func renderPendingServiceActionPrompt(pending serviceActionPrompt) string {
 	if pending.Blocked != "" {
 		return fmt.Sprintf("!! %s — action refused (n to cancel)", truncateWarningTail(pending.Blocked, pendingActionWarningBudget))
 	}
@@ -140,7 +140,7 @@ func truncateWarningTail(warning string, budget int) string {
 	return "…" + string(runes[len(runes)-(budget-1):])
 }
 
-func renderActionResults(results []application.ActionResult, total int) string {
+func renderActionResults(results []actionDisplayResult, total int) string {
 	succeeded := 0
 	accepted := 0
 	var failures []string

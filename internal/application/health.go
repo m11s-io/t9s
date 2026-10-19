@@ -7,19 +7,6 @@ import (
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
-func evaluableStatus(status LoadStatus) bool {
-	return status == Ready || status == Partial
-}
-
-func EvaluateHealth(model Model) []domain.Diagnosis {
-	return EvaluateObservations(HealthInput{
-		Nodes:      model.Nodes.Value,
-		NodesKnown: evaluableStatus(model.Nodes.Status),
-		Etcd:       model.Etcd.Value,
-		EtcdKnown:  evaluableStatus(model.Etcd.Status),
-	})
-}
-
 func EvaluateObservations(input HealthInput) []domain.Diagnosis {
 	var diagnoses []domain.Diagnosis
 

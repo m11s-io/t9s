@@ -132,11 +132,11 @@ func TestDirectWriteActionHintsAreRenderedOnlyWhenEnabled(t *testing.T) {
 
 func TestDirectPromptRenderingKeepsWarningAndConfirmationCueAt80Columns(t *testing.T) {
 	warning := strings.Repeat("node may lose quorum and become unavailable ", 2)
-	prompt := renderPendingActionPrompt(application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}, Warning: warning})
+	prompt := renderPendingActionPrompt(actionPrompt{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}, Warning: warning})
 	assert.Contains(t, prompt, "!! ")
 	assert.Contains(t, prompt, "(y/n)")
 	assert.LessOrEqual(t, len([]rune(prompt)), 80)
-	assert.Equal(t, "Reboot cp-1? (y/n)", renderPendingActionPrompt(application.PendingAction{Kind: application.ActionReboot, Targets: []string{"cp-1"}}))
-	assert.Contains(t, renderPendingActionPrompt(application.PendingAction{Kind: application.ActionReset, Targets: []string{"cp-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}}), "Reset cp-1 (system disk)")
-	assert.Contains(t, renderPendingActionPrompt(application.PendingAction{Kind: application.ActionWipeDevice, Targets: []string{"cp-1"}, DeviceWipe: &ports.DeviceWipeOptions{Device: "/dev/sdb"}}), "Wipe device cp-1 /dev/sdb")
+	assert.Equal(t, "Reboot cp-1? (y/n)", renderPendingActionPrompt(actionPrompt{Kind: application.ActionReboot, Targets: []string{"cp-1"}}))
+	assert.Contains(t, renderPendingActionPrompt(actionPrompt{Kind: application.ActionReset, Targets: []string{"cp-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}}), "Reset cp-1 (system disk)")
+	assert.Contains(t, renderPendingActionPrompt(actionPrompt{Kind: application.ActionWipeDevice, Targets: []string{"cp-1"}, DeviceWipe: &ports.DeviceWipeOptions{Device: "/dev/sdb"}}), "Wipe device cp-1 /dev/sdb")
 }

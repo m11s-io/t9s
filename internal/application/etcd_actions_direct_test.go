@@ -364,3 +364,49 @@ func TestEtcdSnapshotAndMaintenanceDeadlinesIncludeFreshReadBudget(t *testing.T)
 		assert.Greater(t, remaining, 25*time.Second)
 	})
 }
+
+func TestMembershipAbortsWhenSnapshotFailsOrReceiptIsInvalid(t *testing.T) {
+	for _, snapshotCase := range []struct {
+		name string
+		call func(context.Context, string, string) (domain.EtcdSnapshotResult, error)
+	}{
+		{
+			name: "snapshot error",
+			call: func(context.Context, string, string) (domain.EtcdSnapshotResult, error) {
+				return domain.EtcdSnapshotResult{}, errors.New("snapshot write failed")
+			},
+		},
+		{
+			name: "invalid receipt",
+			call: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+				return domain.EtcdSnapshotResult{Node: node, Path: path + ".wrong", Size: 32, SHA256: strings.Repeat("a", 64)}, nil
+			},
+		},
+	} {
+		t.Run(snapshotCase.name, func(t *testing.T) {
+			var removeCalls, leaveCalls int
+			session := openDirectEtcdSession(t, directEtcdAdapter(directEtcdMembers(), &testkit.FakeEtcdOperations{
+				SnapshotFunc: snapshotCase.call,
+				RemoveMemberByIDFunc: func(context.Context, string, uint64) error {
+					removeCalls++
+					return nil
+				},
+				LeaveClusterFunc: func(context.Context, string) error {
+					leaveCalls++
+					return nil
+				},
+			}))
+			for _, kind := range []application.EtcdActionKind{application.EtcdActionRemoveMember, application.EtcdActionLeaveCluster} {
+				plan, err := session.PrepareEtcdAction(context.Background(), application.EtcdActionRequest{
+					Kind: kind, Node: "cp-1", MemberID: 1, MemberHostname: "cp-1", SnapshotPath: "/tmp/required.db",
+				})
+				require.NoError(t, err)
+				result, err := session.ExecuteEtcdAction(context.Background(), plan, application.Confirmation{Approved: true})
+				assert.Error(t, err)
+				assert.Nil(t, result.Snapshot)
+			}
+			assert.Zero(t, removeCalls, "member removal must not run without a verified snapshot")
+			assert.Zero(t, leaveCalls, "cluster leave must not run without a verified snapshot")
+		})
+	}
+}

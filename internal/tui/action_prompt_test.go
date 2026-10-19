@@ -8,13 +8,13 @@ import (
 )
 
 func TestRenderPendingActionPromptRollbackVerb(t *testing.T) {
-	prompt := renderPendingActionPrompt(application.PendingAction{Kind: application.ActionRollback, Targets: []string{"cp-1"}})
+	prompt := renderPendingActionPrompt(actionPrompt{Kind: application.ActionRollback, Targets: []string{"cp-1"}})
 
 	assert.Equal(t, "Rollback cp-1? (y/n)", prompt)
 }
 
 func TestRenderPendingActionPromptShowsBlockedAction(t *testing.T) {
-	prompt := renderPendingActionPrompt(application.PendingAction{
+	prompt := renderPendingActionPrompt(actionPrompt{
 		Kind:    application.ActionReboot,
 		Targets: []string{"cp-1", "cp-2"},
 		Blocked: "refusing: would drop etcd to 1/3 (need 2)",
@@ -26,7 +26,7 @@ func TestRenderPendingActionPromptShowsBlockedAction(t *testing.T) {
 }
 
 func TestRenderPendingServiceActionPromptShowsBlockedAction(t *testing.T) {
-	prompt := renderPendingServiceActionPrompt(application.PendingServiceAction{
+	prompt := renderPendingServiceActionPrompt(serviceActionPrompt{
 		Kind:    application.ServiceActionStop,
 		Node:    "cp-1",
 		Service: "etcd",
@@ -38,7 +38,7 @@ func TestRenderPendingServiceActionPromptShowsBlockedAction(t *testing.T) {
 }
 
 func TestRenderPendingActionPromptUpgradeVerbIncludesImage(t *testing.T) {
-	prompt := renderPendingActionPrompt(application.PendingAction{
+	prompt := renderPendingActionPrompt(actionPrompt{
 		Kind:    application.ActionUpgrade,
 		Targets: []string{"cp-1"},
 		Image:   "ghcr.io/siderolabs/installer:v1.13.3",
@@ -51,7 +51,7 @@ func TestRenderPendingActionPromptUpgradeVerbIncludesImage(t *testing.T) {
 }
 
 func TestRenderPendingActionPromptUpgradeStaysBoundedWithLongWarning(t *testing.T) {
-	prompt := renderPendingActionPrompt(application.PendingAction{
+	prompt := renderPendingActionPrompt(actionPrompt{
 		Kind:    application.ActionUpgrade,
 		Targets: []string{"cp-1"},
 		Image:   "ghcr.io/siderolabs/installer:v1.13.3",
@@ -68,13 +68,13 @@ func TestRenderPendingActionPromptUpgradeStaysBoundedWithLongWarning(t *testing.
 }
 
 func TestRenderPendingServiceActionPromptFormatsServiceAtNode(t *testing.T) {
-	prompt := renderPendingServiceActionPrompt(application.PendingServiceAction{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "etcd"})
+	prompt := renderPendingServiceActionPrompt(serviceActionPrompt{Kind: application.ServiceActionRestart, Node: "cp-1", Service: "etcd"})
 
 	assert.Equal(t, "Restart etcd@cp-1? (y/n)", prompt)
 }
 
 func TestRenderPendingServiceActionPromptIncludesWarning(t *testing.T) {
-	prompt := renderPendingServiceActionPrompt(application.PendingServiceAction{
+	prompt := renderPendingServiceActionPrompt(serviceActionPrompt{
 		Kind:    application.ServiceActionStop,
 		Node:    "cp-1",
 		Service: "etcd",
@@ -86,7 +86,7 @@ func TestRenderPendingServiceActionPromptIncludesWarning(t *testing.T) {
 }
 
 func TestRenderPendingActionPromptUpgradeWarningKeepsSingleTargetAndImage(t *testing.T) {
-	prompt := renderPendingActionPrompt(application.PendingAction{
+	prompt := renderPendingActionPrompt(actionPrompt{
 		Kind:    application.ActionUpgrade,
 		Targets: []string{"cp-1"},
 		Image:   "ghcr.io/siderolabs/installer:v1.15.0",

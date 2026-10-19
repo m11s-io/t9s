@@ -8,6 +8,13 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
+// Dependencies configures the direct client API.
+type Dependencies struct {
+	ContextCatalog     ports.ContextCatalog
+	SessionFactory     ports.SessionFactory
+	KubernetesResolver ports.KubernetesResolver
+}
+
 // Options are immutable session settings supplied by the trusted caller.
 type Options struct {
 	WritesEnabled bool

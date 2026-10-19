@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
@@ -193,4 +194,70 @@ func TestCurrentInstallImageUsesSessionController(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "factory/image:v1.2.3", image)
 	assert.Equal(t, "worker-9", gotNode)
+}
+
+func TestCPUAndTimeReadsHonorCallerAndSessionCancellation(t *testing.T) {
+	type readCase struct {
+		name    string
+		adapter func(chan struct{}) *testkit.FakeSession
+		read    func(*application.Session, context.Context) error
+	}
+	cases := []readCase{
+		{"cpu sample", func(entered chan struct{}) *testkit.FakeSession {
+			return &testkit.FakeSession{CPUReader: &testkit.FakeCPUReader{SampleFunc: func(ctx context.Context, _ string) (domain.CPUSnapshot, error) {
+				close(entered)
+				<-ctx.Done()
+				return domain.CPUSnapshot{}, ctx.Err()
+			}}}
+		}, func(s *application.Session, ctx context.Context) error { _, err := s.CPU(ctx, "node-a"); return err }},
+		{"time read", func(entered chan struct{}) *testkit.FakeSession {
+			return &testkit.FakeSession{TimeReader: &testkit.FakeTimeReader{ReadFunc: func(ctx context.Context, _ string) (domain.TimeSnapshot, error) {
+				close(entered)
+				<-ctx.Done()
+				return domain.TimeSnapshot{}, ctx.Err()
+			}}}
+		}, func(s *application.Session, ctx context.Context) error { _, err := s.Time(ctx, "node-a"); return err }},
+		{"time check", func(entered chan struct{}) *testkit.FakeSession {
+			return &testkit.FakeSession{TimeReader: &testkit.FakeTimeReader{CheckFunc: func(ctx context.Context, _, _ string) (domain.TimeCheckResult, error) {
+				close(entered)
+				<-ctx.Done()
+				return domain.TimeCheckResult{}, ctx.Err()
+			}}}
+		}, func(s *application.Session, ctx context.Context) error {
+			_, err := s.CheckTime(ctx, "node-a", "ntp.example")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		for _, cancellation := range []string{"caller", "session"} {
+			cancellation := cancellation
+			t.Run(tc.name+"/"+cancellation, func(t *testing.T) {
+				entered := make(chan struct{})
+				session := openReadTestSession(t, tc.adapter(entered))
+				ctx := context.Background()
+				cancel := func() { require.NoError(t, session.Close()) }
+				if cancellation == "caller" {
+					var stop context.CancelFunc
+					ctx, stop = context.WithCancel(ctx)
+					defer stop()
+					cancel = stop
+				}
+				done := make(chan error, 1)
+				go func() { done <- tc.read(session, ctx) }()
+				select {
+				case <-entered:
+				case <-time.After(time.Second):
+					t.Fatal("diagnostic read did not reach its port")
+				}
+				cancel()
+				select {
+				case err := <-done:
+					require.ErrorIs(t, err, context.Canceled)
+				case <-time.After(time.Second):
+					t.Fatal("diagnostic read did not return after cancellation")
+				}
+			})
+		}
+	}
 }

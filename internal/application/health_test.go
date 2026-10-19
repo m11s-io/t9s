@@ -10,25 +10,25 @@ import (
 )
 
 func TestEvaluateHealthEmitsNothingForAHealthyNode(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "cp-1", Health: domain.HealthHealthy, Services: domain.ServiceSummary{Healthy: 7, Total: 7, Known: true}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	assert.Empty(t, diagnoses)
 }
 
 func TestEvaluateHealthNodeReadinessRule(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "worker-1", Health: domain.HealthUnhealthy, Stage: "maintenance"},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 1)
 	assert.Equal(t, "node-readiness", diagnoses[0].RuleID)
@@ -40,13 +40,13 @@ func TestEvaluateHealthNodeReadinessRule(t *testing.T) {
 }
 
 func TestEvaluateHealthNodeReadinessRuleUnknownHealth(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Partial, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-2", Name: "unknown-1", Health: domain.HealthUnknown, Problem: "unreachable"},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 1)
 	assert.Equal(t, domain.SeverityUnknown, diagnoses[0].Severity)
@@ -54,13 +54,13 @@ func TestEvaluateHealthNodeReadinessRuleUnknownHealth(t *testing.T) {
 }
 
 func TestEvaluateHealthNodeServicesDegradedRule(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "worker-1", Health: domain.HealthHealthy, Services: domain.ServiceSummary{Healthy: 6, Total: 7, Known: true}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 1)
 	assert.Equal(t, "node-services-degraded", diagnoses[0].RuleID)
@@ -69,38 +69,38 @@ func TestEvaluateHealthNodeServicesDegradedRule(t *testing.T) {
 }
 
 func TestEvaluateHealthNodeServicesDegradedRuleAllUnhealthyIsCritical(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "worker-1", Health: domain.HealthHealthy, Services: domain.ServiceSummary{Healthy: 0, Total: 7, Known: true}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 1)
 	assert.Equal(t, domain.SeverityCritical, diagnoses[0].Severity)
 }
 
 func TestEvaluateHealthNodeServicesDegradedRuleSkippedWhenUnknown(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "unknown-1", Health: domain.HealthHealthy, Services: domain.ServiceSummary{Known: false}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	assert.Empty(t, diagnoses)
 }
 
 func TestEvaluateHealthNodeContributesBothRulesSimultaneously(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "worker-1", Health: domain.HealthUnhealthy, Services: domain.ServiceSummary{Healthy: 6, Total: 7, Known: true}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 2)
 	ruleIDs := []string{diagnoses[0].RuleID, diagnoses[1].RuleID}
@@ -109,15 +109,15 @@ func TestEvaluateHealthNodeContributesBothRulesSimultaneously(t *testing.T) {
 }
 
 func TestEvaluateHealthEtcdMemberUnhealthyRule(t *testing.T) {
-	model := application.Model{
-		Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+	model := application.HealthInput{
+		EtcdKnown: true, Etcd: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 			{Hostname: "cp-1", MemberID: 1, StatusKnown: true},
 			{Hostname: "cp-2", MemberID: 2, StatusKnown: true, Errors: []string{"connection refused"}},
 			{Hostname: "cp-3", MemberID: 3, StatusKnown: false},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 2)
 	assert.Equal(t, "etcd-member-unhealthy", diagnoses[0].RuleID)
@@ -125,14 +125,14 @@ func TestEvaluateHealthEtcdMemberUnhealthyRule(t *testing.T) {
 }
 
 func TestEvaluateHealthEtcdMemberAlarmedRule(t *testing.T) {
-	model := application.Model{
-		Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+	model := application.HealthInput{
+		EtcdKnown: true, Etcd: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 			{Hostname: "cp-1", MemberID: 1, StatusKnown: true},
 			{Hostname: "cp-2", MemberID: 2, StatusKnown: true, Alarms: []string{"NOSPACE"}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 1)
 	assert.Equal(t, "etcd-member-alarmed", diagnoses[0].RuleID)
@@ -142,30 +142,30 @@ func TestEvaluateHealthEtcdMemberAlarmedRule(t *testing.T) {
 }
 
 func TestEvaluateHealthSkipsCollectionsNotYetLoaded(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Loading, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "worker-1", Health: domain.HealthUnhealthy},
-		}}},
-		Etcd: application.EtcdState{Status: application.Failed},
+		}},
+		Etcd: domain.EtcdSet{},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	assert.Empty(t, diagnoses)
 }
 
 func TestEvaluateHealthSortsBySeverityDescendingThenKindThenName(t *testing.T) {
-	model := application.Model{
-		Nodes: application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{ID: "node-1", Name: "b-node", Health: domain.HealthUnknown},
 			{ID: "node-2", Name: "a-node", Health: domain.HealthUnhealthy},
-		}}},
-		Etcd: application.EtcdState{Status: application.Ready, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
+		}},
+		EtcdKnown: true, Etcd: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 			{Hostname: "cp-1", MemberID: 1, StatusKnown: true, Errors: []string{"unreachable"}},
-		}}},
+		}},
 	}
 
-	diagnoses := application.EvaluateHealth(model)
+	diagnoses := application.EvaluateObservations(model)
 
 	require.Len(t, diagnoses, 3)
 	assert.Equal(t, domain.SeverityCritical, diagnoses[0].Severity)
