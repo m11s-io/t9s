@@ -1,126 +1,48 @@
 package tui
 
 import (
-	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/m11s-io/t9s/internal/application"
-	"github.com/m11s-io/t9s/internal/domain"
-	"github.com/m11s-io/t9s/internal/testkit"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCommandResolutionIsClosedOverKnownNames(t *testing.T) {
-	assert.Equal(t, commandNodes, resolveCommand("nodes"))
-	assert.Equal(t, commandNodes, resolveCommand("no"))
-	assert.Equal(t, commandContexts, resolveCommand("contexts"))
-	assert.Equal(t, commandContexts, resolveCommand("ctx"))
-	assert.Equal(t, commandHelp, resolveCommand("help"))
-	assert.Equal(t, commandHelp, resolveCommand("?"))
-	assert.Equal(t, commandUnknown, resolveCommand(" nodes"))
-	assert.Equal(t, commandUnknown, resolveCommand("rm -rf anything"))
-}
-
-func TestResolveCommandAcceptsResourcesWithAndWithoutArgument(t *testing.T) {
-	assert.Equal(t, commandResources, resolveCommand("resources"))
-	assert.Equal(t, commandResources, resolveCommand("res"))
-	assert.Equal(t, commandResources, resolveCommand("resources MachineStatus"))
-	assert.Equal(t, commandUnknown, resolveCommand(" resources MachineStatus"), "leading whitespace must invalidate the command, matching every other command's strictness")
-
+func TestCommandResolutionIsClosedOverKnownNamesAndArguments(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  command
+	}{
+		{"nodes", commandNodes}, {"no", commandNodes},
+		{"contexts", commandContexts}, {"ctx", commandContexts},
+		{"help", commandHelp}, {"?", commandHelp},
+		{"resources", commandResources}, {"res", commandResources},
+		{"resources MachineStatus", commandResources},
+		{" resources MachineStatus", commandUnknown},
+		{"healthcheck", commandClusterHealth}, {"hc", commandClusterHealth},
+		{"healthcheck 5m", commandClusterHealth},
+		{" nodes", commandUnknown}, {"rm -rf anything", commandUnknown},
+		{" healthcheck", commandUnknown}, {"healthcheck nonsense", commandUnknown},
+	} {
+		assert.Equal(t, test.want, resolveCommand(test.value), "resolve %q", test.value)
+	}
 	argument, ok := resourcesCommandArgument("resources MachineStatus")
 	assert.True(t, ok)
 	assert.Equal(t, "MachineStatus", argument)
-
 	_, ok = resourcesCommandArgument("nodes")
 	assert.False(t, ok)
-}
-
-func TestResolveCommandHealthcheckWithAndWithoutArgument(t *testing.T) {
-	assert.Equal(t, commandClusterHealth, resolveCommand("healthcheck"))
-	assert.Equal(t, commandClusterHealth, resolveCommand("hc"))
-	assert.Equal(t, commandClusterHealth, resolveCommand("healthcheck 5m"))
-	assert.Equal(t, commandUnknown, resolveCommand("healthcheck nonsense"))
-	assert.Equal(t, commandUnknown, resolveCommand(" healthcheck"), "leading whitespace must invalidate the command")
-
 	timeout, ok := healthcheckCommandArgument("healthcheck 5m")
 	assert.True(t, ok)
 	assert.Equal(t, 5*time.Minute, timeout)
-
 	_, ok = healthcheckCommandArgument("nodes")
 	assert.False(t, ok)
 }
 
-func TestCommandUnknownShowsNoticeWithoutInvokingPorts(t *testing.T) {
-	var catalogCalls atomic.Int32
-	runner := application.NewRunner(application.Dependencies{
-		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
-			catalogCalls.Add(1)
-			return nil, nil
-		}},
-	})
-	root := newModel(t.Context(), false, application.Model{}, runner)
-
-	root, _ = updateRoot(root, keyPress(':'))
-	for _, character := range "rm -rf anything" {
-		root, _ = updateRoot(root, keyPress(character))
-	}
-	root, command := updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	assert.Nil(t, command)
-	assert.Contains(t, root.View().Content, `Unknown command "rm -rf anything"`)
-	assert.Equal(t, viewNodes, root.views.top().Kind)
-	assert.Zero(t, catalogCalls.Load())
-}
-
-func TestCommandWhitespaceIsUnknownRatherThanEmpty(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{}, nil)
-	root, _ = updateRoot(root, keyPress(':'))
-	root, _ = updateRoot(root, keyPress(' '))
-
-	root, command := updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	assert.Nil(t, command)
-	assert.Contains(t, root.View().Content, `Unknown command " "`)
-}
-
-func TestCommandNodesClosesPaletteAndShowsNodes(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{}, nil)
-	root, _ = updateRoot(root, keyPress(':'))
-	for _, character := range "nodes" {
-		root, _ = updateRoot(root, keyPress(character))
-	}
-
-	root, command := updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	assert.Nil(t, command)
-	assert.Equal(t, viewNodes, root.views.top().Kind)
-	assert.NotContains(t, root.View().Content, "COMMAND :")
-}
-
-func TestCommandEmptyAndEscapeCloseWithoutChangingState(t *testing.T) {
-	for name, closeKey := range map[string]tea.KeyPressMsg{
-		"empty":  {Code: tea.KeyEnter},
-		"escape": {Code: tea.KeyEsc},
-	} {
-		t.Run(name, func(t *testing.T) {
-			initial := application.Model{ContextName: "prod", Notice: "keep"}
-			root := newModel(t.Context(), false, initial, nil)
-			initial = root.application
-			root, _ = updateRoot(root, keyPress(':'))
-
-			root, command := updateRoot(root, closeKey)
-
-			assert.Nil(t, command)
-			assert.Equal(t, initial, root.application)
-			assert.NotContains(t, root.View().Content, "COMMAND :")
-		})
-	}
-}
-
-func updateRoot(root model, message tea.Msg) (model, tea.Cmd) {
-	updated, command := root.Update(message)
-	return updated.(model), command
+func TestDirectNodesPaletteClosesAndShowsNodes(t *testing.T) {
+	model := newDirectModel(t.Context(), nil, LaunchOptions{})
+	model.splash = false
+	model, command := runDirectPalette(t, model, "nodes")
+	assert.NotNil(t, command, "Enter schedules the direct command message")
+	assert.Equal(t, viewNodes, model.views.top().Kind)
+	assert.False(t, model.palette.active)
+	assert.NotContains(t, model.View().Content, "COMMAND :")
 }

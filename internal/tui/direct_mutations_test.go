@@ -94,6 +94,7 @@ func TestDirectMutationPreparationErrorsAreNormalized(t *testing.T) {
 	model.sessionCtx = context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "kubelet"}}}}
 	model.services = model.services.normalizeSelection(model.cluster.services.Value.Services, 0)
+	model.nodes.marked = map[string]struct{}{"unrelated-node": {}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 	// The UI launch flag authorizes the affordance, while the session remains
 	// authoritative about write permission.
@@ -102,6 +103,7 @@ func TestDirectMutationPreparationErrorsAreNormalized(t *testing.T) {
 	model, _ = applyDirectCommand(t, model, command)
 	assert.Nil(t, model.mutation.prompt)
 	assert.Equal(t, "writes are disabled for this session", model.view.notice)
+	assert.True(t, model.nodes.isMarked("unrelated-node"), "preparation failure preserves unrelated marks")
 }
 
 func TestDirectNodeConfirmationRejectsStaleAssessmentWithoutControllerCall(t *testing.T) {
@@ -285,6 +287,7 @@ func TestDirectResetUsesTypedPlanOptionsAndExplicitIntentThenApproval(t *testing
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
 	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
+	model.nodes.marked = map[string]struct{}{"cp-id": {}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
 
 	model, command := updateDirect(model, keyPress('W'))
@@ -299,6 +302,7 @@ func TestDirectResetUsesTypedPlanOptionsAndExplicitIntentThenApproval(t *testing
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Contains(t, ansi.Strip(model.View().Content), "typed confirmation does not match")
 	assert.False(t, model.mutation.prompt.intentReady)
+	assert.True(t, model.nodes.isMarked("cp-id"), "invalid typed token retains marks")
 	model.mutation.prompt.intent.SetValue("")
 	model, _ = updateDirect(model, keyPress('y'))
 	assert.False(t, model.mutation.busy, "a key typed into intent cannot bypass the explicit sequence")
@@ -324,6 +328,7 @@ func TestDirectResetUsesTypedPlanOptionsAndExplicitIntentThenApproval(t *testing
 	assert.Equal(t, ports.WipeModeSystemDisk, got.Mode)
 	assert.True(t, got.Graceful)
 	assert.False(t, got.Reboot)
+	assert.Empty(t, model.nodes.marked, "confirmed node action clears marks")
 }
 
 func TestDirectDiskWipeUsesPinnedDeviceAndMethod(t *testing.T) {

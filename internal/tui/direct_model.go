@@ -750,15 +750,18 @@ func (m directModel) View() tea.View {
 	}
 	metadata := deriveShellMetadata(m.cluster.contextName, m.cluster.contexts, m.options.WritesEnabled, m.cluster.nodes.Status, directHealthInput(m.cluster))
 	content := ""
+	frame := layoutResourceFrame(layout.Width, layout.ContentHeight, directResourceTitle(m, headerKind))
+	innerSize := contentSize{Width: frame.InnerWidth, Height: frame.InnerHeight}
+	contentFramed := false
 	if m.contexts.active {
-		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "contexts")
-		content = renderResourceFrame(frame, m.contexts.viewSized(contentSize{Width: frame.InnerWidth, Height: frame.InnerHeight}), m.styles.k9s)
+		content = renderResourceFrame(frame, m.contexts.viewSized(innerSize), m.styles.k9s)
+		contentFramed = true
 	} else if m.splash {
 		content = "t9s\nInspect Talos clusters"
 	} else {
-		if diagnosticContent, handled := m.directDiagnosticContent(contentSize{Width: layout.Width, Height: layout.ContentHeight}); handled {
+		if diagnosticContent, handled := m.directDiagnosticContent(innerSize); handled {
 			content = diagnosticContent
-		} else if resourceContent, handled := m.directResourceContent(contentSize{Width: layout.Width, Height: layout.ContentHeight}); handled {
+		} else if resourceContent, handled := m.directResourceContent(innerSize); handled {
 			content = resourceContent
 		} else if m.views.top().Kind == viewNodeDetail {
 			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
@@ -771,26 +774,26 @@ func (m directModel) View() tea.View {
 		} else if m.views.top().Kind == viewHelp {
 			content = "HELP\n\n" + renderActionHints(actionHints(viewNodes, m.options.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.options.WritesEnabled))
 		} else if m.views.top().Kind == viewServiceLogs {
-			content = m.logs.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+			content = m.logs.viewSized(innerSize)
 		} else if m.views.top().Kind == viewDmesg {
-			content = m.dmesg.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+			content = m.dmesg.viewSized(innerSize)
 		} else if m.views.top().Kind == viewServices {
-			content = m.services.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.services.Value,
+			content = m.services.viewSized(innerSize, m.cluster.services.Value,
 				m.cluster.services.Status == directLoading, m.cluster.services.Status == directFailed, m.cluster.services.Err)
 		} else if m.views.top().Kind == viewEvents {
-			content = m.events.viewFollowSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.events,
+			content = m.events.viewFollowSized(innerSize, m.cluster.events,
 				m.eventFollow.attempted, m.eventFollow.following, m.eventFollow.err)
 		} else if m.views.top().Kind == viewClusterHealth {
-			content = m.healthcheck.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+			content = m.healthcheck.viewSized(innerSize)
 		} else if m.views.top().Kind == viewEtcd {
-			content = m.etcd.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.etcd)
+			content = m.etcd.viewSized(innerSize, m.cluster.etcd)
 		} else if m.views.top().Kind == viewOverview {
 			content = withHealthNotices(renderOverview(directHealthInput(m.cluster)), directHealthNotices(m.cluster))
 		} else if m.views.top().Kind == viewProblems {
 			notices := directHealthNotices(m.cluster)
-			content = withHealthNotices(m.problems.viewSized(contentSize{Width: layout.Width, Height: max(0, layout.ContentHeight-len(notices))}, application.EvaluateObservations(directHealthInput(m.cluster))), notices)
+			content = withHealthNotices(m.problems.viewSized(contentSize{Width: innerSize.Width, Height: max(0, innerSize.Height-len(notices))}, application.EvaluateObservations(directHealthInput(m.cluster))), notices)
 		} else {
-			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
+			content = m.nodes.viewSized(innerSize, m.cluster.nodes)
 		}
 	}
 	if prompt := m.mutation.prompt; prompt != nil && (prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice) {
@@ -800,12 +803,18 @@ func (m directModel) View() tea.View {
 		}
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, title)
 		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt, frame.InnerHeight), m.styles.k9s)
+		contentFramed = true
 	} else if prompt := m.mutation.prompt; prompt != nil && prompt.etcd != nil {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd action")
 		content = renderResourceFrame(frame, renderDirectEtcdMutationOverlay(prompt, frame.InnerWidth), m.styles.k9s)
+		contentFramed = true
 	} else if m.mutation.snapshot != nil && m.mutation.receiptVisible && !m.mutation.busy && m.mutation.prompt == nil && m.canShowDirectEtcdReceipt() {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd receipt")
 		content = renderResourceFrame(frame, renderDirectEtcdReceiptOverlay(m.mutation, frame.InnerWidth, frame.InnerHeight), m.styles.k9s)
+		contentFramed = true
+	}
+	if !m.splash && !contentFramed {
+		content = renderResourceFrame(frame, content, m.styles.k9s)
 	}
 	if m.palette.active {
 		content += "\n" + m.palette.view()
@@ -1008,9 +1017,6 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 }
 
 func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
-	if kind == viewEtcd {
-		return actionHints(kind, false)
-	}
 	return actionHints(kind, writesEnabled)
 }
 

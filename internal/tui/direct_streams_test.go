@@ -494,6 +494,7 @@ func TestDirectLogViewportScrollAndResizeKeepPosition(t *testing.T) {
 	assert.NotContains(t, content, "line-01")
 	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 60, Height: 18})
 	content = ansi.Strip(model.View().Content)
-	assert.Contains(t, content, "line-92", "resize keeps the stored scroll offset")
+	assert.Equal(t, 93, model.logs.viewport.YOffset(), "resize keeps the stored scroll offset")
+	assert.Contains(t, content, "line-94", "the taller framed viewport shows more rows around the preserved offset")
 	assert.NotContains(t, content, "line-01")
 }

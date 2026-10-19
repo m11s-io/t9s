@@ -140,7 +140,8 @@ func TestDirectEtcdFilterResetOnContextChangeAndSelectionFallsForwardWhenMemberD
 }
 
 func TestDirectEtcdPaletteWorksGloballyAndReadOnlyKeysAreInert(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	// This fixture has neither write authorization nor a session: its etcd keys and hints are read-only.
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{Hostname: "cp-1", MemberID: 1}}}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})

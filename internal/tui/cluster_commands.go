@@ -13,6 +13,9 @@ type directRunCommand struct{ value string }
 // runClusterCommand handles the root-owned cluster navigation aliases while
 // each screen is migrated in its own task.
 func (m *directModel) runClusterCommand(value string) tea.Cmd {
+	if value == "" {
+		return nil
+	}
 	previous := m.views
 	m.mutation.receiptVisible = false
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))

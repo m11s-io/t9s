@@ -890,6 +890,10 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 		m.requests.cancelSlot("upgrade-image")
 		m.mutation.busy = false
 		m.mutation.upgradePending = false
+		if m.views.top().Kind != viewNodes {
+			m.mutation.notice = ""
+			return m, nil
+		}
 		prompt := newUpgradePromptModel(message.target, message.image)
 		prompt.operation, prompt.generation = message.operation, message.generation
 		m.upgradePrompt = &prompt
@@ -918,6 +922,11 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 		if message.request.Kind == application.ActionUpgrade {
 			m.requests.cancelSlot("upgrade-prepare")
 			m.mutation.upgradePending = false
+			if m.views.top().Kind != viewNodes {
+				m.mutation.busy = false
+				m.mutation.notice = ""
+				return m, nil
+			}
 		}
 		m.mutation.busy = false
 		if message.err != nil || message.plan == nil {
@@ -1038,6 +1047,31 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
 		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
 		m.mutation.receiptVisible = m.mutation.snapshot != nil && m.canShowDirectEtcdReceipt()
+		var refreshDisks tea.Cmd
+		if plan := m.mutationWork.plan; plan != nil && plan.nodeKind == application.ActionWipeDevice && message.err == nil {
+			completed := false
+			for _, result := range message.result.Targets {
+				if result.Outcome == domain.OperationCompleted {
+					completed = true
+					break
+				}
+			}
+			targetNode := m.disks.node
+			if plan.deviceWipe != nil {
+				targetNode = plan.deviceWipe.Node
+			}
+			if completed && m.disks.node == targetNode {
+				m.disks.status = directLoading
+				m.disks.err = ""
+				for _, frame := range m.views {
+					if frame.Kind == viewDisks && frame.NodeTarget == targetNode && m.session != nil {
+						request, _ := m.requests.beginWithContext(directDiagnosticSlot(frame.NodeID, "disks"), m.generation(), m.sessionCtx)
+						refreshDisks = directDisksCommand(m.session, request, frame.NodeID, frame.NodeTarget)
+						break
+					}
+				}
+			}
+		}
 		if m.mutation.etcdKind != "" {
 			failure := ""
 			if message.err != nil {
@@ -1057,7 +1091,7 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 			m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
 		}
 		m.mutationWork = directMutationWork{}
-		return m, nil
+		return m, refreshDisks
 	}
 	return m, nil
 }
@@ -1146,6 +1180,9 @@ func (m *directModel) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cm
 			if prompt.assessment.Blocked != "" {
 				m.view.notice = "Action refused: " + prompt.assessment.Blocked
 				return nil, true
+			}
+			if prompt.node != nil && prompt.service == nil && prompt.etcd == nil {
+				m.nodes.marked = nil
 			}
 			m.mutation.prompt = nil
 			m.mutation.busy = true

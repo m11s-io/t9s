@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -45,4 +47,42 @@ func TestNewWithCleanupOwnsSessionUntilQuitAndReturnsIdempotentCleanup(t *testin
 	_ = cleanup()
 	_ = cleanup()
 	require.Eventually(t, func() bool { return adapter.CloseCount() == 1 }, time.Second, time.Millisecond)
+}
+
+func TestRuntimeErrorFallbackCancelsEffectsAndClosesSession(t *testing.T) {
+	readStarted := make(chan struct{})
+	readCanceled := make(chan struct{})
+	adapter := &testkit.FakeSession{NodeReader: &testkit.FakeNodeReader{ListFunc: func(ctx context.Context) (domain.NodeSet, error) {
+		close(readStarted)
+		<-ctx.Done()
+		close(readCanceled)
+		return domain.NodeSet{}, ctx.Err()
+	}}}
+	client := application.NewClient(application.Dependencies{
+		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
+			return []domain.ClusterContext{{Name: "prod", Current: true}}, nil
+		}},
+		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+			return adapter, nil
+		}},
+	})
+	model, cleanup := NewWithCleanup(context.Background(), client, LaunchOptions{})
+	program := tea.NewProgram(model, tea.WithInput(runtimeFailureReader{ready: readStarted}), tea.WithOutput(io.Discard), tea.WithWindowSize(120, 40), tea.WithoutSignalHandler())
+	_, err := program.Run()
+	require.Error(t, err, "Bubble Tea must return the injected runtime input error")
+	// This is the same public fallback command the CLI runs after Program.Run.
+	cleanup()
+	require.Eventually(t, func() bool { return adapter.CloseCount() == 1 }, time.Second, time.Millisecond)
+	select {
+	case <-readCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("fallback cleanup did not cancel the active blocked node read")
+	}
+}
+
+type runtimeFailureReader struct{ ready <-chan struct{} }
+
+func (r runtimeFailureReader) Read([]byte) (int, error) {
+	<-r.ready
+	return 0, errors.New("injected terminal input failure")
 }

@@ -149,6 +149,21 @@ func TestDirectEtcdActionKeysPrepareTypedPlansAndExecuteBySelectedMember(t *test
 	}
 }
 
+func TestDirectEtcdSnapshotPathPromptEscapeCancelsWithoutCallingRPC(t *testing.T) {
+	var calls int
+	ops := &testkit.FakeEtcdOperations{SnapshotFunc: func(context.Context, string, string) (domain.EtcdSnapshotResult, error) {
+		calls++
+		return domain.EtcdSnapshotResult{}, nil
+	}}
+	model := directEtcdModel(directEtcdMutationSession(t, true, ops), true)
+	model, _ = updateDirect(model, keyPress('s'))
+	require.NotNil(t, model.etcdPathPrompt)
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEscape})
+	assert.Nil(t, command)
+	assert.Nil(t, model.etcdPathPrompt)
+	assert.Zero(t, calls)
+}
+
 func TestDirectEtcdSnapshotPathRejectsInvalidInputWithoutCallingRPC(t *testing.T) {
 	var calls int
 	ops := &testkit.FakeEtcdOperations{SnapshotFunc: func(context.Context, string, string) (domain.EtcdSnapshotResult, error) {

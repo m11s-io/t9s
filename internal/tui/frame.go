@@ -110,3 +110,62 @@ func resourceTitle(kind viewKind, model application.Model) string {
 		return fmt.Sprintf("nodes(all)[%d]", len(model.Nodes.Value.Nodes))
 	}
 }
+
+func directResourceTitle(model directModel, kind viewKind) string {
+	switch kind {
+	case viewServices:
+		return fmt.Sprintf("services(all)[%d]", len(model.cluster.services.Value.Services))
+	case viewServiceLogs:
+		return "logs"
+	case viewServiceDetail:
+		return "service"
+	case viewNodeDetail:
+		return "node"
+	case viewHelp:
+		return "help"
+	case viewContexts:
+		return fmt.Sprintf("contexts(all)[%d]", len(model.contexts.values))
+	case viewEvents:
+		return fmt.Sprintf("events(all)[%d]", len(model.cluster.events.Value.Events))
+	case viewEtcd:
+		return fmt.Sprintf("etcd(all)[%d]", len(model.cluster.etcd.Value.Members))
+	case viewProcesses:
+		return fmt.Sprintf("processes(%s)[%d]", model.processes.node, len(model.processes.values.Processes))
+	case viewProcessDetail:
+		return "process"
+	case viewDisks:
+		return fmt.Sprintf("disks(%s)[%d]", model.disks.node, len(model.disks.values.Disks))
+	case viewDiskDetail:
+		return "disk"
+	case viewNetwork:
+		return fmt.Sprintf("network(%s)[%d]", model.network.node, len(model.network.values.Links))
+	case viewLinkDetail:
+		return "link"
+	case viewDmesg:
+		return model.dmesg.title
+	case viewClusterHealth:
+		return fmt.Sprintf("healthcheck[%d]", len(model.healthcheck.state.Lines))
+	case viewNetstat:
+		return fmt.Sprintf("netstat(%s)[%d]", model.netstat.node, len(model.netstat.values.Sockets))
+	case viewMounts:
+		return fmt.Sprintf("mounts(%s)[%d]", model.mounts.node, len(model.mounts.values.Mounts))
+	case viewCPU:
+		return fmt.Sprintf("cpu(%s)", model.cpu.node)
+	case viewTime:
+		return fmt.Sprintf("time(%s)", model.time.node)
+	case viewMemory:
+		return fmt.Sprintf("memory(%s)", model.memory.node)
+	case viewOverview:
+		return "overview"
+	case viewProblems:
+		return fmt.Sprintf("problems[%d]", len(application.EvaluateObservations(directHealthInput(model.cluster))))
+	case viewResourceKinds:
+		return fmt.Sprintf("resources(all)[%d]", len(model.resourceKinds.values.Kinds))
+	case viewResourceInstances:
+		return fmt.Sprintf("resources(%s)[%d]", model.resourceInstances.state.SelectedKind, len(model.resourceInstances.values.Instances))
+	case viewResourceDetail:
+		return model.resourceDetail.value.Type
+	default:
+		return fmt.Sprintf("nodes(all)[%d]", len(model.cluster.nodes.Value.Nodes))
+	}
+}

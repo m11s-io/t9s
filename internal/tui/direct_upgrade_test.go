@@ -118,6 +118,47 @@ func TestDirectUpgradePromptCancelAndStalePreparationDoNotExecute(t *testing.T) 
 	assert.NotSame(t, imagePrompt, model.upgradePrompt)
 }
 
+func TestDirectUpgradeCompletionAfterLeavingNodesDoesNotOpenPrompt(t *testing.T) {
+	session := directUpgradeSession(t, "installer:v1.14.0", nil, nil)
+	model := directUpgradeModel(t, session)
+	model, command := updateDirect(model, keyPress('U'))
+	require.NotNil(t, command)
+	late := command()
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+	model, _ = updateDirect(model, late)
+	assert.Nil(t, model.upgradePrompt)
+	assert.False(t, model.mutation.busy)
+	assert.False(t, model.mutation.upgradePending)
+}
+
+func TestDirectUpgradeMinorSkipWarningIsVisibleInPreparedPrompt(t *testing.T) {
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{
+			NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleWorker, Version: "v1.13.3"}}}, nil
+			}},
+			NodeController: &testkit.FakeNodeController{CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+				return "factory.talos.dev/metal-installer/id:v1.13.3", nil
+			}},
+		}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	model := directUpgradeModel(t, session)
+	model, command := updateDirect(model, keyPress('U'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.upgradePrompt)
+	model.upgradePrompt.input.SetValue("factory.talos.dev/metal-installer/id:v1.15.0")
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.prompt)
+	assert.Contains(t, model.mutation.prompt.assessment.Warning, "skips intermediate Talos minor releases")
+	assert.Contains(t, ansi.Strip(model.View().Content), "skips intermediate Talos minor releases")
+}
+
 func TestDirectUpgradeReadOnlyAffordanceDoesNotReadOrPrepare(t *testing.T) {
 	session := directUpgradeSession(t, "installer:v1.14.0", nil, nil)
 	model := directUpgradeModel(t, session)

@@ -279,7 +279,7 @@ func TestDirectResourceDetailShowsLoadingAndRetainsYAMLScrollAcrossResize(t *tes
 	model := directResourceModel(t, &testkit.FakeResourceKindReader{}, &testkit.FakeResourceInstanceReader{GetFunc: func(_ context.Context, node, kind, id string) (domain.ResourceInstanceSnapshot, error) {
 		return domain.ResourceInstanceSnapshot{Namespace: "ns", Type: kind, ID: id, YAML: yaml.String()}, nil
 	}})
-	model.width, model.height = 100, 16
+	model.width, model.height = 100, 32
 	frame := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind"}
 	model.views = model.views.push(frame)
 	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "selected"}}}, directReady, "")
@@ -298,7 +298,7 @@ func TestDirectResourceDetailShowsLoadingAndRetainsYAMLScrollAcrossResize(t *tes
 	assert.NotEqual(t, initial, afterScroll, "j should scroll the displayed YAML")
 	assert.Contains(t, afterScroll, "line-05: value")
 	model, _ = updateDirect(model, keyPress('G'))
-	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 100, Height: 13})
+	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 100, Height: 29})
 	afterResize := model.View().Content
 	assert.Contains(t, afterResize, "line-69: value", "G should reach the end and resizing should retain the scrolled position")
 	assert.NotContains(t, afterResize, "line-00: value")

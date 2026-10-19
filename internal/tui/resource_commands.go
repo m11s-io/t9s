@@ -227,7 +227,12 @@ func (m *directModel) resizeDirectResourceDetail() {
 		return
 	}
 	layout := layoutShell(m.width, m.height)
-	m.resourceDetail.setViewport(contentSize{Width: layout.Width, Height: layout.ContentHeight})
+	frame := layoutResourceFrame(layout.Width, layout.ContentHeight, directResourceTitle(*m, viewResourceDetail))
+	wasAtBottom := m.resourceDetail.viewport.YOffset()+m.resourceDetail.bodyHeight >= len(strings.Split(m.resourceDetail.value.YAML, "\n"))
+	m.resourceDetail.setViewport(contentSize{Width: frame.InnerWidth, Height: frame.InnerHeight})
+	if wasAtBottom {
+		m.resourceDetail.viewport.GotoBottom()
+	}
 }
 
 func (m *directModel) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
