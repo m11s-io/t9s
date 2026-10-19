@@ -230,7 +230,30 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.view.notice = mutationErrorMessage(message.err)
 			return m, nil
 		}
-		m.mutation.prompt = &directMutationPrompt{operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind, assessment: message.plan.Assessment(), session: m.session}
+		prompt := &directMutationPrompt{
+			operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind,
+			assessment: message.plan.Assessment(), session: m.session,
+			confirm: application.Confirmation{Approved: message.request.Kind != application.ActionReset && message.request.Kind != application.ActionWipeDevice},
+		}
+		if message.request.Reset != nil {
+			options := *message.request.Reset
+			options.UserDisks = append([]string(nil), options.UserDisks...)
+			options.SystemPartitions = append([]string(nil), options.SystemPartitions...)
+			prompt.reset = &options
+		}
+		if message.request.DeviceWipe != nil {
+			options := *message.request.DeviceWipe
+			prompt.deviceWipe = &options
+		}
+		if message.request.Kind == application.ActionReset || message.request.Kind == application.ActionWipeDevice {
+			prompt.intent = destructiveIntentInput()
+			if message.request.Kind == application.ActionReset {
+				prompt.field = 3
+			} else {
+				prompt.field = 1
+			}
+		}
+		m.mutation.prompt = prompt
 		return m, nil
 	case directMutationProgress:
 		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
@@ -558,6 +581,12 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mutation.prompt != nil {
 			prompt := m.mutation.prompt
+			if prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice {
+				command, handled := m.updateDirectDestructivePrompt(message)
+				if handled {
+					return m, command
+				}
+			}
 			if message.String() == "y" || message.String() == "Y" {
 				if prompt.assessment.Blocked != "" {
 					m.view.notice = "Action refused: " + prompt.assessment.Blocked
@@ -694,17 +723,21 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					kind = application.ActionShutdown
 				case "B":
 					kind = application.ActionRollback
+				case "W":
+					kind = application.ActionReset
 				}
 				if kind != "" {
 					targets := m.nodes.actionTargets(m.cluster.nodes.Value.Nodes)
 					if len(targets) > 0 {
-						operation := m.nextMutationOperation()
-						m.mutation.operation = operation
-						m.mutation.busy = true
-						m.mutation.notice = ""
-						m.mutation.results = nil
-						m.view.notice = ""
-						return m, directPrepareNodeCommand(m.session, m.sessionCtx, operation, m.generation(), application.NodeActionRequest{Kind: kind, Targets: targets})
+						request := application.NodeActionRequest{Kind: kind, Targets: targets}
+						if kind == application.ActionReset {
+							mode := ports.WipeModeAll
+							if len(targets) > 1 {
+								mode = ports.WipeModeSystemDisk
+							}
+							request.Reset = &ports.ResetOptions{Mode: mode, Reboot: true}
+						}
+						return m, m.prepareDirectNodeMutation(request)
 					}
 				}
 			}
@@ -994,6 +1027,14 @@ func (m directModel) View() tea.View {
 		} else {
 			content = m.nodes.viewSized(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.cluster.nodes)
 		}
+	}
+	if prompt := m.mutation.prompt; prompt != nil && (prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice) {
+		title := "reset"
+		if prompt.nodeKind == application.ActionWipeDevice {
+			title = "wipe device"
+		}
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, title)
+		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt), m.styles.k9s)
 	}
 	if m.palette.active {
 		content += "\n" + m.palette.view()

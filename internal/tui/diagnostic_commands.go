@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 type directProcessesLoaded struct {
@@ -268,6 +269,13 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 		}
 		if frame.Kind == viewTime {
 			filtering = m.time.filtering
+		}
+		if frame.Kind == viewDisks && message.String() == "W" && !filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
+			if disk, ok := m.disks.selected(); ok && frame.NodeTarget != "" && m.disks.status != directLoading {
+				request := application.NodeActionRequest{Kind: application.ActionWipeDevice, Targets: []string{frame.NodeTarget}, DeviceWipe: &ports.DeviceWipeOptions{Node: frame.NodeTarget, Device: disk.DeviceName, Method: ports.DeviceWipeFast}}
+				return m.prepareDirectNodeMutation(request), true
+			}
+			return nil, true
 		}
 		if !filtering && (message.String() == "q" || message.String() == "esc") {
 			m.popDirectView()
