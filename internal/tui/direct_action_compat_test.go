@@ -130,13 +130,44 @@ func TestDirectWriteActionHintsAreRenderedOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestDirectPromptRenderingKeepsWarningAndConfirmationCueAt80Columns(t *testing.T) {
+func TestDirectMutationPromptKeepsWarningAndConfirmationCueVisible(t *testing.T) {
 	warning := strings.Repeat("node may lose quorum and become unavailable ", 2)
-	prompt := renderPendingActionPrompt(actionPrompt{Kind: application.ActionReboot, Targets: []string{"cp-1", "cp-2"}, Warning: warning})
-	assert.Contains(t, prompt, "!! ")
-	assert.Contains(t, prompt, "(y/n)")
-	assert.LessOrEqual(t, len([]rune(prompt)), 80)
-	assert.Equal(t, "Reboot cp-1? (y/n)", renderPendingActionPrompt(actionPrompt{Kind: application.ActionReboot, Targets: []string{"cp-1"}}))
-	assert.Contains(t, renderPendingActionPrompt(actionPrompt{Kind: application.ActionReset, Targets: []string{"cp-1"}, Reset: &ports.ResetOptions{Mode: ports.WipeModeSystemDisk}}), "Reset cp-1 (system disk)")
-	assert.Contains(t, renderPendingActionPrompt(actionPrompt{Kind: application.ActionWipeDevice, Targets: []string{"cp-1"}, DeviceWipe: &ports.DeviceWipeOptions{Device: "/dev/sdb"}}), "Wipe device cp-1 /dev/sdb")
+	prompt := &directMutationPrompt{node: &application.PreparedNodeAction{}, nodeKind: application.ActionReboot,
+		assessment: application.Assessment{Targets: []string{"cp-1", "cp-2"}, Warning: warning}}
+	rendered := renderDirectMutationPrompt(prompt)
+	assert.Contains(t, rendered, "!! ")
+	assert.Contains(t, rendered, "(y/n)")
+	assert.LessOrEqual(t, len([]rune(rendered)), 80)
+}
+
+func TestDirectUpgradePromptKeepsVersionRiskAndConfirmationVisible(t *testing.T) {
+	t.Run("long installer reference and quorum warning", func(t *testing.T) {
+		image := "factory.talos.dev/metal-installer/very-long-board-name:v1.24.3"
+		warning := strings.Repeat("upgrade may cause temporary node unavailability; ", 3) + "below quorum (need 2)"
+		prompt := &directMutationPrompt{
+			node: &application.PreparedNodeAction{}, nodeKind: application.ActionUpgrade,
+			label:      image,
+			assessment: application.Assessment{Targets: []string{"cp-1", "cp-2", "cp-3"}, Warning: warning},
+		}
+		rendered := renderDirectMutationPrompt(prompt)
+		assert.LessOrEqual(t, len([]rune(rendered)), 80)
+		assert.Contains(t, rendered, "v1.24.3")
+		assert.Contains(t, rendered, "below quorum (need 2)")
+		assert.Contains(t, rendered, "3 nodes")
+		assert.Contains(t, rendered, "(y/n)")
+	})
+
+	t.Run("short image and single target remain readable", func(t *testing.T) {
+		prompt := &directMutationPrompt{
+			node: &application.PreparedNodeAction{}, nodeKind: application.ActionUpgrade,
+			label:      "installer:v1.15.0",
+			assessment: application.Assessment{Targets: []string{"cp-1"}, Warning: "skips intermediate minor releases"},
+		}
+		rendered := renderDirectMutationPrompt(prompt)
+		assert.LessOrEqual(t, len([]rune(rendered)), 80)
+		assert.Contains(t, rendered, "v1.15.0")
+		assert.Contains(t, rendered, "cp-1")
+		assert.Contains(t, rendered, "skips intermediate minor releases")
+		assert.Contains(t, rendered, "(y/n)")
+	})
 }

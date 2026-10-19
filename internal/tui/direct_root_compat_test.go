@@ -346,7 +346,12 @@ func TestDirectWipeCompletionMarksDiskSnapshotLoading(t *testing.T) {
 				return refreshed, nil
 			}
 			return initial, nil
-		}, &testkit.FakeNodeController{}, true)
+		}, &testkit.FakeNodeController{WipeDeviceFunc: func(context.Context, string, string, ports.DeviceWipeMethod) error {
+			if outcome == domain.OperationUnconfirmed {
+				return errors.New("wipe failed")
+			}
+			return nil
+		}}, true)
 		model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 		model.splash = false
 		model.session, model.sessionCtx = session, context.Background()
@@ -363,9 +368,9 @@ func TestDirectWipeCompletionMarksDiskSnapshotLoading(t *testing.T) {
 			operation: 7, generation: model.generation(),
 			plan: &directMutationPrompt{node: prepared, nodeKind: application.ActionWipeDevice, deviceWipe: &options, assessment: prepared.Assessment()},
 		}
+		result, operationErr := session.ExecuteNodeAction(context.Background(), prepared, application.Confirmation{Approved: true, Token: "/dev/sdb"}, nil)
 		model, command := updateDirect(model, directMutationFinished{
-			operation: 7, generation: model.generation(),
-			result: application.MutationResult{Targets: []application.TargetResult{{Target: "cp-1", Outcome: outcome}}},
+			operation: 7, generation: model.generation(), result: result, err: operationErr,
 		})
 		if command != nil {
 			refreshing = true
@@ -373,25 +378,26 @@ func TestDirectWipeCompletionMarksDiskSnapshotLoading(t *testing.T) {
 		return model, command, &reads
 	}
 
-	t.Run("completed matching target refreshes visible inventory", func(t *testing.T) {
-		model, command, reads := newModel(t, "cp-1", domain.OperationCompleted)
+	t.Run("accepted matching target refreshes visible inventory", func(t *testing.T) {
+		model, command, reads := newModel(t, "cp-1", domain.OperationAccepted)
 		assert.Equal(t, directLoading, model.disks.status)
-		require.NotNil(t, command, "completed wipe starts the active disk view refresh")
+		require.NotNil(t, command, "accepted wipe starts a read refresh without claiming completion")
 		model, _ = applyDirectCommand(t, model, command)
 		assert.Equal(t, []string{"cp-1"}, *reads)
 		assert.Equal(t, "cp-1", model.disks.node)
-		assert.Equal(t, refreshed, model.disks.values, "terminal refresh replaces the pre-wipe inventory")
+		assert.Equal(t, domain.OperationAccepted, model.mutation.results[0].Outcome)
+		assert.Equal(t, refreshed, model.disks.values, "the post-dispatch read replaces the prior inventory")
 		assert.Equal(t, directReady, model.disks.status)
 	})
 
 	t.Run("another displayed node is left untouched", func(t *testing.T) {
-		model, command, reads := newModel(t, "worker-1", domain.OperationCompleted)
+		model, command, reads := newModel(t, "worker-1", domain.OperationAccepted)
 		assert.Nil(t, command)
 		assert.Zero(t, len(*reads))
 		assert.Equal(t, directReady, model.disks.status)
 		assert.Equal(t, initial, model.disks.values)
 	})
-	t.Run("noncompleted result does not refresh", func(t *testing.T) {
+	t.Run("unconfirmed error does not refresh", func(t *testing.T) {
 		model, command, reads := newModel(t, "cp-1", domain.OperationUnconfirmed)
 		assert.Nil(t, command)
 		assert.Zero(t, len(*reads))

@@ -28,11 +28,14 @@ func (s *directUpgradeTestStream) Wait(context.Context) (ports.UpgradeResult, er
 	return s.terminal, nil
 }
 
-func directUpgradeSession(t *testing.T, currentImage string, currentErr error, upgrade func(context.Context, string, string) ports.UpgradeStream) *application.Session {
+func directUpgradeSession(t *testing.T, currentImage string, currentErr error, upgrade func(context.Context, string, string) ports.UpgradeStream, nodeReadCounts ...*atomic.Int32) *application.Session {
 	t.Helper()
 	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
 		return &testkit.FakeSession{
 			NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				if len(nodeReadCounts) > 0 && nodeReadCounts[0] != nil {
+					nodeReadCounts[0].Add(1)
+				}
 				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}, nil
 			}},
 			NodeController: &testkit.FakeNodeController{
@@ -75,7 +78,8 @@ func TestDirectUpgradePrefillsFromCurrentImageAndPreparesEditedImage(t *testing.
 	model, _ = applyDirectCommand(t, model, command)
 	require.NotNil(t, model.mutation.prompt)
 	assert.Equal(t, application.ActionUpgrade, model.mutation.prompt.nodeKind)
-	assert.Contains(t, ansi.Strip(model.View().Content), "Upgrade to installer:v1.15.0")
+	assert.Contains(t, ansi.Strip(model.View().Content), "Upgrade to")
+	assert.Contains(t, ansi.Strip(model.View().Content), "v1.15.0")
 	model, command = updateDirect(model, keyPress('y'))
 	require.NotNil(t, command)
 	for model.mutation.busy {
@@ -168,6 +172,7 @@ func TestDirectUpgradeMinorSkipWarningIsVisibleInPreparedPrompt(t *testing.T) {
 			content := ansi.Strip(model.View().Content)
 			if test.warn {
 				assert.Contains(t, warning, "skips intermediate Talos minor releases")
+				assert.Contains(t, content, "v1.15.0")
 				assert.Contains(t, content, "skips intermediate Talos minor releases")
 			} else {
 				assert.NotContains(t, warning, "skips intermediate Talos minor releases")
@@ -194,23 +199,34 @@ func TestDirectUpgradeTerminalOutcomesRemainDistinctAndErrorsStayInspectable(t *
 		result  ports.UpgradeResult
 		want    string
 		outcome domain.OperationOutcome
+		refresh bool
 	}{
-		{name: "accepted", result: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAccepted, Done: true}, want: "accepted — completion not verified", outcome: domain.OperationAccepted},
-		{name: "applied", result: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeApplied, Done: true}, want: "Upgrade cp-1 applied", outcome: domain.OperationCompleted},
-		{name: "recovery warning", result: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: recoveryErr.Error(), Err: recoveryErr, Done: true}, want: "recovery warning", outcome: ""},
+		{name: "accepted", result: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAccepted, Done: true}, want: "accepted — completion not verified", outcome: domain.OperationAccepted, refresh: true},
+		{name: "unconfirmed", result: ports.UpgradeResult{}, want: "request failed", outcome: domain.OperationUnconfirmed},
+		{name: "applied", result: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeApplied, Done: true}, want: "Upgrade cp-1 applied", outcome: domain.OperationCompleted, refresh: true},
+		{name: "recovery warning", result: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: recoveryErr.Error(), Err: recoveryErr, Done: true}, want: "recovery warning", outcome: domain.OperationRecoveryIncomplete, refresh: true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			model := directUpgradeModel(t, directUpgradeSession(t, "installer:v1.14.0", nil, nil))
+			var nodeReads atomic.Int32
+			model := directUpgradeModel(t, directUpgradeSession(t, "installer:v1.14.0", nil, nil, &nodeReads))
 			model.mutation.busy = true
 			model.mutation.operation = 3
-			model, _ = updateDirect(model, directMutationFinished{
+			model, command := updateDirect(model, directMutationFinished{
 				operation: 3, generation: model.generation(),
 				upgradeTarget: "cp-1", upgrade: &test.result,
 			})
 			assert.False(t, model.mutation.busy)
 			assert.Contains(t, model.mutation.notice, test.want)
 			assert.Equal(t, test.outcome, model.mutation.upgrade.Outcome)
+			if test.refresh {
+				require.NotNil(t, command)
+				model, _ = applyDirectCommand(t, model, command)
+				assert.EqualValues(t, 1, nodeReads.Load())
+			} else {
+				assert.Nil(t, command)
+				assert.Zero(t, nodeReads.Load())
+			}
 			if test.name == "recovery warning" {
 				require.NotNil(t, model.mutation.upgradeResult)
 				assert.ErrorIs(t, model.mutation.upgradeResult.Err, recoveryErr)

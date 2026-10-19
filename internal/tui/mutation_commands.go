@@ -590,7 +590,16 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 			verb = "Rollback"
 		}
 		if prompt.nodeKind == application.ActionUpgrade {
-			verb = "Upgrade to " + sanitizeUntrustedText(prompt.label)
+			imageBudget := 24
+			if a.Warning != "" {
+				imageBudget = 12
+			}
+			verb = "Upgrade to " + truncateWarningTail(sanitizeUntrustedText(prompt.label), imageBudget)
+			if len(a.Targets) == 1 {
+				target = truncateWarningTail(sanitizeUntrustedText(a.Targets[0]), 12)
+			} else if len(a.Targets) > 1 {
+				target = fmt.Sprintf("%d nodes", len(a.Targets))
+			}
 		}
 		if prompt.nodeKind == application.ActionReset {
 			verb = "Reset"
@@ -599,7 +608,9 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 			verb = "Wipe device"
 			target = prompt.deviceWipe.Device + " on " + prompt.deviceWipe.Node
 		}
-		target = strings.Join(a.Targets, ", ")
+		if prompt.nodeKind != application.ActionUpgrade {
+			target = strings.Join(a.Targets, ", ")
+		}
 	}
 	if prompt.nodeKind == application.ActionWipeDevice && prompt.deviceWipe != nil {
 		target = prompt.deviceWipe.Device + " on " + prompt.deviceWipe.Node
@@ -614,6 +625,11 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 		return verb + " " + target + " · complete typed intent in action panel"
 	}
 	if a.Warning != "" {
+		if prompt.nodeKind == application.ActionUpgrade {
+			lineTail := " — " + verb + " " + target + "? (y/n)"
+			warningBudget := 80 - len([]rune("!! "+lineTail))
+			return "!! " + truncateWarningTail(a.Warning, warningBudget) + lineTail
+		}
 		return "!! " + truncateWarningTail(a.Warning, pendingActionWarningBudget) + " — " + verb + " " + target + "? (y/n)"
 	}
 	return verb + " " + target + "? (y/n)"
@@ -1026,6 +1042,7 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 				state.Event = upgradeEventValue(message.upgrade.Event)
 				switch message.upgrade.Outcome {
 				case ports.UpgradeOutcomeAppliedWithRecoveryWarning:
+					state.Outcome = domain.OperationRecoveryIncomplete
 					state.Warning = "upgrade applied; node recovery is incomplete — check node readiness and scheduling manually"
 				case ports.UpgradeOutcomeApplied:
 					state.Outcome = domain.OperationCompleted
@@ -1045,6 +1062,9 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 			m.mutation.upgrade = state
 			m.mutation.notice = renderDirectUpgradeNotice(state)
 			m.mutationWork = directMutationWork{}
+			if message.upgradeWaitErr == nil && (state.Outcome == domain.OperationAccepted || state.Outcome == domain.OperationCompleted || state.Outcome == domain.OperationRecoveryIncomplete) {
+				return m, m.refreshDirectNodes()
+			}
 			return m, nil
 		}
 		m.mutation.prompt = nil
@@ -1053,10 +1073,10 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 		m.mutation.receiptVisible = m.mutation.snapshot != nil && m.canShowDirectEtcdReceipt()
 		var refreshDisks tea.Cmd
 		if plan := m.mutationWork.plan; plan != nil && plan.nodeKind == application.ActionWipeDevice && message.err == nil {
-			completed := false
+			dispatched := false
 			for _, result := range message.result.Targets {
-				if result.Outcome == domain.OperationCompleted {
-					completed = true
+				if result.Err == nil && (result.Outcome == domain.OperationAccepted || result.Outcome == domain.OperationCompleted) {
+					dispatched = true
 					break
 				}
 			}
@@ -1064,7 +1084,7 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 			if plan.deviceWipe != nil {
 				targetNode = plan.deviceWipe.Node
 			}
-			if completed && m.disks.node == targetNode {
+			if dispatched && m.disks.node == targetNode {
 				m.disks.status = directLoading
 				m.disks.err = ""
 				for _, frame := range m.views {
