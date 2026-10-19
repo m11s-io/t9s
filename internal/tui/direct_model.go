@@ -558,6 +558,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 							m.mutation.snapshot = nil
 							m.mutation.receiptVisible = false
 							m.mutation.receiptOffset = 0
+							m.palette = m.palette.close()
 							m.etcdPathPrompt = &pathPrompt
 							return m, nil
 						}
@@ -837,9 +838,7 @@ func (m directModel) View() tea.View {
 		breadcrumb = m.cluster.contextName + " > contexts"
 	}
 	prompt := ""
-	if m.palette.active {
-		prompt = m.palette.view()
-	} else if m.mutation.prompt != nil {
+	if m.mutation.prompt != nil {
 		prompt = renderDirectMutationPrompt(m.mutation.prompt)
 	} else if m.upgradePrompt != nil {
 		prompt = m.upgradePrompt.view()
@@ -847,6 +846,8 @@ func (m directModel) View() tea.View {
 		prompt = m.etcdPathPrompt.view()
 	} else if m.timePrompt != nil {
 		prompt = m.timePrompt.view()
+	} else if m.palette.active {
+		prompt = m.palette.view()
 	} else if !m.palette.active && !m.contexts.active && m.mutation.upgrade.Target != "" && m.mutation.notice != "" && !m.directFilterEditing() {
 		prompt = m.mutation.notice
 	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {

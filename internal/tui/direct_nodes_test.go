@@ -90,7 +90,19 @@ func TestDirectNodesEnterShowsSelectedNodeDetailAndEscapeReturns(t *testing.T) {
 	assert.Contains(t, model.View().Content, "NODE DETAIL")
 	assert.Contains(t, model.View().Content, "NAME       worker-1")
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.NotContains(t, model.View().Content, "NODE DETAIL", "Escape from node detail returns to nodes")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = updateDirect(model, keyPress('q'))
 	assert.NotContains(t, model.View().Content, "NODE DETAIL")
+	assert.Equal(t, viewNodes, model.views.top().Kind, "q from node detail returns to nodes")
+}
+
+func TestDirectNodeDetailBreadcrumbIncludesContextAndNodes(t *testing.T) {
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}})
+	model.cluster.contextName = "prod"
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, "prod > nodes > cp-1", model.views.breadcrumb(model.cluster.contextName))
+	assert.Contains(t, ansi.Strip(model.View().Content), "<cp-1>", "the footer renders the active breadcrumb segment")
 }
 
 func TestDirectNodesMarksRowsByStableIDWhenWritesEnabled(t *testing.T) {

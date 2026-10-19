@@ -896,6 +896,7 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 		}
 		prompt := newUpgradePromptModel(message.target, message.image)
 		prompt.operation, prompt.generation = message.operation, message.generation
+		m.palette = m.palette.close()
 		m.upgradePrompt = &prompt
 		if message.err != nil {
 			m.upgradePrompt.notice = "current install image unavailable"
@@ -913,6 +914,7 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 			m.view.notice = mutationErrorMessage(message.err)
 			return m, nil
 		}
+		m.palette = m.palette.close()
 		m.mutation.prompt = &directMutationPrompt{operation: message.operation, generation: message.generation, service: message.plan, serviceKind: message.request.Kind, label: message.request.Service + "@" + message.request.Node, assessment: message.plan.Assessment(), session: m.session}
 		return m, nil
 	case directNodePrepared:
@@ -936,6 +938,7 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 			m.view.notice = mutationErrorMessage(message.err)
 			return m, nil
 		}
+		m.palette = m.palette.close()
 		prompt := &directMutationPrompt{
 			operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind,
 			assessment: message.plan.Assessment(), session: m.session,
@@ -975,6 +978,7 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 			m.view.notice = mutationErrorMessage(message.err)
 			return m, nil
 		}
+		m.palette = m.palette.close()
 		m.mutation.prompt = &directMutationPrompt{
 			operation: message.operation, generation: message.generation, etcd: message.plan, etcdKind: message.request.Kind,
 			assessment: message.plan.Assessment(), session: m.session, confirm: application.Confirmation{Approved: true},

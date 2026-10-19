@@ -286,6 +286,7 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 		}
 		if frame.Kind == viewTime && message.String() == "c" && !filtering {
 			prompt := newTimePromptModel()
+			m.palette = m.palette.close()
 			m.timePrompt = &prompt
 			return prompt.input.Focus(), true
 		}

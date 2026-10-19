@@ -91,13 +91,43 @@ func TestDirectRootUsesOnlyActiveViewFilterForPalettePrecedence(t *testing.T) {
 
 func TestDirectCommandPaletteRendersPromptAndTypedTextInFooter(t *testing.T) {
 	root := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "node-1", Name: "worker-1"}})
+	const typed = "zxq-palette-probe-8472"
+	assert.NotContains(t, ansi.Strip(root.View().Content), typed, "the unique query is absent from the underlying view")
 	root, _ = updateDirect(root, keyPress(':'))
-	for _, key := range "nodes" {
+	for _, key := range typed {
 		root, _ = updateDirect(root, keyPress(key))
 	}
 	content := ansi.Strip(root.View().Content)
 	assert.Contains(t, content, "COMMAND :")
-	assert.Contains(t, content, "nodes")
+	assert.Contains(t, content, typed)
+}
+
+func TestDirectMutationPreparedClosesPaletteOpenedDuringPreparation(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model.splash = false
+	model.session = directMutationSession(t, true, domain.ServiceSet{}, nil)
+	model.sessionCtx = context.Background()
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
+
+	model, prepare := updateDirect(model, keyPress('R'))
+	require.NotNil(t, prepare)
+	model, _ = updateDirect(model, keyPress(':'))
+	require.True(t, model.palette.active, "palette opens while asynchronous preparation is pending")
+	prepared := prepare()
+	result, ok := prepared.(directNodePrepared)
+	require.True(t, ok)
+	require.NoError(t, result.err)
+	require.NotNil(t, result.plan)
+	assert.Equal(t, model.mutation.operation, result.operation)
+	assert.Equal(t, model.generation(), result.generation)
+	model, _ = updateDirect(model, prepared)
+
+	content := ansi.Strip(model.View().Content)
+	assert.False(t, model.palette.active, "a prepared action must dismiss a palette that would take precedence over its confirmation")
+	require.NotNil(t, model.mutation.prompt)
+	assert.Contains(t, content, "Reboot cp-1?")
+	assert.NotContains(t, content, "COMMAND :")
 }
 
 func TestDirectRootHandlesKittyShiftedKeys(t *testing.T) {

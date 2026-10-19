@@ -248,6 +248,7 @@ func TestDirectContextPickerOrderingSelectionMarkerClampAndCancel(t *testing.T) 
 	assert.Contains(t, view, "ENDPOINTS")
 	assert.Contains(t, view, "NODES")
 	assert.NotContains(t, view, "underlying-service", "the picker owns the content region while active")
+	assert.NotContains(t, view, "<d> Detail", "the picker hides detail actions from the underlying view")
 	assert.NotContains(t, view, "<l> Logs")
 
 	for range 5 {
