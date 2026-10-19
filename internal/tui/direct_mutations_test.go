@@ -415,6 +415,79 @@ func TestDirectDestructivePreparationBlocksReadOnlyAndUnknownDisksWithoutLeaking
 	}
 }
 
+func TestBlockedResetPromptCancelsFromInitialIntentField(t *testing.T) {
+	for _, cancel := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{{name: "n", key: keyPress('n')}, {name: "N", key: keyPress('N')}, {name: "escape", key: tea.KeyPressMsg{Code: tea.KeyEscape}}} {
+		t.Run(cancel.name, func(t *testing.T) {
+			disks := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true, ReadOnly: true}, {DeviceName: "/dev/sdb"}}}
+			var resetCalls atomic.Int32
+			session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return disks, nil }, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error {
+				resetCalls.Add(1)
+				return nil
+			}}, true)
+			model := directResetPromptModel(t, session, []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}})
+			model, command := updateDirect(model, keyPress('W'))
+			require.NotNil(t, command)
+			model, _ = applyDirectCommand(t, model, command)
+			require.NotNil(t, model.mutation.prompt)
+			assert.True(t, model.mutation.prompt.intent.Focused())
+			require.NotEmpty(t, model.mutation.prompt.assessment.Blocked)
+			model, command = updateDirect(model, cancel.key)
+			assert.Nil(t, command)
+			assert.Nil(t, model.mutation.prompt)
+			assert.False(t, model.mutation.busy)
+			assert.Zero(t, resetCalls.Load())
+		})
+	}
+}
+
+func TestBlockedDeviceWipePromptCancelsFromInitialIntentField(t *testing.T) {
+	for _, cancel := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{{name: "n", key: keyPress('n')}, {name: "N", key: keyPress('N')}, {name: "escape", key: tea.KeyPressMsg{Code: tea.KeyEscape}}} {
+		t.Run(cancel.name, func(t *testing.T) {
+			listed := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb", ReadOnly: true}}}
+			var wipeCalls atomic.Int32
+			session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return listed, nil }, &testkit.FakeNodeController{WipeDeviceFunc: func(context.Context, string, string, ports.DeviceWipeMethod) error {
+				wipeCalls.Add(1)
+				return nil
+			}}, true)
+			model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+			model.splash, model.session, model.sessionCtx = false, session, context.Background()
+			model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: listed})
+			model.disks.control.SetCursor(1)
+			model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
+			model, command := updateDirect(model, keyPress('W'))
+			require.NotNil(t, command)
+			model, _ = applyDirectCommand(t, model, command)
+			require.NotNil(t, model.mutation.prompt)
+			assert.True(t, model.mutation.prompt.intent.Focused())
+			require.NotEmpty(t, model.mutation.prompt.assessment.Blocked)
+			model, command = updateDirect(model, cancel.key)
+			assert.Nil(t, command)
+			assert.Nil(t, model.mutation.prompt)
+			assert.False(t, model.mutation.busy)
+			assert.Zero(t, wipeCalls.Load())
+		})
+	}
+}
+
+func TestUnblockedDestructiveTokenCanContainN(t *testing.T) {
+	prompt := preparedResetPrompt([]string{"worker-1"}, []application.ResetPreview{{Node: "worker-1", Known: true, SystemDisk: "/dev/sda"}})
+	prompt.assessment.RequiredToken = "token-n"
+	prompt.field = 3
+	prompt.intent.SetValue("token-")
+	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model.splash = false
+	model.mutation.prompt = prompt
+	model, _ = updateDirect(model, keyPress('n'))
+	require.NotNil(t, model.mutation.prompt, "n in an unblocked typed token must not cancel")
+	assert.Equal(t, "token-n", model.mutation.prompt.intent.Value())
+}
+
 func TestDirectDiskWipeRequiresReprepareWhenPinnedDeviceIdentityChanges(t *testing.T) {
 	var reads, calls atomic.Int32
 	session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) {

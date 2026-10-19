@@ -54,7 +54,7 @@ func (m *directModel) updateDirectDestructivePrompt(message tea.KeyPressMsg) (te
 	if prompt.intentReady {
 		return nil, false
 	}
-	if (key == "n" || key == "N") && prompt.field != fields-1 {
+	if (key == "n" || key == "N") && (prompt.field != fields-1 || prompt.assessment.Blocked != "") {
 		m.mutation.prompt = nil
 		m.view.notice = "Action canceled"
 		return nil, true
