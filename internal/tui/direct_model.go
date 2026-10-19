@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"image/color"
 	"sync"
 	"time"
 
@@ -776,7 +775,7 @@ func (m model) View() tea.View {
 			if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
 				content = renderServiceDetail(service)
 			} else {
-				content = "SERVICE DETAIL\nService unavailable"
+				content = renderDetail([]detailField{{label: "SERVICE", value: "unavailable"}})
 			}
 		} else if m.views.top().Kind == viewHelp {
 			content = "HELP\n\n" + renderActionHints(actionHints(viewNodes, m.options.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.options.WritesEnabled))
@@ -904,7 +903,6 @@ func (m model) View() tea.View {
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
 	result := tea.NewView(renderShell(layout, header, content, footer))
 	result.AltScreen = true
-	result.BackgroundColor = color.Black
 	result.WindowTitle = "t9s"
 	return result
 }

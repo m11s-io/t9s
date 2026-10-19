@@ -52,8 +52,9 @@ func TestNodeReaderListIndexesByNameAndInternalIP(t *testing.T) {
 func TestKubernetesRolesAreSorted(t *testing.T) {
 	node := corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
 		"node-role.kubernetes.io/worker": "", "node-role.kubernetes.io/control-plane": "", "node-role.kubernetes.io/a": "",
+		"kubernetes.io/role": "legacy-worker",
 	}}}
-	assert.Equal(t, []string{"a", "control-plane", "worker"}, convertKubernetesNode(node).Roles)
+	assert.Equal(t, []string{"a", "control-plane", "legacy-worker", "worker"}, convertKubernetesNode(node).Roles)
 }
 
 type stubNodes struct{ items []corev1.Node }

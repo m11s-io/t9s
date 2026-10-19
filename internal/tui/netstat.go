@@ -131,7 +131,7 @@ func (m netstatModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(sockets), m.control.Cursor(), rowCapacity)
-	content := renderNetstatTable(size.Width, sockets[start:end], m.control.Cursor()-start)
+	content := renderNetstatRows(size.Width, sockets[start:end], sockets, m.control.Cursor()-start)
 	if warningRows > 0 {
 		content = "SOCKETS PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -149,25 +149,29 @@ func socketProcessLabel(socket domain.SocketSnapshot) string {
 }
 
 var socketColumns = []tableColumn[domain.SocketSnapshot]{
-	{header: "PROTO", minWidth: 6, value: func(s domain.SocketSnapshot) string { return fallback(s.Protocol) }},
-	{header: "STATE", minWidth: 10, value: func(s domain.SocketSnapshot) string { return fallback(s.State) }},
-	{header: "LOCAL", minWidth: 22, value: func(s domain.SocketSnapshot) string { return fallback(s.LocalAddress) }},
-	{header: "REMOTE", minWidth: 22, grow: true, value: func(s domain.SocketSnapshot) string { return fallback(s.RemoteAddress) }},
-	{header: "PROCESS", minWidth: 16, value: socketProcessLabel},
+	{header: "PROTO", minWidth: 5, value: func(s domain.SocketSnapshot) string { return fallback(s.Protocol) }},
+	{header: "STATE", minWidth: 5, value: func(s domain.SocketSnapshot) string { return fallback(s.State) }},
+	{header: "LOCAL", minWidth: 5, value: func(s domain.SocketSnapshot) string { return fallback(s.LocalAddress) }},
+	{header: "REMOTE", minWidth: 6, value: func(s domain.SocketSnapshot) string { return fallback(s.RemoteAddress) }},
+	{header: "PROCESS", minWidth: 7, value: socketProcessLabel},
 }
 
 func renderNetstatTable(width int, sockets []domain.SocketSnapshot, selectedIndex int) string {
-	widths := netstatColumnWidths(width)
+	return renderNetstatRows(width, sockets, sockets, selectedIndex)
+}
+
+func renderNetstatRows(width int, rows, widthValues []domain.SocketSnapshot, selectedIndex int) string {
+	widths := netstatColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, netstatHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
-	for index, socket := range sockets {
+	for index, socket := range rows {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, netstatRowValues(socket), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -175,11 +179,11 @@ func renderNetstatTable(width int, sockets []domain.SocketSnapshot, selectedInde
 	return output.String()
 }
 
-func netstatColumnWidths(width int) []int {
+func netstatColumnWidths(width int, sockets []domain.SocketSnapshot) []int {
 	if width <= 0 {
 		width = defaultNetstatWidth
 	}
-	return calculateColumnWidths(width, socketColumns)
+	return contentColumnWidths(width, socketColumns, sockets)
 }
 
 func netstatHeaders() []string {

@@ -181,7 +181,7 @@ func (m nodesModel) visibleNodes(snapshot []domain.NodeSnapshot) []domain.NodeSn
 	for _, node := range snapshot {
 		values := []string{
 			node.DisplayName(),
-			string(node.Role),
+			nodeRoleDisplayValue(node),
 			node.Stage,
 			string(node.Health),
 			serviceSummary(node.Services),

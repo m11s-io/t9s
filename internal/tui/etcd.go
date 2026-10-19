@@ -164,7 +164,7 @@ func (m etcdModel) viewSized(size contentSize, state directEtcdState) string {
 		rowCapacity = max(0, rowCapacity-1)
 	}
 	start, end := resourceWindow(len(members), m.control.Cursor(), rowCapacity)
-	contents := renderEtcdTable(size.Width, members[start:end], m.control.Cursor()-start)
+	contents := renderEtcdRows(size.Width, members[start:end], members, m.control.Cursor()-start)
 	if state.Status == directPartial {
 		partialMessage := state.Err
 		if partialMessage == "" {
@@ -186,7 +186,7 @@ func renderEtcd(width int, state directEtcdState) string {
 const defaultEtcdWidth = 120
 
 var etcdColumns = []tableColumn[domain.EtcdMemberSnapshot]{
-	{header: "MEMBER", minWidth: 14, grow: true, value: func(member domain.EtcdMemberSnapshot) string { return fallback(member.Hostname) }},
+	{header: "MEMBER", minWidth: 14, value: func(member domain.EtcdMemberSnapshot) string { return fallback(member.Hostname) }},
 	{header: "ROLE", minWidth: 8, value: etcdRole},
 	{header: "DB SIZE", minWidth: 10, value: etcdDBSize},
 	{header: "RAFT INDEX", minWidth: 12, value: etcdRaftIndex},
@@ -252,17 +252,21 @@ func formatBytes(value int64) string {
 }
 
 func renderEtcdTable(width int, members []domain.EtcdMemberSnapshot, selectedIndex int) string {
-	widths := etcdColumnWidths(width)
+	return renderEtcdRows(width, members, members, selectedIndex)
+}
+
+func renderEtcdRows(width int, members, widthValues []domain.EtcdMemberSnapshot, selectedIndex int) string {
+	widths := etcdColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, etcdHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, member := range members {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, etcdRowValues(member), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -270,11 +274,11 @@ func renderEtcdTable(width int, members []domain.EtcdMemberSnapshot, selectedInd
 	return output.String()
 }
 
-func etcdColumnWidths(width int) []int {
+func etcdColumnWidths(width int, members []domain.EtcdMemberSnapshot) []int {
 	if width <= 0 {
 		width = defaultEtcdWidth
 	}
-	return calculateColumnWidths(width, etcdColumns)
+	return contentColumnWidths(width, etcdColumns, members)
 }
 
 func etcdHeaders() []string {

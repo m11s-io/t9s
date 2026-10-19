@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
@@ -49,7 +50,8 @@ func TestDirectServicesFilterPromptsAndDetailPaletteNavigation(t *testing.T) {
 	model.services.filter = ""
 	model.services.filtering = false
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.Contains(t, model.View().Content, "SERVICE DETAIL")
+	assert.Contains(t, ansi.Strip(model.View().Content), "SERVICE          etcd")
+	assert.NotContains(t, model.View().Content, "SERVICE DETAIL")
 	model, _ = updateDirect(model, keyPress(':'))
 	assert.True(t, model.palette.active)
 	for _, key := range []tea.KeyPressMsg{keyPress('s'), keyPress('v'), keyPress('c'), {Code: tea.KeyEnter}} {
@@ -76,7 +78,7 @@ func TestDirectServicesEscapeReturnsFromDetailAndRoot(t *testing.T) {
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.Contains(t, model.View().Content, "SERVICE    etcd")
+	assert.Contains(t, ansi.Strip(model.View().Content), "SERVICE          etcd")
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.Equal(t, viewServices, model.views.top().Kind)
 	assert.Contains(t, model.View().Content, "etcd", "Escape from detail returns to the rendered service list")
@@ -97,7 +99,7 @@ func TestDirectServicesEscapeReturnsFromDetailAndRoot(t *testing.T) {
 
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.Equal(t, viewServices, model.views.top().Kind, "Escape at the services root keeps the list open")
-	assert.Contains(t, model.View().Content, "services(all)[2]", "the services header remains visible")
+	assert.Contains(t, ansi.Strip(model.View().Content), "services(all)[2]", "the services header remains visible")
 	assert.Contains(t, model.View().Content, "etcd")
 	assert.Contains(t, model.View().Content, "kubelet")
 }
@@ -140,13 +142,13 @@ func TestDirectServiceDetailKeepsOpenedIdentityAcrossFilteredRefreshReorder(t *t
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
-	assert.Contains(t, model.View().Content, "SERVICE    beta-one")
+	assert.Contains(t, ansi.Strip(model.View().Content), "SERVICE          beta-one")
 
 	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
 	reordered := domain.ServiceSet{Services: []domain.ServiceSnapshot{services[0], services[2], services[1]}}
 	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, services: reordered})
-	assert.Contains(t, model.View().Content, "SERVICE    beta-one")
-	assert.NotContains(t, model.View().Content, "SERVICE    beta-two")
+	assert.Contains(t, ansi.Strip(model.View().Content), "SERVICE          beta-one")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "SERVICE          beta-two")
 	assert.Contains(t, model.views.breadcrumb(model.cluster.contextName), "beta-one@node-b")
 }
 
@@ -161,6 +163,6 @@ func TestDirectServiceDetailShowsUnavailableWhenOpenedServiceDisappears(t *testi
 
 	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
 	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, services: domain.ServiceSet{Services: []domain.ServiceSnapshot{services[1]}}})
-	assert.Contains(t, model.View().Content, "Service unavailable")
-	assert.NotContains(t, model.View().Content, "SERVICE    beta-two")
+	assert.Contains(t, ansi.Strip(model.View().Content), "SERVICE          unavailable")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "SERVICE          beta-two")
 }

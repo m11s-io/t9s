@@ -87,13 +87,16 @@ func TestDirectNodesEnterShowsSelectedNodeDetailAndEscapeReturns(t *testing.T) {
 	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	require.Nil(t, command)
-	assert.Contains(t, model.View().Content, "NODE DETAIL")
-	assert.Contains(t, model.View().Content, "NAME       worker-1")
+	detail := model.View().Content
+	assert.Contains(t, detail, "\x1b[38;2;0;255;255m", "detail content should use the same blue as other resource rows")
+	assert.Contains(t, ansi.Strip(detail), "│ NAME", "the first field should identify the selected node inside its frame")
+	assert.NotContains(t, ansi.Strip(detail), "NODE DETAIL")
+	assert.Contains(t, ansi.Strip(detail), "NAME             worker-1")
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
-	assert.NotContains(t, model.View().Content, "NODE DETAIL", "Escape from node detail returns to nodes")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "NAME             worker-1", "Escape from node detail returns to nodes")
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
 	model, _ = updateDirect(model, keyPress('q'))
-	assert.NotContains(t, model.View().Content, "NODE DETAIL")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "NAME             worker-1")
 	assert.Equal(t, viewNodes, model.views.top().Kind, "q from node detail returns to nodes")
 }
 
@@ -160,7 +163,7 @@ func TestDirectNodeFocusResolvesNameAndAddressToStableIDOnce(t *testing.T) {
 			model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: first})
 			require.Equal(t, "worker-id", model.nodes.selectedID)
 			require.Equal(t, viewNodeDetail, model.views.top().Kind, "a matching initial NodeFocus opens node detail")
-			assert.Contains(t, ansi.Strip(model.View().Content), "NAME       worker-1")
+			assert.Contains(t, ansi.Strip(model.View().Content), "NAME             worker-1")
 
 			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
 			require.Equal(t, viewNodes, model.views.top().Kind, "Escape returns to the node list")
@@ -183,7 +186,7 @@ func TestDirectNodeFocusWithNoMatchLeavesNodesShowingNormally(t *testing.T) {
 
 	assert.Equal(t, viewNodes, model.views.top().Kind)
 	assert.Contains(t, ansi.Strip(model.View().Content), "worker-1")
-	assert.NotContains(t, ansi.Strip(model.View().Content), "NODE DETAIL")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "KUBERNETES")
 }
 
 func TestDirectNodeFocusAcceptsStableID(t *testing.T) {

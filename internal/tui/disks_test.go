@@ -36,6 +36,16 @@ func TestDisksRenderSemanticColumns(t *testing.T) {
 	assert.Contains(t, ansi.Strip(lines[1]), "SAMSUNG MZVL")
 }
 
+func TestDisksSystemColumnStaysNearModel(t *testing.T) {
+	header := ansi.Strip(strings.Split(renderDisks(120, disksTestState()), "\n")[0])
+	model := strings.Index(header, "MODEL")
+	system := strings.Index(header, "SYSTEM")
+
+	assert.GreaterOrEqual(t, model, 0)
+	assert.Less(t, system, 90, "the empty part of MODEL should not push SYSTEM to the far edge")
+	assert.Less(t, system-model, 30)
+}
+
 func TestDisksRenderEmptyState(t *testing.T) {
 	model := newDirectDisksModel().setResult("cp-1", domain.DiskSet{}, nil)
 	rendered := model.viewSized(contentSize{Width: 80, Height: 10})

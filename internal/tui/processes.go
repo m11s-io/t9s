@@ -186,14 +186,14 @@ func renderProcessTable(width int, processes []domain.ProcessSnapshot, selectedI
 	widths := processColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, processHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, process := range processes {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, processRowValues(process), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}

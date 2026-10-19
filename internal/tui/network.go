@@ -186,14 +186,14 @@ func renderLinkTable(width int, links []domain.LinkSnapshot, selectedIndex int) 
 	widths := linkColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, linkHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, link := range links {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, linkRowValues(link), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}

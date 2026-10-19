@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -185,14 +184,14 @@ func renderResourceKindTable(width int, kinds []domain.ResourceKindSnapshot, sel
 	widths := resourceKindColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, resourceKindHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, kind := range kinds {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, resourceKindRowValues(kind), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -334,15 +333,15 @@ func (m resourceInstancesModel) visibleInstances() []domain.ResourceInstanceSnap
 
 var resourceInstanceColumns = []tableColumn[domain.ResourceInstanceSnapshot]{
 	{header: "NAMESPACE", minWidth: 14, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.Namespace) }},
-	{header: "ID", minWidth: 20, grow: true, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.ID) }},
+	{header: "ID", minWidth: 20, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.ID) }},
 	{header: "PHASE", minWidth: 10, value: func(r domain.ResourceInstanceSnapshot) string { return fallback(r.Phase) }},
 }
 
-func resourceInstanceColumnWidths(width int) []int {
+func resourceInstanceColumnWidths(width int, instances []domain.ResourceInstanceSnapshot) []int {
 	if width <= 0 {
 		width = defaultResourceKindsWidth
 	}
-	return calculateColumnWidths(width, resourceInstanceColumns)
+	return contentColumnWidths(width, resourceInstanceColumns, instances)
 }
 
 func (m resourceInstancesModel) view(width int) string {
@@ -369,7 +368,7 @@ func (m resourceInstancesModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(instances), m.control.Cursor(), rowCapacity)
-	content := renderResourceInstanceTable(size.Width, instances[start:end], m.control.Cursor()-start)
+	content := renderResourceInstanceRows(size.Width, instances[start:end], instances, m.control.Cursor()-start)
 	if m.status == directPartial || m.err != "" {
 		content += "\n" + m.err
 	}
@@ -377,17 +376,21 @@ func (m resourceInstancesModel) viewSized(size contentSize) string {
 }
 
 func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceSnapshot, selectedIndex int) string {
-	widths := resourceInstanceColumnWidths(width)
+	return renderResourceInstanceRows(width, instances, instances, selectedIndex)
+}
+
+func renderResourceInstanceRows(width int, instances, widthValues []domain.ResourceInstanceSnapshot, selectedIndex int) string {
+	widths := resourceInstanceColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, resourceInstanceHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, instance := range instances {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, resourceInstanceRowValues(instance), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -463,16 +466,17 @@ func (m resourceDetailModel) setResult(value domain.ResourceInstanceSnapshot, st
 }
 
 func renderResourceDetailHeader(instance domain.ResourceInstanceSnapshot, sensitive bool) string {
-	var view strings.Builder
-	if sensitive {
-		view.WriteString("⚠ SENSITIVE\n")
+	fields := []detailField{
+		{label: "NAMESPACE", value: fallback(instance.Namespace)},
+		{label: "TYPE", value: fallback(instance.Type)},
+		{label: "ID", value: fallback(instance.ID)},
+		{label: "VERSION", value: fallback(instance.Version)},
+		{label: "PHASE", value: fallback(instance.Phase)},
 	}
-	view.WriteString(fmt.Sprintf("NAMESPACE  %s\n", fallback(instance.Namespace)))
-	view.WriteString(fmt.Sprintf("TYPE       %s\n", fallback(instance.Type)))
-	view.WriteString(fmt.Sprintf("ID         %s\n", fallback(instance.ID)))
-	view.WriteString(fmt.Sprintf("VERSION    %s\n", fallback(instance.Version)))
-	view.WriteString(fmt.Sprintf("PHASE      %s\n", fallback(instance.Phase)))
-	return strings.TrimSuffix(view.String(), "\n")
+	if sensitive {
+		fields = append([]detailField{{label: "SENSITIVE", value: "⚠"}}, fields...)
+	}
+	return renderDetail(fields)
 }
 
 func (m resourceDetailModel) viewSized(size contentSize, instance domain.ResourceInstanceSnapshot, sensitive bool) string {
@@ -486,7 +490,9 @@ func (m resourceDetailModel) viewSized(size contentSize, instance domain.Resourc
 	end := min(start+bodyHeight, len(body))
 	lines := append([]string(nil), headerLines...)
 	lines = append(lines, "")
-	lines = append(lines, body[start:end]...)
+	for _, line := range body[start:end] {
+		lines = append(lines, styleDetail(line))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -496,7 +502,7 @@ func (m resourceDetailModel) directViewSized(_ contentSize) string {
 		return "Loading resource…"
 	case directFailed:
 		if m.value.YAML == "" {
-			return firstNonEmpty(m.err, "Resource unavailable")
+			return sanitizeUntrustedText(firstNonEmpty(m.err, "Resource unavailable"))
 		}
 	}
 	header := renderResourceDetailHeader(m.value, m.sensitive)
@@ -506,10 +512,12 @@ func (m resourceDetailModel) directViewSized(_ contentSize) string {
 	end := min(start+m.bodyHeight, len(body))
 	lines := append([]string(nil), headerLines...)
 	lines = append(lines, "")
-	lines = append(lines, body[start:end]...)
+	for _, line := range body[start:end] {
+		lines = append(lines, styleDetail(line))
+	}
 	content := strings.Join(lines, "\n")
 	if m.status == directPartial || m.err != "" {
-		content += "\n" + m.err
+		content += "\n" + sanitizeUntrustedText(m.err)
 	}
 	return content
 }

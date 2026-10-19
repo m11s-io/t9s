@@ -13,7 +13,10 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
-const nodeRoleLabelPrefix = "node-role.kubernetes.io/"
+const (
+	nodeRoleLabelPrefix = "node-role.kubernetes.io/"
+	nodeRoleLabelSuffix = "kubernetes.io/role"
+)
 
 type nodeLister interface {
 	List(context.Context, metav1.ListOptions) (*corev1.NodeList, error)
@@ -49,9 +52,14 @@ func (r *nodeReader) List(ctx context.Context) (map[string]domain.KubernetesNode
 
 func convertKubernetesNode(node corev1.Node) domain.KubernetesNodeSnapshot {
 	var roles []string
-	for label := range node.Labels {
-		if role, ok := strings.CutPrefix(label, nodeRoleLabelPrefix); ok {
-			roles = append(roles, role)
+	for label, value := range node.Labels {
+		switch {
+		case strings.HasPrefix(label, nodeRoleLabelPrefix):
+			if role := strings.TrimPrefix(label, nodeRoleLabelPrefix); role != "" {
+				roles = append(roles, role)
+			}
+		case strings.HasSuffix(label, nodeRoleLabelSuffix) && value != "":
+			roles = append(roles, value)
 		}
 	}
 

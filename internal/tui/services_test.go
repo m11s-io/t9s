@@ -129,9 +129,15 @@ func TestServicesFilterMatchesNodeScopedProblems(t *testing.T) {
 
 func TestServiceDetailTruncatesTheEventField(t *testing.T) {
 	rendered := renderServiceDetail(domain.ServiceSnapshot{LastMessage: strings.Repeat("event ", expectedServiceDetailEventWidth)})
+	assert.Contains(t, rendered, "\x1b[38;2;0;255;255m")
+	assert.Contains(t, rendered, "\x1b[1;38;2;255;255;255m FIELD", "detail column headers should use the table header color")
+	assert.Equal(t, " FIELD            VALUE", ansi.Strip(strings.Split(rendered, "\n")[0]))
+	assert.True(t, strings.HasPrefix(ansi.Strip(strings.Split(rendered, "\n")[1]), " NODE             -"), "service fields should use the standard inset and aligned value column")
+	assert.NotContains(t, rendered, "SERVICE DETAIL")
 	for _, line := range strings.Split(rendered, "\n") {
-		if strings.HasPrefix(line, "LAST EVENT ") {
-			event := strings.TrimPrefix(line, "LAST EVENT ")
+		plain := ansi.Strip(line)
+		if strings.HasPrefix(plain, " LAST EVENT ") {
+			event := strings.TrimPrefix(plain, " LAST EVENT ")
 			assert.LessOrEqual(t, ansi.StringWidth(event), expectedServiceDetailEventWidth)
 			assert.True(t, strings.HasSuffix(event, "…"))
 			return

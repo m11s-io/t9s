@@ -26,6 +26,29 @@ func TestCalculateColumnWidthsUsesMinimumsAndGrowsOneColumn(t *testing.T) {
 	assert.Equal(t, []string{"control-plane", "cp"}, tableRowValues(tableLayoutFixture{name: "control-plane", role: "cp"}, columns))
 }
 
+func TestContentColumnWidthsKeepColumnsNearTheirValuesAndFitAvailableWidth(t *testing.T) {
+	columns := []tableColumn[tableLayoutFixture]{
+		{header: "NAME", minWidth: 4, value: func(row tableLayoutFixture) string { return row.name }},
+		{header: "ROLE", minWidth: 4, value: func(row tableLayoutFixture) string { return row.role }},
+	}
+	rows := []tableLayoutFixture{{name: "control-plane", role: "cp"}}
+
+	widths := contentColumnWidths(30, columns, rows)
+
+	assert.Equal(t, []int{13, 4}, widths)
+	assert.LessOrEqual(t, selectionWidth+columnSpacing+widths[0]+widths[1], 30)
+	assert.Equal(t, []int{4, 4}, contentColumnWidths(10, columns, rows), "minimum widths are preserved when the terminal is too narrow")
+}
+
+func TestContentColumnWidthsGrowsMarkedColumnAfterSizingContent(t *testing.T) {
+	columns := []tableColumn[tableLayoutFixture]{
+		{header: "NAME", minWidth: 4, value: func(row tableLayoutFixture) string { return row.name }},
+		{header: "PATH", minWidth: 4, grow: true, value: func(row tableLayoutFixture) string { return row.role }},
+	}
+
+	assert.Equal(t, []int{4, 24}, contentColumnWidths(30, columns, []tableLayoutFixture{{name: "cp", role: "/"}}))
+}
+
 func TestWriteTableCellsUsesDisplayWidthForTruncationAndPadding(t *testing.T) {
 	var output strings.Builder
 	writeTableCells(&output, []string{"界界界", "\x1b[31mhealthy\x1b[0m"}, []int{5, 4})

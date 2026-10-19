@@ -61,15 +61,9 @@ func TestRootUsesAlternateScreenAndExactTerminalDimensions(t *testing.T) {
 	}
 }
 
-func TestRootSetsBlackTerminalBackgroundForTheWholeViewport(t *testing.T) {
+func TestRootUsesTerminalDefaultBackground(t *testing.T) {
 	view := readyDirectRootModel(t).View()
-	require.NotNil(t, view.BackgroundColor)
-
-	red, green, blue, alpha := view.BackgroundColor.RGBA()
-	assert.Equal(t, uint32(0), red)
-	assert.Equal(t, uint32(0), green)
-	assert.Equal(t, uint32(0), blue)
-	assert.Equal(t, uint32(0xffff), alpha)
+	assert.Nil(t, view.BackgroundColor)
 }
 
 func readyDirectRootModel(t *testing.T) model {

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -218,13 +217,13 @@ func renderServiceTable(width int, services []domain.ServiceSnapshot, selectedIn
 	widths := serviceColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, serviceHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 	for index, service := range services {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, serviceRowValues(service), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -238,13 +237,13 @@ func renderServiceTableWithProblems(width int, services []domain.ServiceSnapshot
 	widths := serviceColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, serviceHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 	for index, service := range services {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, serviceRowValues(service), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -281,15 +280,14 @@ func serviceHealthSymbol(healthy *bool) string {
 }
 
 func renderServiceDetail(service domain.ServiceSnapshot) string {
-	var view strings.Builder
-	view.WriteString("SERVICE DETAIL\n")
-	view.WriteString(fmt.Sprintf("NODE       %s\n", fallback(service.Node)))
-	view.WriteString(fmt.Sprintf("SERVICE    %s\n", fallback(service.Name)))
-	view.WriteString(fmt.Sprintf("STATE      %s\n", fallback(service.State)))
-	view.WriteString(fmt.Sprintf("HEALTH     %s\n", serviceHealthSymbol(service.Healthy)))
-	view.WriteString(fmt.Sprintf("LAST EVENT %s\n", boundedServiceEvent(service.LastMessage)))
-	view.WriteString(fmt.Sprintf("LAST CHANGE %s\n", formatServiceChange(service.LastChange)))
-	return strings.TrimSuffix(view.String(), "\n")
+	return renderDetail([]detailField{
+		{label: "NODE", value: fallback(service.Node)},
+		{label: "SERVICE", value: fallback(service.Name)},
+		{label: "STATE", value: fallback(service.State)},
+		{label: "HEALTH", value: serviceHealthSymbol(service.Healthy)},
+		{label: "LAST EVENT", value: boundedServiceEvent(service.LastMessage)},
+		{label: "LAST CHANGE", value: formatServiceChange(service.LastChange)},
+	})
 }
 
 func formatServiceChange(change time.Time) string {
@@ -304,7 +302,7 @@ func serviceEventText(event string) string {
 }
 
 func boundedServiceEvent(event string) string {
-	return ansi.Truncate(serviceEventText(event), serviceDetailEventWidth, "…")
+	return ansi.Truncate(serviceEventText(event), serviceDetailEventWidth-fieldLabelWidth-1, "…")
 }
 
 func serviceKey(service domain.ServiceSnapshot) string {

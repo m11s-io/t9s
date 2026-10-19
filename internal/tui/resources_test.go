@@ -68,18 +68,58 @@ func TestResourceInstancesRenderSemanticColumns(t *testing.T) {
 	)
 }
 
+func TestResourceInstancePhaseColumnStaysNearID(t *testing.T) {
+	header := ansi.Strip(strings.Split(newResourceInstancesModel(resourceInstancesTestState()).view(120), "\n")[0])
+	id := strings.Index(header, "ID")
+	phase := strings.Index(header, "PHASE")
+
+	assert.GreaterOrEqual(t, id, 0)
+	assert.Less(t, phase, 55, "the empty part of ID should not push PHASE to the far edge")
+	assert.Less(t, phase-id, 30)
+}
+
 func TestRenderResourceDetailShowsMetadataAndYAML(t *testing.T) {
 	rendered := renderResourceDetailHeader(domain.ResourceInstanceSnapshot{
 		Namespace: "runtime", Type: "MachineStatuses.runtime.talos.dev", ID: "machine", Version: "1", Phase: "running",
 	}, false)
 
-	assert.Contains(t, rendered, "NAMESPACE  runtime")
-	assert.Contains(t, rendered, "ID         machine")
-	assert.Contains(t, rendered, "PHASE      running")
+	assert.Contains(t, rendered, "\x1b[38;2;0;255;255m")
+	assert.Contains(t, rendered, "\x1b[1;38;2;255;255;255m FIELD", "detail column headers should use the table header color")
+	plain := ansi.Strip(rendered)
+	assert.Equal(t, " FIELD            VALUE", strings.Split(plain, "\n")[0])
+	assert.True(t, strings.HasPrefix(strings.Split(plain, "\n")[1], " NAMESPACE"))
+	assert.Contains(t, plain, "NAMESPACE        runtime")
+	assert.Contains(t, plain, "ID               machine")
+	assert.Contains(t, plain, "PHASE            running")
 }
 
 func TestRenderResourceDetailHeaderMarksSensitiveKind(t *testing.T) {
 	rendered := renderResourceDetailHeader(domain.ResourceInstanceSnapshot{ID: "machine"}, true)
 
 	assert.Contains(t, rendered, "⚠")
+}
+
+func TestResourceDetailYAMLUsesTheSamePaletteAndInset(t *testing.T) {
+	model := newResourceDetailModel().setResult(domain.ResourceInstanceSnapshot{YAML: "key: value"}, directReady, "", false)
+	model.bodyHeight = 1
+
+	rendered := model.directViewSized(contentSize{})
+
+	assert.Contains(t, rendered, "\x1b[38;2;0;255;255m key: value")
+}
+
+func TestResourceDetailYAMLSanitizesTerminalControlsAndKeepsLineBreaks(t *testing.T) {
+	model := newResourceDetailModel().setResult(domain.ResourceInstanceSnapshot{
+		YAML: "value: safe\x1b[2J\r\ninjected\nnext: line",
+	}, directReady, "", false)
+	model.bodyHeight = 3
+
+	rendered := model.directViewSized(contentSize{})
+	plain := ansi.Strip(rendered)
+
+	assert.NotContains(t, rendered, "\x1b[2J")
+	assert.NotContains(t, plain, "\r")
+	assert.Contains(t, plain, "value: safe\n injected", "YAML newlines stay as separate rows after control characters are removed")
+	assert.Contains(t, plain, "next: line")
+	assert.Equal(t, 10, len(strings.Split(plain, "\n")), "metadata header/rows and YAML lines retain their row structure")
 }

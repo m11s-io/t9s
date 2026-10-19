@@ -241,7 +241,7 @@ func (m eventsModel) tableViewSized(size contentSize, eventSet domain.EventSet, 
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(events), m.control.Cursor(), rowCapacity)
-	return renderEventTable(size.Width, events[start:end], m.control.Cursor()-start)
+	return renderEventRows(size.Width, events[start:end], events, m.control.Cursor()-start)
 }
 
 const defaultEventsWidth = 120
@@ -249,22 +249,26 @@ const defaultEventsWidth = 120
 var eventColumns = []tableColumn[domain.EventSnapshot]{
 	{header: "NODE", minWidth: 14, value: func(event domain.EventSnapshot) string { return fallback(event.Node) }},
 	{header: "KIND", minWidth: 12, value: func(event domain.EventSnapshot) string { return fallback(event.Kind) }},
-	{header: "MESSAGE", minWidth: 20, grow: true, value: func(event domain.EventSnapshot) string { return fallback(event.Message) }},
+	{header: "MESSAGE", minWidth: 20, value: func(event domain.EventSnapshot) string { return fallback(event.Message) }},
 	{header: "OBSERVED", minWidth: 20, value: func(event domain.EventSnapshot) string { return formatServiceChange(event.ObservedAt) }},
 }
 
 func renderEventTable(width int, events []domain.EventSnapshot, selectedIndex int) string {
-	widths := eventColumnWidths(width)
+	return renderEventRows(width, events, events, selectedIndex)
+}
+
+func renderEventRows(width int, events, widthValues []domain.EventSnapshot, selectedIndex int) string {
+	widths := eventColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, eventHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, event := range events {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, eventRowValues(event), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -272,11 +276,11 @@ func renderEventTable(width int, events []domain.EventSnapshot, selectedIndex in
 	return output.String()
 }
 
-func eventColumnWidths(width int) []int {
+func eventColumnWidths(width int, events []domain.EventSnapshot) []int {
 	if width <= 0 {
 		width = defaultEventsWidth
 	}
-	return calculateColumnWidths(width, eventColumns)
+	return contentColumnWidths(width, eventColumns, events)
 }
 
 func eventHeaders() []string { return tableHeaders(eventColumns) }

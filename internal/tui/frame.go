@@ -31,12 +31,13 @@ func renderResourceFrame(frame resourceFrame, content string, skin k9sSkin) stri
 	if ansi.StringWidth(title) > frame.InnerWidth {
 		title = ansi.Truncate(title, frame.InnerWidth, "")
 	}
-	left := max(0, (frame.InnerWidth-ansi.StringWidth(title))/2)
-	right := max(0, frame.InnerWidth-left-ansi.StringWidth(title))
+	titleWidth := ansi.StringWidth(title)
+	left := max(0, (frame.InnerWidth-titleWidth)/2)
+	right := max(0, frame.InnerWidth-left-titleWidth)
 	bottom := "└" + strings.Repeat("─", frame.InnerWidth) + "┘"
 	borderColor := skin.focusedFrame.GetBorderTopForeground()
 	border := skin.frame.Copy().UnsetBorderStyle().Foreground(borderColor)
-	top := border.Render("┌"+strings.Repeat("─", left)) + skin.title.Render(title) + border.Render(strings.Repeat("─", right)+"┐")
+	top := border.Render("┌"+strings.Repeat("─", left)) + renderResourceFrameTitle(title, skin) + border.Render(strings.Repeat("─", right)+"┐")
 
 	contentLines := strings.Split(content, "\n")
 	lines := make([]string, 0, frame.Height)
@@ -52,16 +53,61 @@ func renderResourceFrame(frame resourceFrame, content string, skin k9sSkin) stri
 	return strings.Join(lines, "\n")
 }
 
+func renderResourceFrameTitle(title string, skin k9sSkin) string {
+	title = sanitizeUntrustedText(title)
+	counter := ""
+	trailing := ""
+	end := len(title)
+	for end > 0 && title[end-1] == ' ' {
+		end--
+	}
+	if start := strings.LastIndexByte(title[:end], '['); start >= 0 && end > start && title[end-1] == ']' {
+		counter = title[start:end]
+		trailing = title[end:]
+		title = title[:start]
+	}
+
+	start := strings.IndexByte(title, '(')
+	if start < 0 {
+		return renderTitleBase(title, skin) + renderTitleCounter(counter, skin) + renderTitleBase(trailing, skin)
+	}
+	scopeEnd := strings.IndexByte(title[start:], ')')
+	if scopeEnd < 0 {
+		return renderTitleBase(title, skin) + renderTitleCounter(counter, skin) + renderTitleBase(trailing, skin)
+	}
+	scopeEnd += start
+	return renderTitleBase(title[:start], skin) +
+		skin.titleHighlight.Render(title[start:scopeEnd+1]) +
+		renderTitleBase(title[scopeEnd+1:], skin) +
+		renderTitleCounter(counter, skin) +
+		renderTitleBase(trailing, skin)
+}
+
+func renderTitleBase(text string, skin k9sSkin) string {
+	if text == "" {
+		return ""
+	}
+	return skin.title.Render(text)
+}
+
+func renderTitleCounter(counter string, skin k9sSkin) string {
+	if counter == "" {
+		return ""
+	}
+	return skin.titleCounter.Render(counter)
+}
+
 func directResourceTitle(model model, kind viewKind) string {
+	selected := model.views.top()
 	switch kind {
 	case viewServices:
 		return fmt.Sprintf("services(all)[%d]", len(model.cluster.services.Value.Services))
 	case viewServiceLogs:
 		return "logs"
 	case viewServiceDetail:
-		return "service"
+		return titleWithScope("service", selected.Label)
 	case viewNodeDetail:
-		return "node"
+		return titleWithScope("node", selected.Label)
 	case viewHelp:
 		return "help"
 	case viewContexts:
@@ -73,15 +119,18 @@ func directResourceTitle(model model, kind viewKind) string {
 	case viewProcesses:
 		return fmt.Sprintf("processes(%s)[%d]", model.processes.node, len(model.processes.values.Processes))
 	case viewProcessDetail:
+		if selected.ProcessPID != 0 {
+			return titleWithScope("process", fmt.Sprint(selected.ProcessPID))
+		}
 		return "process"
 	case viewDisks:
 		return fmt.Sprintf("disks(%s)[%d]", model.disks.node, len(model.disks.values.Disks))
 	case viewDiskDetail:
-		return "disk"
+		return titleWithScope("disk", selected.DeviceName)
 	case viewNetwork:
 		return fmt.Sprintf("network(%s)[%d]", model.network.node, len(model.network.values.Links))
 	case viewLinkDetail:
-		return "link"
+		return titleWithScope("link", selected.LinkName)
 	case viewDmesg:
 		return model.dmesg.title
 	case viewClusterHealth:
@@ -105,8 +154,25 @@ func directResourceTitle(model model, kind viewKind) string {
 	case viewResourceInstances:
 		return fmt.Sprintf("resources(%s)[%d]", model.resourceInstances.selectedKind, len(model.resourceInstances.values.Instances))
 	case viewResourceDetail:
-		return model.resourceDetail.value.Type
+		kindName := firstNonEmpty(selected.ResourceKind, model.resourceDetail.value.Type)
+		identity := selected.ResourceID
+		if selected.ResourceNamespace != "" {
+			identity = selected.ResourceNamespace + "/" + identity
+		}
+		return titleWithScope(kindName, identity)
 	default:
 		return fmt.Sprintf("nodes(all)[%d]", len(model.cluster.nodes.Value.Nodes))
 	}
+}
+
+func titleWithScope(kind, identity string) string {
+	kind = sanitizeUntrustedText(kind)
+	identity = sanitizeUntrustedText(identity)
+	if kind == "" {
+		return ""
+	}
+	if identity == "" || identity == "-" {
+		return kind
+	}
+	return kind + "(" + identity + ")"
 }

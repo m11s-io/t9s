@@ -36,6 +36,16 @@ func TestEtcdRenderSemanticColumns(t *testing.T) {
 	assert.Contains(t, ansi.Strip(lines[2]), "?")
 }
 
+func TestEtcdRoleColumnStaysNearMember(t *testing.T) {
+	header := ansi.Strip(strings.Split(renderEtcd(120, etcdTestState()), "\n")[0])
+	member := strings.Index(header, "MEMBER")
+	role := strings.Index(header, "ROLE")
+
+	assert.GreaterOrEqual(t, member, 0)
+	assert.Less(t, role, 35, "the empty part of MEMBER should not push ROLE far from member names")
+	assert.Less(t, role-member, 20)
+}
+
 func TestEtcdRenderShowsAlarms(t *testing.T) {
 	state := directEtcdState{
 		Status: directReady,

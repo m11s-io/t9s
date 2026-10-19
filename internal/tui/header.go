@@ -7,6 +7,7 @@ import (
 )
 
 const k9sHeaderHeight = 7
+const headerHorizontalInset = 1
 
 type headerLayout struct {
 	Width         int
@@ -20,14 +21,15 @@ type headerLayout struct {
 func layoutK9sHeader(width int) headerLayout {
 	width = max(0, width)
 	layout := headerLayout{Width: width, Height: k9sHeaderHeight}
+	contentWidth := max(0, width-2*headerHorizontalInset)
 	if width >= 120 {
 		layout.MetadataWidth, layout.LogoWidth, layout.ShowLogo = 50, 26, true
 	} else if width >= 60 {
-		layout.MetadataWidth = min(32, width/2)
+		layout.MetadataWidth = min(32, contentWidth/2)
 	} else {
-		layout.MetadataWidth = width
+		layout.MetadataWidth = contentWidth
 	}
-	layout.ActionsWidth = max(0, width-layout.MetadataWidth-layout.LogoWidth)
+	layout.ActionsWidth = max(0, contentWidth-layout.MetadataWidth-layout.LogoWidth)
 	return layout
 }
 
@@ -41,10 +43,13 @@ func renderK9sHeader(layout headerLayout, metadata shellMetadata, hints []action
 
 	lines := make([]string, k9sHeaderHeight)
 	for row := range lines {
-		line := fitK9sCell(metadataLines[row], layout.MetadataWidth) + fitK9sCell(actionLines[row], layout.ActionsWidth)
+		line := strings.Repeat(" ", headerHorizontalInset) +
+			fitK9sCell(metadataLines[row], layout.MetadataWidth) +
+			fitK9sCell(actionLines[row], layout.ActionsWidth)
 		if layout.ShowLogo {
 			line += fitK9sCell(logoLines[row], layout.LogoWidth)
 		}
+		line += strings.Repeat(" ", headerHorizontalInset)
 		lines[row] = fitK9sCell(line, layout.Width)
 	}
 	return strings.Join(lines, "\n")
@@ -78,15 +83,47 @@ func renderHeaderActions(hints []actionHint, width int, skin k9sSkin) []string {
 	if width <= 0 {
 		return lines
 	}
-	columns := max(1, (len(hints)+5)/6)
-	columnWidth := max(1, width/columns)
+	const columnGap = 6
+	actionRows := 6
+	if width < 64 {
+		actionRows = k9sHeaderHeight
+	}
+	columns := max(1, (len(hints)+actionRows-1)/actionRows)
+	columnWidths := make([]int, columns)
 	for index, hint := range hints {
-		column, row := index/6, index%6
-		key := skin.actionKey.Render("<" + hint.Key + ">")
-		description := skin.actionText.Render(hint.Label)
-		cell := fitK9sCell(key+" "+description, columnWidth)
-		lines[row] += cell
-		_ = column
+		column := index / actionRows
+		columnWidths[column] = max(columnWidths[column], ansi.StringWidth("<"+hint.Key+"> "+hint.Label))
+	}
+	gap := min(columnGap, width/max(1, columns-1))
+	availableWidth := max(0, width-gap*(columns-1))
+	totalWidth := 0
+	for _, columnWidth := range columnWidths {
+		totalWidth += columnWidth
+	}
+	if totalWidth > availableWidth {
+		for column := range columnWidths {
+			columnWidths[column] = availableWidth / columns
+			if column < availableWidth%columns {
+				columnWidths[column]++
+			}
+		}
+	}
+
+	for row := 0; row < actionRows; row++ {
+		for column, columnWidth := range columnWidths {
+			index := column*actionRows + row
+			if index >= len(hints) {
+				break
+			}
+			if column > 0 && gap > 0 {
+				lines[row] += strings.Repeat(" ", gap)
+			}
+			hint := hints[index]
+			cell := skin.actionKey.Render("<"+hint.Key+">") +
+				" " +
+				skin.actionText.Render(hint.Label)
+			lines[row] += fitK9sCell(cell, columnWidth)
+		}
 	}
 	return lines
 }

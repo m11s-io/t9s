@@ -354,17 +354,17 @@ func (m model) directDiagnosticContent(size contentSize) (string, bool) {
 		if value, ok := findProcessByPID(m.processes.values.Processes, frame.ProcessPID); ok {
 			return renderProcessDetail(value), true
 		}
-		return "PROCESS DETAIL\nProcess unavailable", true
+		return renderDetail([]detailField{{label: "PROCESS", value: "unavailable"}}), true
 	case viewDiskDetail:
 		if value, ok := findDiskByName(m.disks.values.Disks, frame.DeviceName); ok {
 			return renderDiskDetail(value), true
 		}
-		return "DISK DETAIL\nDisk unavailable", true
+		return renderDetail([]detailField{{label: "DISK", value: "unavailable"}}), true
 	case viewLinkDetail:
 		if value, ok := findLinkByName(m.network.values.Links, frame.LinkName); ok {
 			return renderLinkDetail(value), true
 		}
-		return "LINK DETAIL\nLink unavailable", true
+		return renderDetail([]detailField{{label: "LINK", value: "unavailable"}}), true
 	default:
 		return "", false
 	}

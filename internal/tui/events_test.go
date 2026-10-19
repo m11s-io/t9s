@@ -35,6 +35,16 @@ func TestEventsRenderSemanticColumns(t *testing.T) {
 	assert.Contains(t, ansi.Strip(lines[1]), "2026-08-15T10:00:00Z")
 }
 
+func TestEventsObservedColumnStaysNearMessage(t *testing.T) {
+	header := ansi.Strip(strings.Split(renderEventTable(120, eventsTestState().Value.Events, 0), "\n")[0])
+	message := strings.Index(header, "MESSAGE")
+	observed := strings.Index(header, "OBSERVED")
+
+	assert.GreaterOrEqual(t, message, 0)
+	assert.Less(t, observed, 90, "the empty part of MESSAGE should not push OBSERVED to the far edge")
+	assert.Less(t, observed-message, 45)
+}
+
 func TestEventsRenderEmptyState(t *testing.T) {
 	model := newEventsModel()
 	rendered := model.viewSized(contentSize{Width: 80, Height: 10}, directEventState{Status: directReady})

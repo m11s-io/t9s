@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -70,17 +70,39 @@ func (m contextsModel) viewSized(size contentSize) string {
 	if len(m.values) == 0 {
 		return "No contexts"
 	}
-	lines := []string{renderSelectedRow("  NAME                  CLUSTER               ENDPOINTS             NODES", size.Width, false, defaultK9sSkin())}
+	columns := contextColumns(m.current)
+	widths := contentColumnWidths(size.Width, columns, m.values)
+	header := strings.Builder{}
+	header.WriteByte(' ')
+	writeTableCells(&header, tableHeaders(columns), widths)
+	lines := []string{renderTableHeader(header.String(), size.Width, defaultK9sSkin())}
 	for index, clusterContext := range m.values {
-		name := clusterContext.Name
-		if clusterContext.Name == m.current {
-			name += "(*)"
-		}
-		row := fmt.Sprintf("  %-20s  %-20s  %-20s  %d", name, clusterContext.Cluster, strings.Join(clusterContext.Endpoints, ","), len(clusterContext.Nodes))
-		lines = append(lines, renderSelectedRow(row, size.Width, index == m.control.Cursor(), defaultK9sSkin()))
+		row := strings.Builder{}
+		row.WriteByte(' ')
+		writeTableCells(&row, tableRowValues(clusterContext, columns), widths)
+		lines = append(lines, renderSelectedRow(row.String(), size.Width, index == m.control.Cursor(), defaultK9sSkin()))
 	}
 	if len(lines) > size.Height {
 		lines = lines[:size.Height]
 	}
 	return strings.Join(lines, "\n")
+}
+
+func contextColumns(current string) []tableColumn[domain.ClusterContext] {
+	return []tableColumn[domain.ClusterContext]{
+		{header: "NAME", minWidth: 4, value: func(clusterContext domain.ClusterContext) string {
+			name := clusterContext.Name
+			if name == current {
+				name += "(*)"
+			}
+			return name
+		}},
+		{header: "CLUSTER", minWidth: 7, value: func(clusterContext domain.ClusterContext) string { return clusterContext.Cluster }},
+		{header: "ENDPOINTS", minWidth: 9, grow: true, value: func(clusterContext domain.ClusterContext) string {
+			return strings.Join(clusterContext.Endpoints, ",")
+		}},
+		{header: "NODES", minWidth: 5, value: func(clusterContext domain.ClusterContext) string {
+			return strconv.Itoa(len(clusterContext.Nodes))
+		}},
+	}
 }

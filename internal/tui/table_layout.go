@@ -6,6 +6,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const fieldLabelWidth = 16
+
 type tableColumn[T any] struct {
 	header   string
 	minWidth int
@@ -26,6 +28,35 @@ func calculateColumnWidths[T any](width int, columns []tableColumn[T]) []int {
 	}
 	if remaining := width - used; remaining > 0 && growIndex >= 0 {
 		widths[growIndex] += remaining
+	}
+	return widths
+}
+
+func contentColumnWidths[T any](width int, columns []tableColumn[T], rows []T) []int {
+	widths := make([]int, len(columns))
+	used := selectionWidth + columnSpacing*max(0, len(columns)-1)
+	growIndex := -1
+	for index, column := range columns {
+		minimum := max(column.minWidth, ansi.StringWidth(column.header))
+		widths[index] = minimum
+		if column.grow {
+			growIndex = index
+		}
+		for _, row := range rows {
+			valueWidth := ansi.StringWidth(sanitizeUntrustedText(column.value(row)))
+			widths[index] = max(widths[index], valueWidth)
+		}
+		used += widths[index]
+	}
+
+	for index := len(widths) - 1; used > width && index >= 0; index-- {
+		minimum := max(columns[index].minWidth, ansi.StringWidth(columns[index].header))
+		shrink := min(used-width, widths[index]-minimum)
+		widths[index] -= shrink
+		used -= shrink
+	}
+	if growIndex >= 0 && width > used {
+		widths[growIndex] += width - used
 	}
 	return widths
 }

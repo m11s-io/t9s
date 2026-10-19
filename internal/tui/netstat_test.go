@@ -36,6 +36,22 @@ func TestNetstatRenderSemanticColumns(t *testing.T) {
 	assert.Contains(t, ansi.Strip(lines[1]), "kubelet")
 }
 
+func TestNetstatColumnsStayCloseToTheirContent(t *testing.T) {
+	header := ansi.Strip(strings.Split(renderNetstat(120, netstatTestState()), "\n")[0])
+	remote := strings.Index(header, "REMOTE")
+	process := strings.Index(header, "PROCESS")
+
+	assert.GreaterOrEqual(t, remote, 0)
+	assert.Less(t, process, 80, "the empty part of the remote column should not push PROCESS to the far edge")
+	assert.Less(t, process-remote, 24, "REMOTE should stay close to its content width")
+}
+
+func TestNetstatColumnsFitNarrowTerminal(t *testing.T) {
+	for _, line := range strings.Split(renderNetstat(40, netstatTestState()), "\n") {
+		assert.Equal(t, 40, ansi.StringWidth(line))
+	}
+}
+
 func TestNetstatRenderEmptyState(t *testing.T) {
 	model := newDirectNetstatModel().setResult("cp-1", domain.SocketSet{}, nil)
 	rendered := model.viewSized(contentSize{Width: 80, Height: 10})

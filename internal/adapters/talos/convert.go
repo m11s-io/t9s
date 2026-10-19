@@ -63,9 +63,9 @@ func convertNode(raw rawNode) domain.NodeSnapshot {
 
 func convertRole(machineType string) domain.NodeRole {
 	switch machineType {
-	case "controlplane":
+	case "controlplane", "TYPE_CONTROL_PLANE":
 		return domain.NodeRoleControl
-	case "worker":
+	case "worker", "TYPE_WORKER":
 		return domain.NodeRoleWorker
 	default:
 		return domain.NodeRoleUnknown

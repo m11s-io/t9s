@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
@@ -76,7 +77,7 @@ func TestDirectResourcesKeyboardLoadsKindsMetadataThenSelectedYAML(t *testing.T)
 	require.Equal(t, viewResourceDetail, model.views.top().Kind)
 	assert.Equal(t, 1, getCalls)
 	content := model.View().Content
-	assert.Contains(t, content, "⚠ SENSITIVE")
+	assert.Contains(t, ansi.Strip(content), "SENSITIVE        ⚠")
 	assert.Contains(t, content, "data:")
 	assert.Contains(t, content, "token: example")
 }

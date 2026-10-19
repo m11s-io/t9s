@@ -72,3 +72,8 @@ func TestConvertNode(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertRoleRecognizesTalosMachineTypeEnums(t *testing.T) {
+	assert.Equal(t, domain.NodeRoleControl, convertRole("TYPE_CONTROL_PLANE"))
+	assert.Equal(t, domain.NodeRoleWorker, convertRole("TYPE_WORKER"))
+}

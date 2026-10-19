@@ -163,7 +163,7 @@ func memoryRows(snapshot domain.MemorySnapshot) []memoryMetric {
 }
 
 var memoryColumns = []tableColumn[memoryMetric]{
-	{header: "METRIC", minWidth: 16, value: func(m memoryMetric) string { return fallback(m.Label) }},
+	{header: "METRIC", minWidth: fieldLabelWidth, value: func(m memoryMetric) string { return fallback(m.Label) }},
 	{header: "VALUE", grow: true, value: func(m memoryMetric) string { return fallback(m.Value) }},
 }
 
@@ -171,14 +171,14 @@ func renderMemoryTable(width int, metrics []memoryMetric, selectedIndex int) str
 	widths := memoryColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, memoryHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, metric := range metrics {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, memoryRowValues(metric), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}

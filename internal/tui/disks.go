@@ -160,7 +160,7 @@ func (m disksModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(disks), m.control.Cursor(), rowCapacity)
-	content := renderDiskTable(size.Width, disks[start:end], m.control.Cursor()-start)
+	content := renderDiskRows(size.Width, disks[start:end], disks, m.control.Cursor()-start)
 	if warningRows > 0 {
 		content = "DISKS PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -180,22 +180,26 @@ var diskColumns = []tableColumn[domain.DiskSnapshot]{
 	{header: "DEVICE", minWidth: 10, value: func(d domain.DiskSnapshot) string { return fallback(d.DeviceName) }},
 	{header: "TYPE", minWidth: 6, value: func(d domain.DiskSnapshot) string { return fallback(d.Type) }},
 	{header: "SIZE", minWidth: 10, value: func(d domain.DiskSnapshot) string { return formatBytes(int64(d.SizeBytes)) }},
-	{header: "MODEL", minWidth: 20, grow: true, value: func(d domain.DiskSnapshot) string { return fallback(d.Model) }},
+	{header: "MODEL", minWidth: 20, value: func(d domain.DiskSnapshot) string { return fallback(d.Model) }},
 	{header: "SYSTEM", minWidth: 6, value: func(d domain.DiskSnapshot) string { return diskSystemSymbol(d.SystemDisk) }},
 }
 
 func renderDiskTable(width int, disks []domain.DiskSnapshot, selectedIndex int) string {
-	widths := diskColumnWidths(width)
+	return renderDiskRows(width, disks, disks, selectedIndex)
+}
+
+func renderDiskRows(width int, disks, widthValues []domain.DiskSnapshot, selectedIndex int) string {
+	widths := diskColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
-	header.WriteString("  ")
+	header.WriteString(" ")
 	writeTableCells(&header, diskHeaders(), widths)
-	output.WriteString(renderSelectedRow(header.String(), width, false, defaultK9sSkin()))
+	output.WriteString(renderTableHeader(header.String(), width, defaultK9sSkin()))
 
 	for index, disk := range disks {
 		output.WriteByte('\n')
 		row := strings.Builder{}
-		row.WriteString("  ")
+		row.WriteString(" ")
 		writeTableCells(&row, diskRowValues(disk), widths)
 		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
 	}
@@ -203,11 +207,11 @@ func renderDiskTable(width int, disks []domain.DiskSnapshot, selectedIndex int) 
 	return output.String()
 }
 
-func diskColumnWidths(width int) []int {
+func diskColumnWidths(width int, disks []domain.DiskSnapshot) []int {
 	if width <= 0 {
 		width = defaultDisksWidth
 	}
-	return calculateColumnWidths(width, diskColumns)
+	return contentColumnWidths(width, diskColumns, disks)
 }
 
 func diskHeaders() []string {

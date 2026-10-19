@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,14 +21,14 @@ func TestNodesRenderSemanticColumns(t *testing.T) {
 	lines := strings.Split(rendered, "\n")
 	require.Len(t, lines, 4)
 	assert.Equal(t,
-		[]string{"NAME", "ROLE", "STAGE", "HEALTH", "SERVICES", "K8S", "VERSION"},
+		[]string{"NAME", "ROLE", "STAGE", "HEALTH", "K8S", "SERVICES", "VERSION"},
 		strings.Fields(ansi.Strip(lines[0])),
 	)
 
 	for index, values := range [][]string{
-		{"control-plane-node-with-a-deliberately-long-display-name", "control", "running", "✓", "7✓", "0!", "0?", "Unknown", "v1.9.5"},
-		{"worker-1", "worker", "maintenance", "!", "6✓", "1!", "0?", "Unknown", "v1.9.4"},
-		{"10.0.0.3", "unknown", "unreachable", "?", "?", "Unknown", "-"},
+		{"control-plane-node-with-a-deliberately-long-display-name", "control", "running", "✓", "Unknown", "7✓", "0!", "0?", "v1.9.5"},
+		{"worker-1", "worker", "maintenance", "!", "Unknown", "6✓", "1!", "0?", "v1.9.4"},
+		{"10.0.0.3", "unknown", "unreachable", "?", "Unknown", "?", "-"},
 	} {
 		assert.Equal(t, values, strings.Fields(strings.TrimPrefix(ansi.Strip(lines[index+1]), "> ")))
 	}
@@ -42,12 +43,34 @@ func TestNodesK8SColumnReflectsCorrelatedReadiness(t *testing.T) {
 	assert.Contains(t, ansi.Strip(lines[1]), "Ready")
 }
 
+func TestNodesDisplayKubernetesRoleWhenTalosRoleIsUnknown(t *testing.T) {
+	node := domain.NodeSnapshot{
+		Name: "10.10.17.11", Role: domain.NodeRoleUnknown,
+		KubernetesNode: &domain.KubernetesNodeSnapshot{Roles: []string{"control-plane"}},
+	}
+
+	values := nodeRowValues(node)
+
+	assert.Equal(t, "control-plane", values[1])
+	assert.Equal(t, domain.NodeRoleUnknown, node.Role, "Kubernetes display data must not change the Talos role used by actions")
+}
+
+func TestNodesFilterMatchesKubernetesRoleWhenTalosRoleIsUnknown(t *testing.T) {
+	node := domain.NodeSnapshot{
+		ID: "control-1", Name: "10.10.17.11", Role: domain.NodeRoleUnknown,
+		KubernetesNode: &domain.KubernetesNodeSnapshot{Roles: []string{"control-plane"}},
+	}
+	model := newNodesModel().startFilter("control-plane", []domain.NodeSnapshot{node})
+
+	assert.Equal(t, []domain.NodeSnapshot{node}, model.visibleNodes([]domain.NodeSnapshot{node}))
+}
+
 func TestNodesRenderRetainsAllColumnsAtWidth80(t *testing.T) {
 	rendered := renderNodes(80, nodesTestState())
 	lines := strings.Split(rendered, "\n")
 	require.Len(t, lines, 4, "cells must truncate rather than wrap")
 	assert.Equal(t,
-		[]string{"NAME", "ROLE", "STAGE", "HEALTH", "SERVICES", "K8S", "VERSION"},
+		[]string{"NAME", "ROLE", "STAGE", "HEALTH", "K8S", "SERVICES", "VERSION"},
 		strings.Fields(ansi.Strip(lines[0])),
 	)
 	assert.Contains(t, rendered, "…")
@@ -56,6 +79,34 @@ func TestNodesRenderRetainsAllColumnsAtWidth80(t *testing.T) {
 	for _, line := range lines {
 		assert.LessOrEqual(t, ansi.StringWidth(line), 80)
 	}
+}
+
+func TestNodeTableDistributesColumnsAcrossWideTerminals(t *testing.T) {
+	rendered := renderNodeTable(220, []domain.NodeSnapshot{
+		{ID: "node-1", Name: "10.10.17.11"},
+		{ID: "node-2", Name: "10.10.17.12"},
+	}, 0, nil)
+
+	header := ansi.Strip(strings.Split(rendered, "\n")[0])
+	roleColumn := strings.Index(header, "ROLE")
+	versionColumn := strings.Index(header, "VERSION")
+	assert.GreaterOrEqual(t, roleColumn, 0)
+	assert.Greater(t, roleColumn, 30, "wide terminals should distribute space after the name column")
+	assert.GreaterOrEqual(t, versionColumn, 180, "the final column should reach the right side of a wide terminal")
+	assert.LessOrEqual(t, 220-versionColumn, 12, "the final column should leave only a small right gutter")
+}
+
+func TestNodeTableHeaderUsesWhiteText(t *testing.T) {
+	header := strings.Split(renderNodeTable(80, nodesTestState().Value.Nodes, 0, nil), "\n")[0]
+
+	assert.Contains(t, header, "38;2;255;255;255m")
+	assert.NotContains(t, header, "38;2;0;255;255m")
+}
+
+func TestNodeTableUsesOneCellOfLeftPadding(t *testing.T) {
+	header := ansi.Strip(strings.Split(renderNodeTable(80, nodesTestState().Value.Nodes, 0, nil), "\n")[0])
+
+	assert.True(t, strings.HasPrefix(header, " NAME"), "table content should sit one space inside the frame")
 }
 
 func TestNodesFilterMatchesDisplayNameAndRoleCaseInsensitively(t *testing.T) {
@@ -298,18 +349,73 @@ func TestRenderNodeDetailShowsKubernetesBlockWhenCorrelated(t *testing.T) {
 
 	rendered := renderNodeDetail(node)
 
-	assert.Contains(t, rendered, "KUBERNETES Ready")
-	assert.Contains(t, rendered, "ROLES      worker")
-	assert.Contains(t, rendered, "KUBELET    v1.31.0")
-	assert.Contains(t, rendered, "Ready=True")
+	assert.Contains(t, rendered, "\x1b[38;2;0;255;255m")
+	firstFieldLabel := fmt.Sprintf(" %-*s", fieldLabelWidth, "NAME")
+	assert.True(t, strings.HasPrefix(strings.Split(rendered, "\n")[1], defaultK9sSkin().tableRow.Render(firstFieldLabel)), "field labels should use the cyan row color")
+	assert.Equal(t, " FIELD            VALUE", ansi.Strip(strings.Split(rendered, "\n")[0]))
+	assert.True(t, strings.HasPrefix(ansi.Strip(strings.Split(rendered, "\n")[1]), " NAME             worker-1"), "the first field should identify the node inside the standard inset")
+	assert.NotContains(t, rendered, "NODE DETAIL")
+	plain := ansi.Strip(rendered)
+	assert.Contains(t, plain, "KUBERNETES       Ready")
+	assert.Contains(t, plain, "ROLE             worker")
+	assert.Contains(t, plain, "K8S ROLES        worker")
+	assert.Contains(t, plain, "KUBELET          v1.31.0")
+	assert.Contains(t, plain, "Ready=True")
 }
 
 func TestRenderNodeDetailOmitsKubernetesBlockWhenUncorrelated(t *testing.T) {
 	rendered := renderNodeDetail(domain.NodeSnapshot{Name: "worker-1", Kubernetes: domain.KubernetesUnknown})
 
-	assert.Contains(t, rendered, "KUBERNETES Unknown")
-	assert.NotContains(t, rendered, "ROLES")
-	assert.NotContains(t, rendered, "KUBELET")
+	plain := ansi.Strip(rendered)
+	assert.Contains(t, plain, "KUBERNETES       Unknown")
+	assert.NotContains(t, plain, "K8S ROLES")
+	assert.NotContains(t, plain, "KUBELET")
+}
+
+func TestNodeAndProcessDetailsUseTheSameValueColumn(t *testing.T) {
+	nodeLines := strings.Split(ansi.Strip(renderNodeDetail(domain.NodeSnapshot{Name: "worker-1"})), "\n")
+	processLines := strings.Split(ansi.Strip(renderProcessDetail(domain.ProcessSnapshot{PID: 42})), "\n")
+
+	assert.Equal(t,
+		strings.Index(nodeLines[1], "worker-1"),
+		strings.Index(processLines[1], "42"),
+		"detail values should align across view types",
+	)
+}
+
+func TestDetailValuesAlignWithMemoryTableValueColumn(t *testing.T) {
+	detail := ansi.Strip(renderDiskDetail(domain.DiskSnapshot{DeviceName: "sda"}))
+	memory := strings.Split(ansi.Strip(renderMemoryTable(120, []memoryMetric{{Label: "Total", Value: "23.5 GiB"}}, 0)), "\n")
+
+	assert.Equal(t,
+		strings.Index(strings.Split(detail, "\n")[1], "sda"),
+		strings.Index(memory[1], "23.5 GiB"),
+		"detail values should align with the METRIC/VALUE table columns",
+	)
+}
+
+func TestDetailViewsUseWhiteFieldValueColumnHeaders(t *testing.T) {
+	rendered := renderDetail([]detailField{{label: "NAME", value: "worker-1"}})
+	lines := strings.Split(rendered, "\n")
+	plain := strings.Split(ansi.Strip(rendered), "\n")
+	header := fmt.Sprintf(" %-*s %s", fieldLabelWidth, "FIELD", "VALUE")
+
+	require.Len(t, lines, 2)
+	assert.Equal(t, defaultK9sSkin().tableHeader.Render(header), lines[0], "the generic detail headers should use the white table-header style")
+	assert.Equal(t, " FIELD"+strings.Repeat(" ", fieldLabelWidth-len("FIELD")+1)+"VALUE", plain[0])
+	label := fmt.Sprintf(" %-*s", fieldLabelWidth, "NAME")
+	assert.True(t, strings.HasPrefix(lines[1], defaultK9sSkin().tableRow.Render(label)), "detail field labels should use the cyan row style")
+	assert.Equal(t, strings.Index(plain[0], "VALUE"), strings.Index(plain[1], "worker-1"), "the VALUE header should align with detail values")
+}
+
+func TestRenderDetailSanitizesRemoteValuesWithoutAddingRows(t *testing.T) {
+	rendered := renderDetail([]detailField{{label: "COMMAND", value: "safe\x1b[2J\r\ninjected"}})
+	plain := ansi.Strip(rendered)
+
+	require.Len(t, strings.Split(plain, "\n"), 2)
+	assert.NotContains(t, rendered, "\x1b[2J")
+	assert.NotContains(t, plain, "\r")
+	assert.Contains(t, plain, "safeinjected")
 }
 
 func TestRenderProcessDetailShowsEveryField(t *testing.T) {
@@ -319,18 +425,19 @@ func TestRenderProcessDetailShowsEveryField(t *testing.T) {
 		Command: "kubelet", Executable: "/usr/bin/kubelet", Args: "--config=/etc/kubelet.yaml", Label: "runtime",
 	})
 
-	assert.Contains(t, rendered, "PROCESS DETAIL")
-	assert.Contains(t, rendered, "PID              42")
-	assert.Contains(t, rendered, "PPID             1")
-	assert.Contains(t, rendered, "STATE            Running")
-	assert.Contains(t, rendered, "THREADS          4")
-	assert.Contains(t, rendered, "CPU TIME         12.3s")
-	assert.Contains(t, rendered, "VIRTUAL MEMORY   4.0 MiB")
-	assert.Contains(t, rendered, "RESIDENT MEMORY  2.0 MiB")
-	assert.Contains(t, rendered, "COMMAND          kubelet")
-	assert.Contains(t, rendered, "EXECUTABLE       /usr/bin/kubelet")
-	assert.Contains(t, rendered, "ARGS             --config=/etc/kubelet.yaml")
-	assert.Contains(t, rendered, "LABEL            runtime")
+	plain := ansi.Strip(rendered)
+	assert.NotContains(t, plain, "PROCESS DETAIL")
+	assert.Contains(t, plain, "PID              42")
+	assert.Contains(t, plain, "PPID             1")
+	assert.Contains(t, plain, "STATE            Running")
+	assert.Contains(t, plain, "THREADS          4")
+	assert.Contains(t, plain, "CPU TIME         12.3s")
+	assert.Contains(t, plain, "VIRTUAL MEMORY   4.0 MiB")
+	assert.Contains(t, plain, "RESIDENT MEMORY  2.0 MiB")
+	assert.Contains(t, plain, "COMMAND          kubelet")
+	assert.Contains(t, plain, "EXECUTABLE       /usr/bin/kubelet")
+	assert.Contains(t, plain, "ARGS             --config=/etc/kubelet.yaml")
+	assert.Contains(t, plain, "LABEL            runtime")
 }
 
 func TestRenderDiskDetailShowsEveryField(t *testing.T) {
@@ -339,15 +446,16 @@ func TestRenderDiskDetailShowsEveryField(t *testing.T) {
 		SizeBytes: 536870912000, BusPath: "/pci0000:00/0000:00:1d.0", SystemDisk: true, ReadOnly: false,
 	})
 
-	assert.Contains(t, rendered, "DISK DETAIL")
-	assert.Contains(t, rendered, "DEVICE      sda")
-	assert.Contains(t, rendered, "MODEL       SAMSUNG MZVL")
-	assert.Contains(t, rendered, "SERIAL      S123456")
-	assert.Contains(t, rendered, "TYPE        ssd")
-	assert.Contains(t, rendered, "SIZE        500.0 GiB")
-	assert.Contains(t, rendered, "BUS PATH    /pci0000:00/0000:00:1d.0")
-	assert.Contains(t, rendered, "SYSTEM DISK true")
-	assert.Contains(t, rendered, "READ ONLY   false")
+	plain := ansi.Strip(rendered)
+	assert.NotContains(t, plain, "DISK DETAIL")
+	assert.Contains(t, plain, "DEVICE           sda")
+	assert.Contains(t, plain, "MODEL            SAMSUNG MZVL")
+	assert.Contains(t, plain, "SERIAL           S123456")
+	assert.Contains(t, plain, "TYPE             ssd")
+	assert.Contains(t, plain, "SIZE             500.0 GiB")
+	assert.Contains(t, plain, "BUS PATH         /pci0000:00/0000:00:1d.0")
+	assert.Contains(t, plain, "SYSTEM DISK      true")
+	assert.Contains(t, plain, "READ ONLY        false")
 }
 
 func TestRenderLinkDetailShowsScalarFieldsAndAddressesAndRoutes(t *testing.T) {
@@ -358,15 +466,14 @@ func TestRenderLinkDetailShowsScalarFieldsAndAddressesAndRoutes(t *testing.T) {
 		Routes:    []domain.NetworkRoute{{Destination: "0.0.0.0/0", Gateway: "10.0.0.1", Table: "main"}},
 	})
 
-	assert.Contains(t, rendered, "LINK DETAIL")
-	assert.Contains(t, rendered, "NAME        eth0")
-	assert.Contains(t, rendered, "TYPE        ether")
-	assert.Contains(t, rendered, "STATE       up")
-	assert.Contains(t, rendered, "HW ADDRESS  aa:bb:cc:dd:ee:ff")
-	assert.Contains(t, rendered, "MTU         1500")
-	assert.Contains(t, rendered, "DRIVER      virtio_net")
-	assert.Contains(t, rendered, "ADDRESSES")
-	assert.Contains(t, rendered, "10.0.0.5/24 (global)")
-	assert.Contains(t, rendered, "ROUTES")
-	assert.Contains(t, rendered, "0.0.0.0/0 via 10.0.0.1 (main)")
+	plain := ansi.Strip(rendered)
+	assert.NotContains(t, plain, "LINK DETAIL")
+	assert.Contains(t, plain, "NAME             eth0")
+	assert.Contains(t, plain, "TYPE             ether")
+	assert.Contains(t, plain, "STATE            up")
+	assert.Contains(t, plain, "HW ADDRESS       aa:bb:cc:dd:ee:ff")
+	assert.Contains(t, plain, "MTU              1500")
+	assert.Contains(t, plain, "DRIVER           virtio_net")
+	assert.Contains(t, plain, "ADDRESSES        10.0.0.5/24 (global)")
+	assert.Contains(t, plain, "ROUTES           0.0.0.0/0 via 10.0.0.1 (main)")
 }
