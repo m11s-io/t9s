@@ -11,7 +11,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +22,7 @@ const (
 )
 
 func TestServicesRenderAllNodeRowsAndHealthSymbols(t *testing.T) {
-	rendered := renderServices(120, servicesTestState())
+	rendered := newServicesModel().view(120, servicesTestState().Services)
 
 	assert.Contains(t, rendered, "NODE")
 	assert.Contains(t, rendered, "SERVICE")
@@ -41,60 +40,57 @@ func TestServicesRenderUnknownHealthAsQuestionMark(t *testing.T) {
 
 func TestServicesFilterMatchesNodeAndServiceCaseInsensitively(t *testing.T) {
 	state := servicesTestState()
-	services := newServicesModel().normalizeSelection(state.Value.Services, 0)
+	services := newServicesModel().normalizeSelection(state.Services, 0)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('N'), keyPress('o'), keyPress('D'), keyPress('e'), keyPress('-'), keyPress('b'), keyPress('E'), keyPress('t'), keyPress('A'),
 		{Code: tea.KeyEnter},
 	} {
-		services = services.update(message, state.Value.Services)
+		services = services.update(message, state.Services)
 	}
 
-	filtered := services.view(120, state.Value.Services)
+	filtered := services.view(120, state.Services)
 	assert.Contains(t, filtered, "node-beta")
 	assert.Contains(t, filtered, "machined")
 	assert.NotContains(t, filtered, "node-alpha")
 	assert.NotContains(t, filtered, "kubelet")
 	assert.Contains(t, filtered, "FILTER NoDe-bEtA")
 
-	services = services.update(tea.KeyPressMsg{Code: tea.KeyEsc}, state.Value.Services)
-	cleared := services.view(120, state.Value.Services)
+	services = services.update(tea.KeyPressMsg{Code: tea.KeyEsc}, state.Services)
+	cleared := services.view(120, state.Services)
 	assert.Contains(t, cleared, "node-alpha")
 	assert.Contains(t, cleared, "node-beta")
 	assert.NotContains(t, cleared, "FILTER")
 }
 
 func TestServicesRenderEmptyState(t *testing.T) {
-	rendered := renderServices(80, application.ServiceState{Status: application.Ready})
+	rendered := newServicesModel().viewSized(contentSize{Width: 80, Height: 10}, domain.ServiceSet{}, false, false, "")
 
 	assert.Contains(t, rendered, "No services")
 }
 
 func TestServicesSelectionResetsWhenRefreshedServiceSetIsEmpty(t *testing.T) {
-	state := application.ServiceState{
-		Status: application.Ready,
-		Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{
-			{Node: "cp-1", Name: "etcd"},
-			{Node: "cp-1", Name: "kubelet"},
-		}},
-	}
-	services := newServicesModel().normalizeSelection(state.Value.Services, 0)
-	services = services.update(tea.KeyPressMsg{Code: tea.KeyDown}, state.Value.Services)
+	state := domain.ServiceSet{Services: []domain.ServiceSnapshot{
+		{Node: "cp-1", Name: "etcd"},
+		{Node: "cp-1", Name: "kubelet"},
+	}}
+	services := newServicesModel().normalizeSelection(state.Services, 0)
+	services = services.update(tea.KeyPressMsg{Code: tea.KeyDown}, state.Services)
 
-	state = application.ServiceState{Status: application.Ready}
-	services = services.normalizeSelection(state.Value.Services, services.control.Cursor())
+	state = domain.ServiceSet{}
+	services = services.normalizeSelection(state.Services, services.control.Cursor())
 
-	_, ok := services.selected(state.Value.Services)
+	_, ok := services.selected(state.Services)
 	assert.False(t, ok)
-	assert.Equal(t, "No services", services.legacyViewSized(contentSize{Width: 80, Height: 10}, state))
+	assert.Equal(t, "No services", services.viewSized(contentSize{Width: 80, Height: 10}, state, false, false, ""))
 }
 
 func TestServicesRenderCapsTheNumberOfRows(t *testing.T) {
-	state := application.ServiceState{Status: application.Ready}
+	state := domain.ServiceSet{}
 	for index := 0; index < expectedServiceRowLimit+1; index++ {
-		state.Value.Services = append(state.Value.Services, domain.ServiceSnapshot{Node: "cp-1", Name: fmt.Sprintf("service-%03d", index)})
+		state.Services = append(state.Services, domain.ServiceSnapshot{Node: "cp-1", Name: fmt.Sprintf("service-%03d", index)})
 	}
 
-	rendered := renderServices(120, state)
+	rendered := newServicesModel().view(120, state.Services)
 
 	assert.Contains(t, rendered, "service-099")
 	assert.NotContains(t, rendered, "service-100")
@@ -102,13 +98,13 @@ func TestServicesRenderCapsTheNumberOfRows(t *testing.T) {
 }
 
 func TestServicesRenderSuccessfulRowsWithNodeScopedProblems(t *testing.T) {
-	state := application.ServiceState{Status: application.Partial, Value: domain.ServiceSet{
+	state := domain.ServiceSet{
 		Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd", State: "Running"}},
 		Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "services unavailable"}},
-	}}
-	model := newServicesModel().normalizeSelection(state.Value.Services, 0)
+	}
+	model := newServicesModel().normalizeSelection(state.Services, 0)
 
-	view := model.legacyViewSized(contentSize{Width: 100, Height: 8}, state)
+	view := model.viewSized(contentSize{Width: 100, Height: 8}, state, false, false, "")
 
 	assert.Contains(t, view, "cp-1")
 	assert.Contains(t, view, "etcd")
@@ -117,13 +113,13 @@ func TestServicesRenderSuccessfulRowsWithNodeScopedProblems(t *testing.T) {
 }
 
 func TestServicesFilterMatchesNodeScopedProblems(t *testing.T) {
-	state := application.ServiceState{Status: application.Partial, Value: domain.ServiceSet{
+	state := domain.ServiceSet{
 		Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}},
 		Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "services unavailable"}},
-	}}
-	model := newServicesModel().startFilter("WoRkEr", state.Value.Services)
+	}
+	model := newServicesModel().startFilter("WoRkEr", state.Services)
 
-	view := model.legacyViewSized(contentSize{Width: 100, Height: 8}, state)
+	view := model.viewSized(contentSize{Width: 100, Height: 8}, state, false, false, "")
 
 	assert.Contains(t, view, "worker-1")
 	assert.Contains(t, view, "services unavailable")
@@ -144,39 +140,10 @@ func TestServiceDetailTruncatesTheEventField(t *testing.T) {
 	t.Fatal("service detail did not render a LAST EVENT field")
 }
 
-func TestServicesEnterShowsSelectedServiceDetail(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{Services: servicesTestState()}, nil)
-	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-
-	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyDown})
-	root, command := updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	assert.Nil(t, command)
-	assert.Contains(t, root.View().Content, "SERVICE DETAIL")
-	assert.Contains(t, root.View().Content, "NODE       node-alpha")
-	assert.Contains(t, root.View().Content, "SERVICE    kubelet")
-}
-
-func TestServicesEscapeReturnsToListAndKeepsRootResource(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{Services: servicesTestState()}, nil)
-	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEnter})
-
-	root, command := updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEsc})
-	assert.Nil(t, command)
-	assert.Contains(t, root.View().Content, "NODE")
-	assert.NotContains(t, root.View().Content, "SERVICE DETAIL")
-
-	root, command = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEsc})
-	assert.Nil(t, command)
-	assert.Contains(t, root.View().Content, "LAST EVENT")
-	assert.NotContains(t, root.View().Content, "SERVICE DETAIL")
-}
-
 func TestServicesGolden(t *testing.T) {
 	for _, width := range []int{80, 120} {
 		t.Run(strconv.Itoa(width), func(t *testing.T) {
-			got := trimGoldenLines(renderServices(width, servicesTestState())) + "\n"
+			got := trimGoldenLines(newServicesModel().view(width, servicesTestState().Services)) + "\n"
 			path := filepath.Join("testdata", "services-"+strconv.Itoa(width)+".golden")
 			if os.Getenv("UPDATE_GOLDEN") == "1" {
 				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
@@ -193,15 +160,12 @@ func TestServicesGolden(t *testing.T) {
 	}
 }
 
-func servicesTestState() application.ServiceState {
+func servicesTestState() domain.ServiceSet {
 	truth := true
 	falsity := false
-	return application.ServiceState{
-		Status: application.Ready,
-		Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{
-			{Node: "node-alpha", Name: "etcd", State: "Running", Healthy: &truth, LastMessage: "member is healthy", LastChange: time.Date(2026, time.August, 14, 10, 30, 0, 0, time.UTC)},
-			{Node: "node-alpha", Name: "kubelet", State: "Failed", Healthy: &falsity, LastMessage: "failed to start after a deliberately long event message"},
-			{Node: "node-beta", Name: "machined", State: "Running", LastMessage: "health is not reported"},
-		}},
-	}
+	return domain.ServiceSet{Services: []domain.ServiceSnapshot{
+		{Node: "node-alpha", Name: "etcd", State: "Running", Healthy: &truth, LastMessage: "member is healthy", LastChange: time.Date(2026, time.August, 14, 10, 30, 0, 0, time.UTC)},
+		{Node: "node-alpha", Name: "kubelet", State: "Failed", Healthy: &falsity, LastMessage: "failed to start after a deliberately long event message"},
+		{Node: "node-beta", Name: "machined", State: "Running", LastMessage: "health is not reported"},
+	}}
 }

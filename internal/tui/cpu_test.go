@@ -8,7 +8,6 @@ import (
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCPUViewShowsSampleIntervalCountsAndUnknownCores(t *testing.T) {
@@ -23,25 +22,26 @@ func TestCPUViewShowsSampleIntervalCountsAndUnknownCores(t *testing.T) {
 	assert.Contains(t, rendered, "Running processes: 7")
 	assert.Contains(t, rendered, "Blocked processes: 2")
 }
-func TestCPUNodeKeyFilterRefreshHelpAndExit(t *testing.T) {
-	root := readyRootModel()
-	root.splash = false
-	root, command := updateRoot(root, keyPress('u'))
-	require.NotNil(t, command)
-	assert.Equal(t, "cp-1", root.application.CPU.Node)
-	assert.False(t, root.application.WritesEnabled)
-	root, command = updateRoot(root, keyPress('r'))
-	require.NotNil(t, command)
-	assert.Equal(t, "cp-1", root.application.CPU.Node)
-	root, _ = updateRoot(root, keyPress('?'))
-	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEsc})
-	assert.Equal(t, "cp-1", root.application.CPU.Node, "Help must retain CPU view")
-	root, _ = updateRoot(root, keyPress('/'))
-	root, _ = updateRoot(root, keyPress('r'))
-	root, command = updateRoot(root, keyPress('q'))
-	assert.Nil(t, command, "filter entry must not refresh or exit")
-	root, _ = updateRoot(root, tea.KeyPressMsg{Code: tea.KeyEsc})
-	assert.Equal(t, "cp-1", root.application.CPU.Node)
-	root, _ = updateRoot(root, keyPress('q'))
-	assert.Equal(t, application.CPUState{}, root.application.CPU)
+
+func TestDirectCPUHelpFilterAndBackKeysStayScoped(t *testing.T) {
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1"}})
+	model.views = model.views.push(viewFrame{Kind: viewCPU, Label: "cp-1 > cpu", NodeID: "cp-id", NodeTarget: "cp-1"})
+	model.cpu = newDirectCPUModel()
+
+	model, _ = updateDirect(model, keyPress('?'))
+	assert.Equal(t, viewHelp, model.views.top().Kind)
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEscape})
+	assert.Equal(t, viewCPU, model.views.top().Kind, "Help returns to the CPU view")
+
+	model, _ = updateDirect(model, keyPress('/'))
+	model, _ = updateDirect(model, keyPress('r'))
+	model, command := updateDirect(model, keyPress('q'))
+	assert.Nil(t, command, "q is filter text while the filter is active")
+	assert.Equal(t, viewCPU, model.views.top().Kind)
+	assert.Contains(t, model.View().Content, "/rq")
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEscape})
+	assert.Equal(t, viewCPU, model.views.top().Kind, "Escape ends filtering without leaving CPU")
+	model, _ = updateDirect(model, keyPress('q'))
+	assert.Equal(t, viewNodes, model.views.top().Kind, "q leaves CPU after filtering ends")
 }

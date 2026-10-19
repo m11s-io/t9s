@@ -21,59 +21,64 @@ func TestK9sVisualGolden(t *testing.T) {
 		{Name: "stage", Cluster: "stage", Endpoints: []string{"10.10.16.11"}},
 		{Name: "test", Cluster: "test", Endpoints: []string{"10.10.17.11"}},
 	}
-	base := application.Model{
-		ContextName: "mgmt", Contexts: contexts,
-		Nodes:           application.NodeState{Status: application.Ready, Value: nodesTestState().Value},
-		Services:        servicesTestState(),
-		Events:          eventsTestState(),
-		Etcd:            etcdTestState(),
-		Processes:       processesTestState(),
-		Disks:           disksTestState(),
-		Network:         networkTestState(),
-		ResourceBrowser: resourceKindsTestState(),
-	}
+	base := newDirectModel(t.Context(), application.NewClient(application.Dependencies{}), LaunchOptions{ContextName: "mgmt"})
+	base.splash = false
+	base.cluster.contexts = contexts
+	base.cluster.nodes = application.NodeState{Status: application.Ready, Value: nodesTestState().Value}
+	base.cluster.services = directServiceState{Status: directReady, Value: servicesTestState()}
+	base.cluster.events = directEventState{Status: directReady, Value: domain.EventSet{Events: eventsTestState().Value.Events}}
+	base.cluster.etcd = directEtcdState{Status: directReady, Value: etcdTestState().Value}
+	base.processes = newDirectProcessesModel().setResult("cp-1", processesTestState().Value, nil)
+	base.disks = newDirectDisksModel().setResult("cp-1", disksTestState().Value, nil)
+	base.network = newDirectNetworkModel().setResult("cp-1", networkTestState().Value, nil)
+	base.resourceKinds = base.resourceKinds.setKinds(resourceKindsTestState().Kinds, directReady, "")
 
 	tests := []struct {
 		name          string
 		width, height int
-		prepare       func(model) model
+		prepare       func(directModel) directModel
 	}{
-		{name: "services-160x50", width: 160, height: 50, prepare: func(root model) model {
+		{name: "services-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
 			root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 			return root
 		}},
-		{name: "contexts-160x50", width: 160, height: 50, prepare: func(root model) model {
-			return enterCommand(t, root, "ctx")
+		{name: "contexts-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
+			root.contexts = newContextsModel(contexts, "mgmt")
+			return root
 		}},
-		{name: "events-160x50", width: 160, height: 50, prepare: func(root model) model {
-			return enterCommand(t, root, "events")
+		{name: "events-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
+			root.views = root.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
+			return root
 		}},
-		{name: "etcd-160x50", width: 160, height: 50, prepare: func(root model) model {
-			return enterCommand(t, root, "etcd")
+		{name: "etcd-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
+			root.views = root.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
+			return root
 		}},
-		{name: "services-80x24", width: 80, height: 24, prepare: func(root model) model {
+		{name: "services-80x24", width: 80, height: 24, prepare: func(root directModel) directModel {
 			root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 			return root
 		}},
-		{name: "processes-160x50", width: 160, height: 50, prepare: func(root model) model {
+		{name: "processes-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
 			root.views = root.views.push(viewFrame{Kind: viewProcesses, Label: "cp-1 > processes"})
 			return root
 		}},
-		{name: "disks-160x50", width: 160, height: 50, prepare: func(root model) model {
+		{name: "disks-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
 			root.views = root.views.push(viewFrame{Kind: viewDisks, Label: "cp-1 > disks"})
 			return root
 		}},
-		{name: "network-160x50", width: 160, height: 50, prepare: func(root model) model {
+		{name: "network-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
 			root.views = root.views.push(viewFrame{Kind: viewNetwork, Label: "cp-1 > network"})
 			return root
 		}},
-		{name: "overview-160x50", width: 160, height: 50, prepare: func(root model) model {
-			return enterCommand(t, root, "overview")
+		{name: "overview-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
+			root.views = root.views.replaceRoot(viewFrame{Kind: viewOverview, Label: "overview"})
+			return root
 		}},
-		{name: "problems-160x50", width: 160, height: 50, prepare: func(root model) model {
-			return enterCommand(t, root, "problems")
+		{name: "problems-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
+			root.views = root.views.replaceRoot(viewFrame{Kind: viewProblems, Label: "problems"})
+			return root
 		}},
-		{name: "resources-kinds-160x50", width: 160, height: 50, prepare: func(root model) model {
+		{name: "resources-kinds-160x50", width: 160, height: 50, prepare: func(root directModel) directModel {
 			root.views = root.views.replaceRoot(viewFrame{Kind: viewResourceKinds, Label: "resources"})
 			return root
 		}},
@@ -81,11 +86,10 @@ func TestK9sVisualGolden(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			root := newModel(t.Context(), false, base, nil)
-			root.splash = false
+			root := base
 			root = test.prepare(root)
 			updated, _ := root.Update(tea.WindowSizeMsg{Width: test.width, Height: test.height})
-			view := updated.(model).View()
+			view := updated.(directModel).View()
 			got := view.Content + "\n"
 			path := filepath.Join("testdata", "k9s-"+test.name+".golden")
 			if os.Getenv("UPDATE_GOLDEN") == "1" {

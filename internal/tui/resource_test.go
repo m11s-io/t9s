@@ -1,11 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
@@ -25,16 +25,14 @@ func TestServicesShellKeepsMovedSelectionVisible(t *testing.T) {
 	for index := range services {
 		services[index] = domain.ServiceSnapshot{Node: "cp-1", Name: fmt.Sprintf("service-%02d", index)}
 	}
-	root := readyRootModel()
+	root := newDirectModel(context.Background(), nil, LaunchOptions{})
 	root.splash = false
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
-	root.application.Services = application.ServiceState{Status: application.Ready, Value: domain.ServiceSet{Services: services}}
+	root.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: services}}
 	root.services = newServicesModel().normalizeSelection(services, 0)
-	updated, _ := root.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
-	root = updated.(model)
+	root, _ = updateDirect(root, tea.WindowSizeMsg{Width: 80, Height: 8})
 	for range 12 {
-		updated, _ = root.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-		root = updated.(model)
+		root, _ = updateDirect(root, tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 
 	view := root.View().Content
@@ -45,17 +43,20 @@ func TestServicesShellKeepsMovedSelectionVisible(t *testing.T) {
 
 func TestResourceStatesRenderInsideContent(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		state application.ServiceState
-		want  string
+		name    string
+		state   domain.ServiceSet
+		loading bool
+		failed  bool
+		err     string
+		want    string
 	}{
-		{name: "loading", state: application.ServiceState{Status: application.Loading}, want: "Loading services…"},
-		{name: "failed", state: application.ServiceState{Status: application.Failed, Err: "service discovery failed"}, want: "service discovery failed"},
-		{name: "empty", state: application.ServiceState{Status: application.Ready}, want: "No services"},
+		{name: "loading", loading: true, want: "Loading services…"},
+		{name: "failed", failed: true, err: "service discovery failed", want: "service discovery failed"},
+		{name: "empty", want: "No services"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			model := newServicesModel().normalizeSelection(test.state.Value.Services, 0)
-			assert.Contains(t, model.legacyViewSized(contentSize{Width: 80, Height: 5}, test.state), test.want)
+			model := newServicesModel().normalizeSelection(test.state.Services, 0)
+			assert.Contains(t, model.viewSized(contentSize{Width: 80, Height: 5}, test.state, test.loading, test.failed, test.err), test.want)
 		})
 	}
 }

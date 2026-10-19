@@ -53,7 +53,7 @@ func TestEtcdRenderShowsAlarms(t *testing.T) {
 
 func TestEtcdRenderEmptyState(t *testing.T) {
 	model := newEtcdModel()
-	rendered := model.legacyViewSized(contentSize{Width: 80, Height: 10}, application.EtcdState{Status: application.Ready})
+	rendered := model.viewSized(contentSize{Width: 80, Height: 10}, directEtcdState{Status: directReady})
 	assert.Equal(t, "No etcd members", rendered)
 }
 

@@ -84,20 +84,3 @@ func TestRenderResourceDetailHeaderMarksSensitiveKind(t *testing.T) {
 
 	assert.Contains(t, rendered, "⚠")
 }
-
-func TestResourcesCommandDrillsFromKindsToInstancesToDetail(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{}, application.NewRunner(application.Dependencies{}))
-	root.splash = false
-
-	root = enterCommand(t, root, "resources")
-	assert.Equal(t, viewResourceKinds, root.views.top().Kind)
-}
-
-func TestResourcesCommandWithArgumentSkipsToInstances(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{}, application.NewRunner(application.Dependencies{}))
-	root.splash = false
-
-	root = enterCommand(t, root, "resources MachineStatus")
-
-	require.Equal(t, viewResourceInstances, root.views.top().Kind)
-}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,23 +9,37 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
+	"github.com/m11s-io/t9s/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestServicesLogKeyOpensSelectedServiceLogs(t *testing.T) {
-	root := newModel(t.Context(), false, application.Model{ContextName: "prod", Services: application.ServiceState{
-		Status: application.Ready,
-		Value:  domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}},
-	}}, application.NewRunner(application.Dependencies{}))
+	stream := &tuiLogStream{batches: []domain.LogBatch{{Lines: []string{"etcd started"}, EOF: true}}}
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{LogReader: tuiLogReader{stream: stream}}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	root := newDirectModel(context.Background(), client, LaunchOptions{ContextName: "prod"})
+	root.session, root.sessionCtx = session, context.Background()
+	root.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}}}
+	root.services = root.services.normalizeSelection(root.cluster.services.Value.Services, 0)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 
-	root, command := updateRoot(root, keyPress('l'))
+	root, command := updateDirect(root, keyPress('l'))
 
 	require.NotNil(t, command)
 	assert.Equal(t, viewServiceLogs, root.views.top().Kind)
 	assert.Contains(t, root.views.breadcrumb("prod"), "services > etcd@cp-1 > logs")
+	root, command = runStreamCommand(t, root, command)
+	for command != nil {
+		root, command = runStreamCommand(t, root, command)
+	}
 	assert.Contains(t, root.View().Content, "SERVICE LOGS")
+	assert.Contains(t, root.View().Content, "etcd started")
 }
 
 func TestServiceLogsFilterFollowWrapAndClear(t *testing.T) {
