@@ -386,6 +386,60 @@ func TestDirectEtcdReceiptDoesNotCoverContextPicker(t *testing.T) {
 	assert.False(t, model.mutation.receiptVisible)
 }
 
+func TestDirectEtcdReceiptQDismissesBeforeTableQuit(t *testing.T) {
+	model := directEtcdModel(directEtcdMutationSession(t, true, &testkit.FakeEtcdOperations{}), true)
+	model.mutation.snapshot = &domain.EtcdSnapshotResult{Node: "cp-1", Path: "/tmp/snapshot.db", Size: 1024, SHA256: strings.Repeat("f", 64)}
+	model.mutation.receiptVisible = true
+	model, command := updateDirect(model, keyPress('q'))
+	assert.Nil(t, command, "q should only dismiss a visible receipt")
+	assert.False(t, model.mutation.receiptVisible)
+	assert.Contains(t, ansi.Strip(model.View().Content), "cp-2")
+
+	table := directEtcdModel(directEtcdMutationSession(t, true, &testkit.FakeEtcdOperations{}), true)
+	_, command = updateDirect(table, keyPress('q'))
+	require.NotNil(t, command)
+	assert.IsType(t, tea.QuitMsg{}, command())
+}
+
+func TestDirectEtcdReceiptShortcutDoesNotConsumeFilterInput(t *testing.T) {
+	model := directEtcdModel(directEtcdMutationSession(t, true, &testkit.FakeEtcdOperations{}), true)
+	model.mutation.snapshot = &domain.EtcdSnapshotResult{Node: "cp-1", Path: "/tmp/snapshot.db", Size: 1024, SHA256: strings.Repeat("a", 64)}
+	model, _ = updateDirect(model, keyPress('/'))
+	require.True(t, model.etcd.filtering)
+	model, _ = updateDirect(model, keyPress('v'))
+	assert.Equal(t, "v", model.etcd.filter)
+	assert.False(t, model.mutation.receiptVisible)
+	assert.Contains(t, ansi.Strip(model.View().Content), "/v")
+
+	model.mutation.receiptVisible = true
+	model, _ = updateDirect(model, keyPress('q'))
+	assert.Equal(t, "vq", model.etcd.filter, "q remains ordinary filter input")
+	assert.True(t, model.mutation.receiptVisible, "receipt shortcuts are inactive while the filter is being edited")
+	model.mutation.receiptOffset = 1
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	assert.Equal(t, 1, model.mutation.receiptOffset, "paging keys remain available to the active filter input")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "SNAPSHOT RECEIPT")
+}
+
+func TestDirectEtcdReceiptFinishingDuringFilterKeepsFilterVisible(t *testing.T) {
+	model := directEtcdModel(directEtcdMutationSession(t, true, &testkit.FakeEtcdOperations{}), true)
+	model.mutation.busy = true
+	model.mutation.operation = 9
+	model.mutation.etcdKind = application.EtcdActionSnapshot
+	model.etcd.filtering = true
+	model.etcd.filter = "cp"
+	receipt := &domain.EtcdSnapshotResult{Node: "cp-1", Path: "/tmp/snapshot.db", Size: 1024, SHA256: strings.Repeat("b", 64)}
+	model, _ = updateDirect(model, directMutationFinished{
+		operation: 9, generation: model.generation(), result: application.MutationResult{Snapshot: receipt},
+	})
+	content := ansi.Strip(model.View().Content)
+	assert.NotNil(t, model.mutation.snapshot, "the receipt metadata remains stored")
+	assert.False(t, model.mutation.receiptVisible, "completion while editing keeps the receipt hidden")
+	assert.Contains(t, content, "FILTER cp")
+	assert.Contains(t, content, "cp-2")
+	assert.NotContains(t, content, "SNAPSHOT RECEIPT")
+}
+
 func compactEtcdView(content string) string {
 	content = ansi.Strip(content)
 	return strings.NewReplacer("\n", "", " ", "", "│", "", "┌", "", "┐", "", "└", "", "┘", "", "─", "").Replace(content)
