@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -190,18 +189,6 @@ func eventRows(events domain.EventSet) []domain.EventSnapshot {
 	return append(rows, events.Events...)
 }
 
-// syncLegacySelection adapts the legacy reducer's event state into the same
-// presentation-only selection model while that root is still supported.
-func (m eventsModel) syncLegacySelection(state application.EventState) eventsModel {
-	rows := eventRows(state.Value)
-	closest := m.control.Cursor()
-	if state.Following {
-		m.selectedKey = ""
-		closest = len(rows) - 1
-	}
-	return m.normalizeSelection(rows, closest)
-}
-
 func (m eventsModel) viewSized(size contentSize, state directEventState) string {
 	if state.Status != directPartial {
 		return m.tableViewSized(size, state.Value, state.Status == directLoading || state.Status == "", state.Status == directFailed, state.Err)
@@ -255,34 +242,6 @@ func (m eventsModel) tableViewSized(size contentSize, eventSet domain.EventSet, 
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(events), m.control.Cursor(), rowCapacity)
 	return renderEventTable(size.Width, events[start:end], m.control.Cursor()-start)
-}
-
-func (m eventsModel) legacyViewSized(size contentSize, state application.EventState) string {
-	status := ""
-	if state.FollowAttempted {
-		status = "EVENTS PAUSED"
-		if state.Following {
-			status = "EVENTS FOLLOW"
-		}
-		if state.Err != "" {
-			status += " — " + state.Err
-		}
-		if len(state.Value.Problems) > 0 {
-			status += " — failed nodes: " + fmt.Sprint(len(state.Value.Problems))
-		}
-	}
-	if status != "" {
-		if size.Height <= 1 {
-			return status
-		}
-		size.Height--
-		return status + "\n" + m.tableViewSized(size, state.Value, state.Status == application.Loading || state.Status == application.Idle, state.Status == application.Failed, state.Err)
-	}
-	return m.tableViewSized(size, state.Value, state.Status == application.Loading || state.Status == application.Idle, state.Status == application.Failed, state.Err)
-}
-
-func renderEvents(width int, state application.EventState) string {
-	return newEventsModel().view(width, eventRows(state.Value))
 }
 
 const defaultEventsWidth = 120

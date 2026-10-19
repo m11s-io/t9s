@@ -12,7 +12,7 @@ type directRunCommand struct{ value string }
 
 // runClusterCommand handles the root-owned cluster navigation aliases while
 // each screen is migrated in its own task.
-func (m *directModel) runClusterCommand(value string) tea.Cmd {
+func (m *model) runClusterCommand(value string) tea.Cmd {
 	if value == "" {
 		return nil
 	}
@@ -65,7 +65,7 @@ func directContextKnown(contexts []domain.ClusterContext, name string) bool {
 	return false
 }
 
-func (m directModel) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case directNodeServicesLoaded:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
@@ -73,9 +73,9 @@ func (m directModel) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.
 		}
 		m.requests.cancelSlot("cluster-nodes-services")
 		nodeStatus := directNodeLoadStatus(message.nodes)
-		state := application.NodeState{Status: application.Ready, Value: message.nodes}
+		state := directNodeState{Status: directReady, Value: message.nodes}
 		if nodeStatus == directPartial {
-			state.Status = application.Partial
+			state.Status = directPartial
 			state.Err = "Some nodes report problems"
 		}
 		serviceStatus := directServiceLoadStatus(message.services)
@@ -84,10 +84,10 @@ func (m directModel) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.
 			serviceState.Err = "Some services report problems"
 		}
 		if message.err != nil {
-			state.Status = application.Failed
+			state.Status = directFailed
 			state.Err = "Node data is unavailable"
 			if nodeStatus == directPartial || len(message.nodes.Nodes) > 0 || !message.nodes.ObservedAt.IsZero() {
-				state.Status = application.Partial
+				state.Status = directPartial
 				state.Err = "Some node data is unavailable"
 			}
 			serviceState.Status = directFailed

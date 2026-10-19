@@ -16,7 +16,7 @@ func TestDirectHealthcheckRendersNormalizedFailureWithoutTransportDetails(t *tes
 		return nil, errors.New("rpc error: code = DeadlineExceeded desc = context deadline exceeded")
 	}}
 	session, _ := directStreamSession(t, nil, health)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model, command := runDirectPaletteCommand(t, model, "healthcheck 1m")
 	for command != nil {

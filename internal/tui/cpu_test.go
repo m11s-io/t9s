@@ -5,13 +5,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCPUViewShowsSampleIntervalCountsAndUnknownCores(t *testing.T) {
-	m := newCPUModel(application.CPUState{Status: application.Partial, Value: domain.CPUSnapshot{Aggregate: domain.CPUUtilization{Known: true, BusyPercent: 30, IOWaitPercent: 10}, Cores: []domain.CPUCoreSnapshot{{ID: 2}}, Interval: time.Second, SampledAt: time.Date(2026, 10, 17, 12, 0, 1, 0, time.UTC), ProcessCountsKnown: true, RunningProcesses: 7, BlockedProcesses: 2, Problems: []string{"CPU2 unavailable"}}})
+	m := newDirectCPUModel().setResult("cp-1", domain.CPUSnapshot{Aggregate: domain.CPUUtilization{Known: true, BusyPercent: 30, IOWaitPercent: 10}, Cores: []domain.CPUCoreSnapshot{{ID: 2}}, Interval: time.Second, SampledAt: time.Date(2026, 10, 17, 12, 0, 1, 0, time.UTC), ProcessCountsKnown: true, RunningProcesses: 7, BlockedProcesses: 2, Problems: []string{"CPU2 unavailable"}}, nil)
 	rendered := m.viewSized(contentSize{Width: 100, Height: 20})
 	assert.Contains(t, rendered, "30.0%")
 	assert.Contains(t, rendered, "10.0%")

@@ -47,12 +47,12 @@ func directUpgradeSession(t *testing.T, currentImage string, currentErr error, u
 	return session
 }
 
-func directUpgradeModel(t *testing.T, session *application.Session) directModel {
+func directUpgradeModel(t *testing.T, session *application.Session) model {
 	t.Helper()
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
 	nodes := domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: nodes}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: nodes}
 	model.nodes = model.nodes.normalizeSelection(nodes.Nodes, 0)
 	return model
 }
@@ -406,7 +406,7 @@ func (s *cancelObservedUpgradeStream) Wait(ctx context.Context) (ports.UpgradeRe
 	}
 }
 
-func directUpgradeWorkForTest(t *testing.T, model directModel, session *application.Session, ctx context.Context) directMutationWork {
+func directUpgradeWorkForTest(t *testing.T, model model, session *application.Session, ctx context.Context) directMutationWork {
 	t.Helper()
 	return directMutationWork{operation: 3, generation: model.generation(), ctx: ctx, session: session, plan: &directMutationPrompt{
 		operation: 3, generation: model.generation(), nodeKind: application.ActionUpgrade, node: mustPrepareUpgradeForDirectTest(t, session),

@@ -12,7 +12,7 @@ import (
 )
 
 func TestDirectServicesUseSharedSnapshotAndPreserveSelection(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.width, model.height = 120, 40
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{
@@ -30,7 +30,7 @@ func TestDirectServicesUseSharedSnapshotAndPreserveSelection(t *testing.T) {
 }
 
 func TestDirectServicesFilterPromptsAndDetailPaletteNavigation(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.width, model.height = 100, 28
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "node-a", Name: "etcd"}}}}
@@ -65,9 +65,9 @@ func TestDirectServicesFilterPromptsAndDetailPaletteNavigation(t *testing.T) {
 }
 
 func TestDirectServicesEscapeReturnsFromDetailAndRoot(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-a", Name: "node-a"}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-a", Name: "node-a"}}}}
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{
 		{Node: "node-a", Name: "etcd", State: "Running"},
 		{Node: "node-a", Name: "kubelet", State: "Running"},
@@ -103,7 +103,7 @@ func TestDirectServicesEscapeReturnsFromDetailAndRoot(t *testing.T) {
 }
 
 func TestDirectServicesAliasRoutesFromPalette(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model, _ = updateDirect(model, keyPress(':'))
 	var command tea.Cmd
@@ -117,7 +117,7 @@ func TestDirectServicesAliasRoutesFromPalette(t *testing.T) {
 }
 
 func TestDirectServicesRefreshUsesSharedReadWithoutLegacyReducer(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session = &application.Session{}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 	model, command := updateDirect(model, keyPress('r'))
@@ -126,7 +126,7 @@ func TestDirectServicesRefreshUsesSharedReadWithoutLegacyReducer(t *testing.T) {
 }
 
 func TestDirectServiceDetailKeepsOpenedIdentityAcrossFilteredRefreshReorder(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	services := []domain.ServiceSnapshot{
 		{Node: "node-a", Name: "alpha", State: "Running"},
@@ -151,7 +151,7 @@ func TestDirectServiceDetailKeepsOpenedIdentityAcrossFilteredRefreshReorder(t *t
 }
 
 func TestDirectServiceDetailShowsUnavailableWhenOpenedServiceDisappears(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	services := []domain.ServiceSnapshot{{Node: "node-b", Name: "beta-one", State: "Running"}, {Node: "node-c", Name: "beta-two", State: "Running"}}
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: services}}

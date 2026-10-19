@@ -72,7 +72,7 @@ func TestRootSetsBlackTerminalBackgroundForTheWholeViewport(t *testing.T) {
 	assert.Equal(t, uint32(0xffff), alpha)
 }
 
-func readyDirectRootModel(t *testing.T) directModel {
+func readyDirectRootModel(t *testing.T) model {
 	root := newDirectNodesModel(t, LaunchOptions{ContextName: "prod"}, []domain.NodeSnapshot{{
 		ID: "cp-1", Name: "cp-1", Role: domain.NodeRoleControl, Kubernetes: domain.KubernetesUnknown,
 	}})

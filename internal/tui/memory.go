@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -25,27 +24,7 @@ type memoryModel struct {
 	control   listControl
 }
 
-func newMemoryModel(state application.MemoryState) memoryModel {
-	return (memoryModel{status: directLoading}).setState(state)
-}
-
 func newDirectMemoryModel() memoryModel { return memoryModel{status: directLoading} }
-
-func (m memoryModel) setState(state application.MemoryState) memoryModel {
-	previousIndex := m.control.Cursor()
-	m.values, m.err, m.node = state.Value, state.Err, state.Node
-	switch state.Status {
-	case application.Loading, application.Idle:
-		m.status = directLoading
-	case application.Partial:
-		m.status = directPartial
-	case application.Failed:
-		m.status = directFailed
-	default:
-		m.status = directReady
-	}
-	return m.normalizeSelection(previousIndex)
-}
 
 func (m memoryModel) setResult(node string, values domain.MemorySnapshot, err error) memoryModel {
 	previousIndex := m.control.Cursor()

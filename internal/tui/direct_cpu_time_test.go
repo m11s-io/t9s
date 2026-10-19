@@ -44,7 +44,7 @@ func TestDirectCPUKeySamplesAndRefreshesThroughSession(t *testing.T) {
 }
 
 func TestDirectCPUFailureAndCancellationUseSafePresentation(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.push(viewFrame{Kind: viewCPU, NodeID: "node-id", NodeTarget: "node"})
 	request, _ := model.requests.begin("node:node-id:cpu", model.generation())
@@ -60,7 +60,7 @@ func TestDirectCPUFailureAndCancellationUseSafePresentation(t *testing.T) {
 
 func TestDirectCPURetryShowsLoadingAndClearsOldReadError(t *testing.T) {
 	session := openCPUTimeSession(t)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.session, model.sessionCtx = session, context.Background()
 	model.views = model.views.push(viewFrame{Kind: viewCPU, NodeID: "node-id", NodeTarget: "node"})
@@ -114,7 +114,7 @@ func TestDirectTimeCheckValidatesInputAndUsesSession(t *testing.T) {
 }
 
 func TestDirectTimePermissionFailureAndPartialValuesAreShownSafely(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.push(viewFrame{Kind: viewTime, NodeID: "node-id", NodeTarget: "node"})
 	read, _ := model.requests.begin("node:node-id:time", model.generation())
@@ -130,7 +130,7 @@ func TestDirectTimePermissionFailureAndPartialValuesAreShownSafely(t *testing.T)
 
 func TestDirectTimeRetryShowsLoadingAndKeepsExplicitCheckResult(t *testing.T) {
 	session := openCPUTimeSession(t)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.session, model.sessionCtx = session, context.Background()
 	model.views = model.views.push(viewFrame{Kind: viewTime, NodeID: "node-id", NodeTarget: "node"})
@@ -149,7 +149,7 @@ func TestDirectTimeRetryShowsLoadingAndKeepsExplicitCheckResult(t *testing.T) {
 }
 
 func TestDirectTimeReadProblemIsRenderedOnce(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.push(viewFrame{Kind: viewTime, NodeID: "node-id", NodeTarget: "node"})
 	request, _ := model.requests.begin("node:node-id:time", model.generation())
@@ -182,7 +182,7 @@ func TestDirectCPUAndTimeRejectStaleResultsAndCancelWhenViewCloses(t *testing.T)
 		{name: "time", kind: viewTime, slot: "node:node-id:time", late: directTimeLoaded{nodeID: "node-id", node: "node", value: domain.TimeSnapshot{SyncKnown: true, Synced: false}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			model.views = model.views.push(viewFrame{Kind: test.kind, NodeID: "node-id", NodeTarget: "node"})
 			request, _ := model.requests.beginWithContext(test.slot, model.generation(), context.Background())
 			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})

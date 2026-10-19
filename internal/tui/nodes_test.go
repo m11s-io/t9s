@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -219,9 +218,9 @@ func trimGoldenLines(value string) string {
 	return strings.Join(lines, "\n")
 }
 
-func nodesTestState() application.NodeState {
-	return application.NodeState{
-		Status: application.Partial,
+func nodesTestState() directNodeState {
+	return directNodeState{
+		Status: directPartial,
 		Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 			{
 				ID:         "node-cp-1",

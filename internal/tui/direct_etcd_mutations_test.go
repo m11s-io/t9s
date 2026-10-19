@@ -46,8 +46,8 @@ func directEtcdMutationSessionWithTargetHealth(t *testing.T, writes bool, ops *t
 	return session
 }
 
-func directEtcdModel(session *application.Session, writes bool) directModel {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: writes})
+func directEtcdModel(session *application.Session, writes bool) model {
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: writes})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
 	model.cluster.contextName = "prod"
 	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
@@ -201,8 +201,8 @@ func TestDirectEtcdPathPromptKeepsSelectedMemberIdentityAndPreparedResultIsStamp
 	model.mutation.prompt = nil
 	model.mutation.operation = prepared.operation + 1
 	updated, _ := model.Update(prepared)
-	assert.Nil(t, updated.(directModel).mutation.prompt)
-	assert.True(t, updated.(directModel).mutation.busy, "late prep for an older operation must not clear the active busy state")
+	assert.Nil(t, modelFromTea(updated).mutation.prompt)
+	assert.True(t, modelFromTea(updated).mutation.busy, "late prep for an older operation must not clear the active busy state")
 }
 
 func TestDirectEtcdActionPreparationHonorsSessionReadOnlyAndBlockedPlan(t *testing.T) {

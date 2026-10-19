@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -20,27 +19,7 @@ type networkModel struct {
 	control   listControl
 }
 
-func newNetworkModel(state application.NetworkState) networkModel {
-	return (networkModel{status: directLoading}).setState(state)
-}
-
 func newDirectNetworkModel() networkModel { return networkModel{status: directLoading} }
-
-func (m networkModel) setState(state application.NetworkState) networkModel {
-	previousIndex := m.control.Cursor()
-	m.values, m.node, m.err = state.Value, state.Node, state.Err
-	switch state.Status {
-	case application.Loading, application.Idle:
-		m.status = directLoading
-	case application.Partial:
-		m.status = directPartial
-	case application.Failed:
-		m.status = directFailed
-	default:
-		m.status = directReady
-	}
-	return m.normalizeSelection(previousIndex)
-}
 
 func (m networkModel) setResult(node string, values domain.NetworkSet, err error) networkModel {
 	selectedName, hadSelection := m.selectedName()

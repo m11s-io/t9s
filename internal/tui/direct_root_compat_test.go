@@ -33,7 +33,7 @@ func TestDirectInitialAndServicesViewsDoNotStartReads(t *testing.T) {
 		}},
 	})
 
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	firstFrame := model.View().Content
 	assert.Contains(t, firstFrame, "t9s")
 	assert.Contains(t, firstFrame, "Loading")
@@ -62,7 +62,7 @@ func TestDirectServicesRefreshReadsAndRendersReplacementSnapshot(t *testing.T) {
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.splash = false
 	model.session, model.sessionCtx = session, context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "service-before"}}}}
@@ -82,7 +82,7 @@ func TestDirectStartupFailureIsVisibleWithoutBackendDetails(t *testing.T) {
 	client := application.NewClient(application.Dependencies{ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
 		return nil, errors.New(secret)
 	}}})
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model, _ = applyDirectCommand(t, model, model.Init())
 	assert.Contains(t, model.View().Content, "Unable to discover contexts")
 	assert.NotContains(t, model.View().Content, secret)
@@ -94,7 +94,7 @@ func TestDirectQuitKeysReturnQuitCommand(t *testing.T) {
 		"ctrl-c": {Code: 'c', Mod: tea.ModCtrl},
 	} {
 		t.Run(name, func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			_, command := updateDirect(model, key)
 			require.NotNil(t, command)
 			assert.IsType(t, tea.QuitMsg{}, command())
@@ -114,7 +114,7 @@ func TestDirectParentCancellationAndQuitCancelBlockedContextDiscovery(t *testing
 				close(canceled)
 				return nil, ctx.Err()
 			}}})
-			model := newDirectModel(parent, client, LaunchOptions{})
+			model := newModel(parent, client, LaunchOptions{})
 			startup, ok := model.Init()().(tea.BatchMsg)
 			require.True(t, ok)
 			require.Len(t, startup, 3)
@@ -147,11 +147,11 @@ func TestDirectParentCancellationAndQuitCancelBlockedContextDiscovery(t *testing
 }
 
 func TestDirectOldGenerationNodeResultCannotReplaceSwitchedContext(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	model.splash = false
 	model.cluster.contextName = "prod"
 	model.cluster.contexts = []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "dev"}}
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "prod-worker", Name: "prod-worker"}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "prod-worker", Name: "prod-worker"}}}}
 	old, _ := model.requests.begin("cluster-nodes-services", model.generation())
 	updated, command := updateDirect(model, directSelectContext{name: "dev"})
 	model = updated
@@ -176,7 +176,7 @@ func TestDirectRefreshUpdatesHealthAndPreservesServiceSelection(t *testing.T) {
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: serviceSet}
 	model.services = model.services.normalizeSelection(serviceSet.Services, 0)
@@ -213,7 +213,7 @@ func TestDirectRootNavigationKeysAndHints(t *testing.T) {
 }
 
 func TestDirectServiceFilterConsumesQBeforeQuit(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
@@ -230,7 +230,7 @@ func TestDirectContextPickerOrderingSelectionMarkerClampAndCancel(t *testing.T) 
 		{Name: "prod", Cluster: "production"},
 		{Name: "dev", Cluster: "development"},
 	}
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	model.splash = false
 	model.width, model.height = 80, 24
 	model.cluster.contextName = "prod"
@@ -275,7 +275,7 @@ func TestDirectContextPickerOrderingSelectionMarkerClampAndCancel(t *testing.T) 
 func TestDirectControlCQuitsFromContextAndPaletteOverlays(t *testing.T) {
 	for _, overlay := range []string{"context picker", "command palette"} {
 		t.Run(overlay, func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			if overlay == "context picker" {
 				model.cluster.contexts = []domain.ClusterContext{{Name: "prod"}}
 				model.contexts = newContextsModel(model.cluster.contexts, "prod")
@@ -302,7 +302,7 @@ func TestDirectPaletteUnknownEmptyAndEscapeBehavior(t *testing.T) {
 		}},
 	})
 	for _, value := range []string{"rm -rf anything", " "} {
-		model := newDirectModel(context.Background(), client, LaunchOptions{})
+		model := newModel(context.Background(), client, LaunchOptions{})
 		model.splash = false
 		model.view.notice = "keep"
 		model, command := runDirectPalette(t, model, value)
@@ -313,7 +313,7 @@ func TestDirectPaletteUnknownEmptyAndEscapeBehavior(t *testing.T) {
 	}
 	assert.Zero(t, catalogCalls.Load())
 	assert.Zero(t, sessionCalls.Load())
-	empty := newDirectModel(context.Background(), nil, LaunchOptions{})
+	empty := newModel(context.Background(), nil, LaunchOptions{})
 	empty.splash = false
 	empty.view.notice = "keep"
 	empty, _ = updateDirect(empty, keyPress(':'))
@@ -324,7 +324,7 @@ func TestDirectPaletteUnknownEmptyAndEscapeBehavior(t *testing.T) {
 	assert.Equal(t, "keep", empty.view.notice, "submitting an empty palette must close without changing state")
 	assert.Equal(t, viewNodes, empty.views.top().Kind)
 
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.view.notice = "keep"
 	model, _ = updateDirect(model, keyPress(':'))
@@ -337,7 +337,7 @@ func TestDirectPaletteUnknownEmptyAndEscapeBehavior(t *testing.T) {
 func TestDirectWipeCompletionMarksDiskSnapshotLoading(t *testing.T) {
 	initial := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb", Serial: "old-disk"}}}
 	refreshed := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdc", Serial: "replacement-disk"}}}
-	newModel := func(t *testing.T, diskNode string, outcome domain.OperationOutcome) (directModel, tea.Cmd, *[]string) {
+	newModel := func(t *testing.T, diskNode string, outcome domain.OperationOutcome) (model, tea.Cmd, *[]string) {
 		var reads []string
 		refreshing := false
 		session := directDestructiveSession(t, func(_ context.Context, node string) (domain.DiskSet, error) {
@@ -347,10 +347,10 @@ func TestDirectWipeCompletionMarksDiskSnapshotLoading(t *testing.T) {
 			}
 			return initial, nil
 		}, &testkit.FakeNodeController{}, true)
-		model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+		model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 		model.splash = false
 		model.session, model.sessionCtx = session, context.Background()
-		model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: diskNode, Value: initial})
+		model.disks = newDirectDisksModel().setResult(diskNode, initial, nil)
 		model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: diskNode + " > disks", NodeID: diskNode + "-id", NodeTarget: diskNode})
 		options := ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdb", Method: ports.DeviceWipeFast}
 		prepared, err := session.PrepareNodeAction(context.Background(), application.NodeActionRequest{

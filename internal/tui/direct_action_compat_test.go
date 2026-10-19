@@ -54,13 +54,13 @@ func TestDirectNodeActionConfirmationCallsControllerAndKeepsTargetInResult(t *te
 
 func TestDirectDiskWipeStaleVisibleSelectionIsBlockedByCurrentInventory(t *testing.T) {
 	listed := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb"}}}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) {
 		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}, nil
 	}, &testkit.FakeNodeController{}, true)
 	model.sessionCtx = context.Background()
-	model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: listed})
+	model.disks = newDirectDisksModel().setResult("cp-1", listed, nil)
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
 	model, command := updateDirect(model, keyPress('W'))
 	require.NotNil(t, command)
@@ -75,11 +75,12 @@ func TestDirectDiskWipeStaleVisibleSelectionIsBlockedByCurrentInventory(t *testi
 
 func TestDirectDiskWipeDoesNotStartFromLoadingInventoryAndKeepsMismatchVisible(t *testing.T) {
 	disks := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb"}}}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return disks, nil }, &testkit.FakeNodeController{}, true)
 	model.sessionCtx = context.Background()
-	model.disks = newDisksModel(application.DisksState{Status: application.Loading, Node: "cp-1", Value: disks})
+	model.disks = newDirectDisksModel()
+	model.disks.node, model.disks.values = "cp-1", disks
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
 	model, command := updateDirect(model, keyPress('W'))
 	assert.Nil(t, command)

@@ -19,7 +19,7 @@ type shellMetadata struct {
 	AppVersion      string
 }
 
-func deriveShellMetadata(contextName string, contexts []domain.ClusterContext, writesEnabled bool, nodeStatus application.LoadStatus, healthInput application.HealthInput) shellMetadata {
+func deriveShellMetadata(contextName string, contexts []domain.ClusterContext, writesEnabled bool, nodeStatus directLoadStatus, healthInput application.HealthInput) shellMetadata {
 	mode := "[RO]"
 	if writesEnabled {
 		mode = "[RW]"
@@ -63,13 +63,13 @@ func deriveShellMetadata(contextName string, contexts []domain.ClusterContext, w
 	}
 
 	switch nodeStatus {
-	case application.Loading, application.Idle:
+	case directLoading:
 		metadata.Health = "Loading"
-	case application.Failed:
+	case directFailed:
 		metadata.Health = "Unavailable"
-	case application.Partial:
+	case directPartial:
 		metadata.Health = "Degraded"
-	case application.Ready:
+	case directReady:
 		metadata.Health = "Healthy"
 		for _, node := range healthInput.Nodes.Nodes {
 			if node.Health != domain.HealthHealthy {

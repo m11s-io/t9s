@@ -36,7 +36,7 @@ func directMutationSession(t *testing.T, writes bool, services domain.ServiceSet
 }
 
 func TestDirectServiceActionPreparesTypedPlanAndRequiresExplicitConfirm(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directMutationSession(t, true, domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "kubelet"}}}, nil)
 	model.sessionCtx = context.Background()
@@ -57,7 +57,7 @@ func TestDirectServiceActionPreparesTypedPlanAndRequiresExplicitConfirm(t *testi
 }
 
 func TestDirectMutationPromptDoesNotOpenWithWritesDisabled(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "kubelet"}}}}
@@ -70,7 +70,7 @@ func TestDirectMutationPromptDoesNotOpenWithWritesDisabled(t *testing.T) {
 
 func TestDirectServiceDetailMutationUsesPinnedServiceIdentity(t *testing.T) {
 	first := domain.ServiceSnapshot{Node: "cp-1", Name: "kubelet"}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directMutationSession(t, true, domain.ServiceSet{Services: []domain.ServiceSnapshot{first}}, nil)
 	model.sessionCtx = context.Background()
@@ -88,7 +88,7 @@ func TestDirectServiceDetailMutationUsesPinnedServiceIdentity(t *testing.T) {
 }
 
 func TestDirectMutationPreparationErrorsAreNormalized(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directMutationSession(t, false, domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "kubelet"}}}, nil)
 	model.sessionCtx = context.Background()
@@ -119,11 +119,11 @@ func TestDirectNodeConfirmationRejectsStaleAssessmentWithoutControllerCall(t *te
 	session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
 	require.NoError(t, err)
 	defer session.Close()
-	model := newDirectModel(context.Background(), client, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), client, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = session
 	model.sessionCtx = context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 
 	model, command := updateDirect(model, keyPress('R'))
@@ -146,9 +146,9 @@ func TestDirectBulkMutationKeepsIntermediateAndTerminalResultsInspectable(t *tes
 	session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
 	require.NoError(t, err)
 	defer session.Close()
-	model := newDirectModel(context.Background(), client, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), client, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: nodes}}
 	model.nodes = model.nodes.normalizeSelection(nodes, 0)
 	model.nodes.marked = map[string]struct{}{"cp-1": {}, "cp-2": {}, "worker-1": {}}
 
@@ -190,11 +190,11 @@ func TestDirectBlockedMutationPromptShowsRiskAndCannotBeConfirmed(t *testing.T) 
 }
 
 func TestCompletedMutationKeepsTimeServerValidationVisible(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directMutationSession(t, true, domain.ServiceSet{}, func(context.Context, string, ports.RebootMode) error { return nil })
 	model.sessionCtx = context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 
 	model, command := updateDirect(model, keyPress('R'))
@@ -230,7 +230,7 @@ func TestActiveMutationDoesNotHideNodeOrServiceFilterInput(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+			model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 			model.splash = false
 			model.views = model.views.replaceRoot(viewFrame{Kind: test.view, Label: test.name})
 			model.mutation.busy = true
@@ -283,9 +283,9 @@ func TestDirectResetUsesTypedPlanOptionsAndExplicitIntentThenApproval(t *testing
 		got = options
 		return nil
 	}}, true)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 	model.nodes.marked = map[string]struct{}{"cp-id": {}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
@@ -339,9 +339,9 @@ func TestDirectDiskWipeUsesPinnedDeviceAndMethod(t *testing.T) {
 		gotNode, gotDevice, gotMethod = node, device, method
 		return nil
 	}}, true)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
-	model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: disks})
+	model.disks = newDirectDisksModel().setResult("cp-1", disks, nil)
 	model.disks.filter = "stable-b"
 	model.disks = model.disks.normalizeSelection(0)
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
@@ -398,10 +398,10 @@ func TestDirectDestructivePreparationBlocksReadOnlyAndUnknownDisksWithoutLeaking
 		t.Run(test.name, func(t *testing.T) {
 			var calls atomic.Int32
 			session := directDestructiveSession(t, test.diskFunc, &testkit.FakeNodeController{WipeDeviceFunc: func(context.Context, string, string, ports.DeviceWipeMethod) error { calls.Add(1); return nil }}, true)
-			model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+			model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 			model.splash, model.session, model.sessionCtx = false, session, context.Background()
 			listed := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb"}}}
-			model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: listed})
+			model.disks = newDirectDisksModel().setResult("cp-1", listed, nil)
 			model.disks.control.SetCursor(1)
 			model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
 			model, command := updateDirect(model, keyPress('W'))
@@ -460,9 +460,9 @@ func TestBlockedDeviceWipePromptCancelsFromInitialIntentField(t *testing.T) {
 				wipeCalls.Add(1)
 				return nil
 			}}, true)
-			model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+			model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 			model.splash, model.session, model.sessionCtx = false, session, context.Background()
-			model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: listed})
+			model.disks = newDirectDisksModel().setResult("cp-1", listed, nil)
 			model.disks.control.SetCursor(1)
 			model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
 			model, command := updateDirect(model, keyPress('W'))
@@ -485,7 +485,7 @@ func TestUnblockedDestructiveTokenCanContainN(t *testing.T) {
 	prompt.assessment.RequiredToken = "token-n"
 	prompt.field = 3
 	prompt.intent.SetValue("token-")
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.mutation.prompt = prompt
 	model, _ = updateDirect(model, keyPress('n'))
@@ -502,10 +502,10 @@ func TestDirectDiskWipeRequiresReprepareWhenPinnedDeviceIdentityChanges(t *testi
 		}
 		return domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb", Serial: serial}}}, nil
 	}, &testkit.FakeNodeController{WipeDeviceFunc: func(context.Context, string, string, ports.DeviceWipeMethod) error { calls.Add(1); return nil }}, true)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
 	listed := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb", Serial: "serial-a"}}}
-	model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: "cp-1", Value: listed})
+	model.disks = newDirectDisksModel().setResult("cp-1", listed, nil)
 	model.disks.control.SetCursor(1)
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: "cp-1 > disks", NodeTarget: "cp-1", NodeID: "cp-id"})
 	model, command := updateDirect(model, keyPress('W'))
@@ -529,9 +529,9 @@ func TestDirectBulkResetShowsPerTargetProgressWithExactBulkToken(t *testing.T) {
 	disks := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}, {DeviceName: "/dev/sdb"}}}
 	session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return disks, nil }, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error { calls.Add(1); return nil }}, true)
 	workers := []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1", Role: domain.NodeRoleWorker}, {ID: "worker-2-id", Name: "worker-2", Role: domain.NodeRoleWorker}}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: workers}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: workers}}
 	model.nodes = model.nodes.normalizeSelection(workers, 0)
 	model.nodes.marked = map[string]struct{}{"worker-id": {}, "worker-2-id": {}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
@@ -567,9 +567,9 @@ func TestDirectResetHonorsReadOnlySession(t *testing.T) {
 	var calls atomic.Int32
 	disks := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}
 	session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return disks, nil }, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error { calls.Add(1); return nil }}, false)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
 	model, command := updateDirect(model, keyPress('W'))
@@ -589,9 +589,9 @@ func TestDirectResetRequiresReprepareWhenDerivedDiskScopeChanges(t *testing.T) {
 		}
 		return domain.DiskSet{Disks: disks}, nil
 	}, &testkit.FakeNodeController{ResetFunc: func(context.Context, string, ports.ResetOptions) error { calls.Add(1); return nil }}, true)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.session, model.sessionCtx = false, session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
 	model, command := updateDirect(model, keyPress('W'))
@@ -686,11 +686,11 @@ func TestBlockedEmptyUserDiskResetCanChangeToSystemDisk(t *testing.T) {
 	assert.Equal(t, ports.WipeModeSystemDisk, got.Mode)
 }
 
-func directResetPromptModel(t *testing.T, session *application.Session, nodes []domain.NodeSnapshot) directModel {
+func directResetPromptModel(t *testing.T, session *application.Session, nodes []domain.NodeSnapshot) model {
 	t.Helper()
-	root := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	root := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	root.splash, root.session, root.sessionCtx = false, session, context.Background()
-	root.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	root.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: nodes}}
 	root.nodes = root.nodes.normalizeSelection(nodes, 0)
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
 	return root
@@ -703,7 +703,7 @@ func TestResetPromptAt80x24PagesAllTargetsAndKeepsControlsVisible(t *testing.T) 
 		targets[index] = fmt.Sprintf("worker-%d", index+1)
 		previews[index] = application.ResetPreview{Node: targets[index], Known: true, SystemDisk: "/dev/sda", UserDisks: []string{"/dev/sdb"}}
 	}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.width, model.height = false, 80, 24
 	model.mutation.prompt = preparedResetPrompt(targets, previews)
 	first := ansi.Strip(model.View().Content)
@@ -729,7 +729,7 @@ func TestResetPromptAt80x24PagesTwentyDiskRowsWithoutHidingToken(t *testing.T) {
 	for index := 1; index <= 20; index++ {
 		preview.UserDisks = append(preview.UserDisks, fmt.Sprintf("/dev/sd%c", 'a'+rune(index)))
 	}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.width, model.height = false, 80, 24
 	model.mutation.prompt = preparedResetPrompt([]string{"worker-1"}, []application.ResetPreview{preview})
 	first := ansi.Strip(model.View().Content)
@@ -745,7 +745,7 @@ func TestResetPromptAt80x24PagesTwentyDiskRowsWithoutHidingToken(t *testing.T) {
 
 func TestResetPromptAt80x20SingleNodeKeepsConfirmationControlsVisible(t *testing.T) {
 	preview := application.ResetPreview{Node: "worker-1", Known: true, SystemDisk: "/dev/sda", UserDisks: []string{"/dev/sdb"}}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash, model.width, model.height = false, 80, 20
 	model.mutation.prompt = preparedResetPrompt([]string{"worker-1"}, []application.ResetPreview{preview})
 	view := ansi.Strip(model.View().Content)
@@ -767,7 +767,7 @@ func preparedResetPrompt(targets []string, previews []application.ResetPreview) 
 func TestDirectNodeActionAcceptedOperationSurvivesViewNavigationAndBlocksDuplicateConfirm(t *testing.T) {
 	started := make(chan struct{})
 	finish := make(chan struct{})
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directMutationSession(t, true, domain.ServiceSet{}, func(ctx context.Context, _ string, _ ports.RebootMode) error {
 		close(started)
@@ -775,7 +775,7 @@ func TestDirectNodeActionAcceptedOperationSurvivesViewNavigationAndBlocksDuplica
 		return nil
 	})
 	model.sessionCtx = context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 
 	model, command := updateDirect(model, keyPress('R'))

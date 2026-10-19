@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -204,15 +203,6 @@ func (m servicesModel) visibleProblems(services domain.ServiceSet) []domain.Serv
 		}
 	}
 	return problems
-}
-
-func renderServices(width int, state application.ServiceState) string {
-	model := newServicesModel().normalizeSelection(state.Value.Services, 0)
-	return model.view(width, state.Value.Services)
-}
-
-func (m servicesModel) legacyViewSized(size contentSize, state application.ServiceState) string {
-	return m.viewSized(size, state.Value, state.Status == application.Loading || state.Status == application.Idle, state.Status == application.Failed, state.Err)
 }
 
 var serviceColumns = []tableColumn[domain.ServiceSnapshot]{

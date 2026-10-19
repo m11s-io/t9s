@@ -14,7 +14,7 @@ import (
 )
 
 func TestDirectEtcdFiltersAndPreservesSelectedMemberIDAcrossRefresh(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.width, model.height = 120, 30
 	members := []domain.EtcdMemberSnapshot{{Hostname: "cp-1", MemberID: 1, StatusKnown: true}, {Hostname: "cp-2", MemberID: 2, StatusKnown: true}}
@@ -42,7 +42,7 @@ func TestDirectEtcdFiltersAndPreservesSelectedMemberIDAcrossRefresh(t *testing.T
 }
 
 func TestDirectEtcdPartialAndUnknownMembersRemainVisible(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
 	request, _ := model.requests.begin("cluster-etcd", model.generation())
@@ -75,7 +75,7 @@ func TestDirectEtcdPartialAndUnknownMembersRemainVisible(t *testing.T) {
 }
 
 func TestDirectEtcdAggregateErrorKeepsPartialMembers(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
 	request, _ := model.requests.begin("cluster-etcd", model.generation())
@@ -87,7 +87,7 @@ func TestDirectEtcdAggregateErrorKeepsPartialMembers(t *testing.T) {
 }
 
 func TestDirectEtcdRefreshUsesOnlyEtcdRequestSlotAndIgnoresStaleResults(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session = &application.Session{}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
 	model, command := updateDirect(model, keyPress('r'))
@@ -106,7 +106,7 @@ func TestDirectEtcdRefreshUsesOnlyEtcdRequestSlotAndIgnoresStaleResults(t *testi
 func TestDirectEtcdAliasesRouteFromPalette(t *testing.T) {
 	for _, alias := range []string{"etcd", "et"} {
 		t.Run(alias, func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			model.splash = false
 			model, _ = updateDirect(model, keyPress(':'))
 			var command tea.Cmd
@@ -122,7 +122,7 @@ func TestDirectEtcdAliasesRouteFromPalette(t *testing.T) {
 }
 
 func TestDirectEtcdFilterResetOnContextChangeAndSelectionFallsForwardWhenMemberDisappears(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	members := []domain.EtcdMemberSnapshot{{Hostname: "cp-1", MemberID: 1}, {Hostname: "cp-2", MemberID: 2}}
 	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: members}}
 	model.etcd = model.etcd.normalizeSelection(members, 0)
@@ -141,7 +141,7 @@ func TestDirectEtcdFilterResetOnContextChangeAndSelectionFallsForwardWhenMemberD
 
 func TestDirectEtcdPaletteWorksGloballyAndReadOnlyKeysAreInert(t *testing.T) {
 	// This fixture has neither write authorization nor a session: its etcd keys and hints are read-only.
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{Hostname: "cp-1", MemberID: 1}}}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
@@ -160,7 +160,7 @@ func TestDirectEtcdPaletteWorksGloballyAndReadOnlyKeysAreInert(t *testing.T) {
 }
 
 func TestDirectEtcdAcceptedFilterUsesVisibleFallbackForRefreshIdentity(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	members := []domain.EtcdMemberSnapshot{
 		{Hostname: "cp-1", MemberID: 1, StatusKnown: true},
@@ -190,7 +190,7 @@ func TestDirectEtcdAcceptedFilterUsesVisibleFallbackForRefreshIdentity(t *testin
 }
 
 func TestDirectEtcdHostnameFallbackIdentitySurvivesRefresh(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	members := []domain.EtcdMemberSnapshot{{Hostname: "worker-a"}, {Hostname: "worker-b"}}
 	model.cluster.etcd = directEtcdState{Status: directReady, Value: domain.EtcdSet{Members: members}}
 	model.etcd = model.etcd.normalizeSelection(members, 0)

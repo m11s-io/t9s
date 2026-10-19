@@ -146,7 +146,7 @@ func directTimeCheckCommand(session *application.Session, request directRequest,
 	})
 }
 
-func (m *directModel) applyDiagnosticResult(message tea.Msg) bool {
+func (m *model) applyDiagnosticResult(message tea.Msg) bool {
 	switch result := message.(type) {
 	case directProcessesLoaded:
 		if !m.requests.current(result.request) || result.request.generation != m.generation() || !m.directDiagnosticOpen(result.nodeID, viewProcesses, viewProcessDetail) {
@@ -208,7 +208,7 @@ func (m *directModel) applyDiagnosticResult(message tea.Msg) bool {
 	return true
 }
 
-func (m *directModel) handleNodeDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
+func (m *model) handleNodeDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	if m.views.top().Kind != viewNodes || m.nodes.filtering || m.session == nil {
 		return nil, false
 	}
@@ -238,7 +238,7 @@ func (m *directModel) handleNodeDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd,
 	}
 }
 
-func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
+func (m *model) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	frame := m.views.top()
 	switch frame.Kind {
 	case viewProcessDetail, viewDiskDetail, viewLinkDetail:
@@ -331,7 +331,7 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 	}
 }
 
-func (m directModel) directDiagnosticContent(size contentSize) (string, bool) {
+func (m model) directDiagnosticContent(size contentSize) (string, bool) {
 	frame := m.views.top()
 	switch frame.Kind {
 	case viewProcesses:
@@ -397,7 +397,7 @@ func findLinkByName(values []domain.LinkSnapshot, name string) (domain.LinkSnaps
 
 func directDiagnosticSlot(nodeID, scope string) string { return "node:" + nodeID + ":" + scope }
 
-func (m directModel) directDiagnosticOpen(nodeID string, list, detail viewKind) bool {
+func (m model) directDiagnosticOpen(nodeID string, list, detail viewKind) bool {
 	for _, frame := range m.views {
 		if (frame.Kind == list || frame.Kind == detail) && frame.NodeID == nodeID {
 			return true
@@ -406,7 +406,7 @@ func (m directModel) directDiagnosticOpen(nodeID string, list, detail viewKind) 
 	return false
 }
 
-func (m *directModel) openDirectDiagnostic(node domain.NodeSnapshot, kind viewKind) tea.Cmd {
+func (m *model) openDirectDiagnostic(node domain.NodeSnapshot, kind viewKind) tea.Cmd {
 	label := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "netstat", viewMounts: "mounts", viewMemory: "memory", viewCPU: "CPU", viewTime: "time"}[kind]
 	scope := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory", viewCPU: "cpu", viewTime: "time"}[kind]
 	nodeID := directDiagnosticNodeID(node)
@@ -447,7 +447,7 @@ func directDiagnosticNodeID(node domain.NodeSnapshot) string {
 	return node.Target()
 }
 
-func (m *directModel) refreshDirectDiagnostic(frame viewFrame) tea.Cmd {
+func (m *model) refreshDirectDiagnostic(frame viewFrame) tea.Cmd {
 	scope := map[viewKind]string{viewProcesses: "processes", viewDisks: "disks", viewNetwork: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory", viewCPU: "cpu", viewTime: "time"}[frame.Kind]
 	request, _ := m.requests.beginWithContext(directDiagnosticSlot(frame.NodeID, scope), m.generation(), m.sessionCtx)
 	switch frame.Kind {
@@ -474,7 +474,7 @@ func (m *directModel) refreshDirectDiagnostic(frame viewFrame) tea.Cmd {
 	}
 }
 
-func (m *directModel) popDirectView() {
+func (m *model) popDirectView() {
 	frame := m.views.top()
 	list, scope := viewKind(0), ""
 	switch frame.Kind {
@@ -505,7 +505,7 @@ func (m *directModel) popDirectView() {
 	}
 }
 
-func (m *directModel) cancelClosedDirectDiagnostics(previous viewStack) {
+func (m *model) cancelClosedDirectDiagnostics(previous viewStack) {
 	seen := map[string]bool{}
 	for _, frame := range previous {
 		scope := map[viewKind]string{viewProcesses: "processes", viewProcessDetail: "processes", viewDisks: "disks", viewDiskDetail: "disks", viewNetwork: "network", viewLinkDetail: "network", viewNetstat: "sockets", viewMounts: "mounts", viewMemory: "memory", viewCPU: "cpu", viewTime: "time"}[frame.Kind]

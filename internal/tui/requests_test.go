@@ -28,7 +28,7 @@ func TestDirectStartupRendersBeforeIO(t *testing.T) {
 		},
 	}})
 
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	firstFrame := model.View().Content
 	assert.Contains(t, firstFrame, "t9s")
 	assert.Contains(t, firstFrame, "Loading")
@@ -78,23 +78,23 @@ func TestDirectContextSwitchClosesLateSessionOpen(t *testing.T) {
 			return adapter, nil
 		}},
 	})
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 
 	startup := model.Init()().(tea.BatchMsg)
 	contexts := startup[0]()
 	updated, open := model.Update(contexts)
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	require.NotNil(t, open)
 	opened := make(chan tea.Msg, 1)
 	go func() { opened <- open() }()
 	<-openStarted
 
 	next, _ := model.Update(directSelectContext{name: "dev"})
-	model = next.(directModel)
+	model = modelFromTea(next)
 	close(finishOpen)
 	result := <-opened
 	next, _ = model.Update(result)
-	model = next.(directModel)
+	model = modelFromTea(next)
 	assert.Nil(t, model.session)
 	require.Eventually(t, func() bool { return adapter.CloseCount() == 1 }, time.Second, time.Millisecond)
 }
@@ -120,7 +120,7 @@ func TestDirectStartupAndContextSwitchLoadRows(t *testing.T) {
 			return adapter, nil
 		}},
 	})
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 
 	model, command := applyDirectCommand(t, model, model.Init())
 	model, command = applyDirectCommand(t, model, command)
@@ -130,7 +130,7 @@ func TestDirectStartupAndContextSwitchLoadRows(t *testing.T) {
 	assert.Contains(t, model.View().Content, "prod-worker")
 
 	updated, command := model.Update(directSelectContext{name: "dev"})
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	model, command = applyDirectCommand(t, model, command)
 	model, _ = applyDirectCommand(t, model, command)
 	assert.Equal(t, []string{"prod", "dev"}, opened)
@@ -147,7 +147,7 @@ func TestDirectStartupErrorsDoNotRenderBackendDetails(t *testing.T) {
 		client := application.NewClient(application.Dependencies{ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
 			return nil, errors.New(secret)
 		}}})
-		model := newDirectModel(context.Background(), client, LaunchOptions{})
+		model := newModel(context.Background(), client, LaunchOptions{})
 		model, _ = applyDirectCommand(t, model, model.Init())
 		assert.NotContains(t, model.View().Content, secret)
 	})
@@ -160,7 +160,7 @@ func TestDirectStartupErrorsDoNotRenderBackendDetails(t *testing.T) {
 				return nil, errors.New(secret)
 			}},
 		})
-		model := newDirectModel(context.Background(), client, LaunchOptions{})
+		model := newModel(context.Background(), client, LaunchOptions{})
 		model, command := applyDirectCommand(t, model, model.Init())
 		model, _ = applyDirectCommand(t, model, command)
 		assert.NotContains(t, model.View().Content, secret)
@@ -184,12 +184,12 @@ func TestDirectNodeReadFailureKeepsRowsAndHidesBackendDetail(t *testing.T) {
 			}, nil
 		}},
 	})
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model, command := applyDirectCommand(t, model, model.Init())
 	model, command = applyDirectCommand(t, model, command)
 	model, _ = applyDirectCommand(t, model, command)
 
-	assert.Equal(t, application.Partial, model.cluster.nodes.Status)
+	assert.Equal(t, directPartial, model.cluster.nodes.Status)
 	assert.Len(t, model.cluster.nodes.Value.Nodes, 1)
 	assert.Contains(t, model.View().Content, "worker-1")
 	assert.NotContains(t, model.View().Content, secret)
@@ -222,7 +222,7 @@ func TestDirectStartupLoadsSharedSnapshotsIndependently(t *testing.T) {
 			}}, nil
 		}},
 	})
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model, command := applyDirectCommand(t, model, model.Init())
 	model, command = applyDirectCommand(t, model, command)
 	message := command()
@@ -231,18 +231,18 @@ func TestDirectStartupLoadsSharedSnapshotsIndependently(t *testing.T) {
 	require.Len(t, batch, 4)
 
 	updated, kubeCommand := model.Update(batch[3]())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Empty(t, model.cluster.nodes.Value.Nodes, "Kubernetes may complete before nodes without creating node rows")
 	updated, eventsCommand := model.Update(batch[1]())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, directFailed, model.cluster.events.Status)
 	assert.Nil(t, kubeCommand)
 	assert.Nil(t, eventsCommand)
 	updated, etcdCommand := model.Update(batch[2]())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, "cp-1", model.cluster.etcd.Value.Members[0].Hostname)
 	updated, nodeCommand := model.Update(batch[0]())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, directPartial, model.cluster.services.Status)
 	assert.Equal(t, "uncapped", model.cluster.services.Value.Services[0].Name)
 	assert.Equal(t, "worker-1", model.cluster.nodes.Value.Nodes[0].Name)
@@ -252,7 +252,7 @@ func TestDirectStartupLoadsSharedSnapshotsIndependently(t *testing.T) {
 }
 
 func TestDirectNodeServicesNilErrorProblemsRemainPartial(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	model.generationCounter = 4
 	request, _ := model.requests.begin("cluster-nodes-services", 4)
 	updated, _ := model.Update(directNodeServicesLoaded{
@@ -260,9 +260,9 @@ func TestDirectNodeServicesNilErrorProblemsRemainPartial(t *testing.T) {
 		nodes:    domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-1", Name: "worker-1", Problem: "backend-specific node detail"}}},
 		services: domain.ServiceSet{Problems: []domain.ServiceProblem{{Node: "worker-1", Message: "backend-specific service detail"}}},
 	})
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, directPartial, directNodeLoadStatus(model.cluster.nodes.Value))
-	assert.Equal(t, application.Partial, model.cluster.nodes.Status)
+	assert.Equal(t, directPartial, model.cluster.nodes.Status)
 	assert.Equal(t, directPartial, model.cluster.services.Status)
 	assert.Equal(t, "Some nodes report problems", model.cluster.nodes.Err)
 	assert.Equal(t, "Some services report problems", model.cluster.services.Err)
@@ -282,7 +282,7 @@ func TestDirectContextPickerSelectsAndSwitchResetsSessionData(t *testing.T) {
 			}}}, nil
 		}},
 	})
-	model := newDirectModel(context.Background(), client, LaunchOptions{OpenContextPicker: true})
+	model := newModel(context.Background(), client, LaunchOptions{OpenContextPicker: true})
 	model, command := applyDirectCommand(t, model, model.Init())
 	model, command = applyDirectCommand(t, model, command)
 	model, _ = applyDirectCommand(t, model, command)
@@ -290,26 +290,26 @@ func TestDirectContextPickerSelectsAndSwitchResetsSessionData(t *testing.T) {
 	model.nodes.marked = map[string]struct{}{"node": {}}
 	model.nodes.filter = "old"
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, "dev", model.contexts.values[model.contexts.control.Cursor()].Name)
 	updated, command = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	require.NotNil(t, command)
 	updated, command = model.Update(command())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, "dev", model.cluster.contextName)
 	// The direct model consumes the keyboard selection and starts a new generation.
 	assert.Equal(t, uint64(2), model.generation())
 	assert.Empty(t, model.nodes.marked)
 	assert.Empty(t, model.nodes.filter)
-	assert.Equal(t, application.Loading, model.cluster.nodes.Status)
+	assert.Equal(t, directLoading, model.cluster.nodes.Status)
 	assert.Equal(t, directLoading, model.cluster.services.Status)
 	assert.Empty(t, model.cluster.services.Value.Services)
 	assert.NotNil(t, command)
 }
 
 func TestDirectNodesBeforeKubernetesEnrichesSharedNodeSnapshot(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	model.generationCounter = 3
 	nodeRequest, _ := model.requests.begin("cluster-nodes-services", 3)
 	kubeRequest, _ := model.requests.begin("cluster-kubernetes", 3)
@@ -317,13 +317,13 @@ func TestDirectNodesBeforeKubernetesEnrichesSharedNodeSnapshot(t *testing.T) {
 		request: nodeRequest.stamp,
 		nodes:   domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-1", Name: "worker-1", Kubernetes: domain.KubernetesUnknown}}},
 	})
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, domain.KubernetesUnknown, model.cluster.nodes.Value.Nodes[0].Kubernetes)
 	updated, _ = model.Update(directKubernetesNodesLoaded{
 		request: kubeRequest.stamp,
 		nodes:   map[string]domain.KubernetesNodeSnapshot{"worker-1": {Conditions: []domain.KubernetesCondition{{Type: "Ready", Status: "True"}}}},
 	})
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Equal(t, domain.KubernetesReady, model.cluster.nodes.Value.Nodes[0].Kubernetes)
 }
 
@@ -341,9 +341,9 @@ func TestDirectClusterCommandAliasesRouteSharedViews(t *testing.T) {
 		{alias: "problems", view: viewProblems},
 	} {
 		t.Run(test.alias, func(t *testing.T) {
-			model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+			model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 			updated, command := model.Update(directRunCommand{value: test.alias})
-			model = updated.(directModel)
+			model = modelFromTea(updated)
 			assert.Nil(t, command)
 			if test.view == viewContexts {
 				assert.True(t, model.contexts.active)
@@ -355,7 +355,7 @@ func TestDirectClusterCommandAliasesRouteSharedViews(t *testing.T) {
 }
 
 func TestDirectPaletteSubmitsContextAlias(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	model.cluster.contexts = []domain.ClusterContext{{Name: "dev"}, {Name: "prod", Current: true}}
 	model.cluster.contextName = "prod"
 	var command tea.Cmd
@@ -367,14 +367,14 @@ func TestDirectPaletteSubmitsContextAlias(t *testing.T) {
 		{Code: tea.KeyEnter},
 	} {
 		updated, next := model.Update(message)
-		model = updated.(directModel)
+		model = modelFromTea(updated)
 		if next != nil {
 			command = next
 		}
 	}
 	require.NotNil(t, command)
 	updated, commandMessage := model.Update(command())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	assert.Nil(t, commandMessage)
 	assert.True(t, model.contexts.active)
 	assert.Equal(t, "prod", model.contexts.values[model.contexts.control.Cursor()].Name)
@@ -393,7 +393,7 @@ func TestDirectStartupHonorsContextAndNodeFocus(t *testing.T) {
 			}}}, nil
 		}},
 	})
-	model := newDirectModel(context.Background(), client, LaunchOptions{ContextName: "dev", NodeFocus: "node-b", OpenContextPicker: true})
+	model := newModel(context.Background(), client, LaunchOptions{ContextName: "dev", NodeFocus: "node-b", OpenContextPicker: true})
 	model, command := applyDirectCommand(t, model, model.Init())
 	model, command = applyDirectCommand(t, model, command)
 	model, _ = applyDirectCommand(t, model, command)
@@ -404,7 +404,7 @@ func TestDirectStartupHonorsContextAndNodeFocus(t *testing.T) {
 }
 
 func TestDirectOpenContextPickerClosesOnlyOnceAfterDiscovery(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{OpenContextPicker: true})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{OpenContextPicker: true})
 	request, _ := model.requests.begin("contexts", model.generation())
 	model, _ = updateDirect(model, directContextsLoaded{request: request.stamp, contexts: []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "dev"}}})
 	require.True(t, model.contexts.active, "the launch option opens the picker after discovery")
@@ -416,7 +416,7 @@ func TestDirectOpenContextPickerClosesOnlyOnceAfterDiscovery(t *testing.T) {
 	assert.False(t, model.contexts.active, "later valid discovery does not reopen a dismissed picker")
 }
 
-func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (directModel, tea.Cmd) {
+func applyDirectCommand(t *testing.T, model model, command tea.Cmd) (model, tea.Cmd) {
 	t.Helper()
 	require.NotNil(t, command)
 	message := command()
@@ -427,7 +427,7 @@ func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (direc
 		if model.generation() == 0 && model.session == nil && len(batch) == 3 {
 			model, next := applyDirectCommand(t, model, batch[0])
 			updated, _ := model.Update(splashDoneMsg{})
-			return updated.(directModel), next
+			return modelFromTea(updated), next
 		}
 		for _, command := range batch {
 			model, _ = applyDirectCommand(t, model, command)
@@ -435,7 +435,7 @@ func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (direc
 		return model, nil
 	}
 	updated, next := model.Update(message)
-	return updated.(directModel), next
+	return modelFromTea(updated), next
 }
 
 func TestDirectViewExitCancelsUnstartedCommand(t *testing.T) {
@@ -509,7 +509,7 @@ func TestDirectTeardownCoversRuntimeFailure(t *testing.T) {
 	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
 		return adapter, nil
 	}}})
-	model := newDirectModel(parent, client, LaunchOptions{})
+	model := newModel(parent, client, LaunchOptions{})
 	ctx, cancel := context.WithCancel(model.rootCtx)
 	session, err := client.Open(ctx, "prod", application.Options{})
 	require.NoError(t, err)

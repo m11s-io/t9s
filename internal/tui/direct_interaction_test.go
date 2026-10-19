@@ -17,7 +17,7 @@ import (
 )
 
 func TestDirectRootInitStartsSplashAndRefreshHeartbeat(t *testing.T) {
-	root := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	root := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	command := root.Init()
 	require.NotNil(t, command)
 	batch, ok := command().(tea.BatchMsg)
@@ -30,7 +30,7 @@ func TestDirectRootInitStartsSplashAndRefreshHeartbeat(t *testing.T) {
 }
 
 func TestDirectContextSwitchClearsPendingMutationPrompt(t *testing.T) {
-	root := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	root := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	root.mutation.prompt = &directMutationPrompt{nodeKind: application.ActionReboot}
 	root.nodes.marked = map[string]struct{}{"node-1": {}}
 	command := root.beginSessionOpen("dev")
@@ -69,7 +69,7 @@ func TestDirectActionHintsFollowWritePermission(t *testing.T) {
 }
 
 func TestDirectRootSkipsSplashOnKeypress(t *testing.T) {
-	root := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	root := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	root, _ = updateDirect(root, keyPress('x'))
 	assert.NotContains(t, root.View().Content, "Inspect Talos clusters")
 }
@@ -103,11 +103,11 @@ func TestDirectCommandPaletteRendersPromptAndTypedTextInFooter(t *testing.T) {
 }
 
 func TestDirectMutationPreparedClosesPaletteOpenedDuringPreparation(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
 	model.splash = false
 	model.session = directMutationSession(t, true, domain.ServiceSet{}, nil)
 	model.sessionCtx = context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 
 	model, prepare := updateDirect(model, keyPress('R'))
@@ -139,7 +139,7 @@ func TestDirectRootHandlesKittyShiftedKeys(t *testing.T) {
 	root.options.WritesEnabled = true
 	root.session = directMutationSession(t, true, domain.ServiceSet{}, func(context.Context, string, ports.RebootMode) error { return nil })
 	root.sessionCtx = context.Background()
-	root.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}, {ID: "worker-id", Name: "worker-1", Role: domain.NodeRoleWorker}}}}
+	root.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}, {ID: "worker-id", Name: "worker-1", Role: domain.NodeRoleWorker}}}}
 	root.nodes = root.nodes.normalizeSelection(root.cluster.nodes.Value.Nodes, 0)
 	kittyR := tea.KeyPressMsg{Code: 'r', Text: "R", Mod: tea.ModShift}
 	assert.Equal(t, "R", kittyR.String())
@@ -222,7 +222,7 @@ func TestDirectServiceStopRequiresExplicitConfirmationAndCallsController(t *test
 	session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
-	model := newDirectModel(context.Background(), client, LaunchOptions{WritesEnabled: true})
+	model := newModel(context.Background(), client, LaunchOptions{WritesEnabled: true})
 	model.session, model.sessionCtx = session, context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{service}}}
 	model.services = model.services.normalizeSelection(model.cluster.services.Value.Services, 0)
@@ -307,16 +307,16 @@ func TestDirectNodeRefreshHeartbeatReschedulesAndPausesOutsideNodeView(t *testin
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 
-	root := newDirectModel(context.Background(), client, LaunchOptions{})
+	root := newModel(context.Background(), client, LaunchOptions{})
 	root.session, root.sessionCtx = session, context.Background()
 	root, command := updateDirect(root, nodeAutoRefreshTickMsg{})
 	require.NotNil(t, command, "tick always reschedules the heartbeat")
-	assert.Equal(t, application.Loading, root.cluster.nodes.Status)
+	assert.Equal(t, directLoading, root.cluster.nodes.Status)
 	root.views = root.views.push(viewFrame{Kind: viewProcesses, Label: "worker > processes"})
-	root.cluster.nodes.Status = application.Ready
+	root.cluster.nodes.Status = directReady
 	root, command = updateDirect(root, nodeAutoRefreshTickMsg{})
 	require.NotNil(t, command)
-	assert.Equal(t, application.Ready, root.cluster.nodes.Status)
+	assert.Equal(t, directReady, root.cluster.nodes.Status)
 	assert.Equal(t, int32(0), reads.Load(), "paused tick does not issue a node read")
 }
 
@@ -333,5 +333,5 @@ func TestDirectNodeRefreshHeartbeatPausesDuringActiveFilterAndReschedules(t *tes
 	root.nodes.filtering = true
 	root, command := updateDirect(root, nodeAutoRefreshTickMsg{})
 	require.NotNil(t, command)
-	assert.Equal(t, application.Ready, root.cluster.nodes.Status)
+	assert.Equal(t, directReady, root.cluster.nodes.Status)
 }

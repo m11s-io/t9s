@@ -7,8 +7,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/bubbles/v2/viewport"
-
-	"github.com/m11s-io/t9s/internal/application"
 )
 
 func sanitizeLogLines(lines []string) []string {
@@ -31,55 +29,21 @@ type logsModel struct {
 }
 
 type logDisplayState struct {
-	Status application.LoadStatus
+	Status directLoadStatus
 	Lines  []string
 	Err    string
 	EOF    bool
 }
 
-func newLogsModel(state application.LogState) logsModel {
-	m := logsModel{title: "SERVICE LOGS", following: true, viewport: viewport.New()}
-	return m.setState(state)
-}
-
 func newDirectServiceLogsModel() logsModel {
-	return logsModel{title: "SERVICE LOGS", following: true, viewport: viewport.New(), state: logDisplayState{Status: application.Loading}}
+	return logsModel{title: "SERVICE LOGS", following: true, viewport: viewport.New(), state: logDisplayState{Status: directLoading}}
 }
 
 func newDirectDmesgModel() logsModel {
-	return logsModel{title: "DMESG", following: true, viewport: viewport.New(), state: logDisplayState{Status: application.Loading}}
+	return logsModel{title: "DMESG", following: true, viewport: viewport.New(), state: logDisplayState{Status: directLoading}}
 }
 
-// newDmesgModel reuses the service-log stream renderer: dmesg frames are the
-// same byte stream, so only the title and the source state differ.
-func newDmesgModel(state application.DmesgState) logsModel {
-	m := logsModel{title: "DMESG", following: true, viewport: viewport.New()}
-	return m.setDmesgState(state)
-}
-
-// setDmesgState refreshes the dmesg content without disturbing the user's
-// title, filter, or follow/pause choice, mirroring logsModel.setState.
-func (m logsModel) setDmesgState(state application.DmesgState) logsModel {
-	return m.setState(application.LogState{
-		Status:    state.Status,
-		Lines:     state.Lines,
-		Err:       state.Err,
-		EOF:       state.EOF,
-		Following: state.Following,
-	})
-}
-
-// setState is the single point where log content enters logsModel. It
-// sanitizes Lines and Err so that m.state is always sanitized thereafter;
-// visibleLines and viewSized can rely on that invariant instead of
-// re-sanitizing on every render frame.
-func (m logsModel) setState(state application.LogState) logsModel {
-	return m.setStreamState(state.Status, state.Lines, state.Err, state.EOF)
-}
-
-// setStreamState owns the display snapshot used by direct stream commands;
-// setState above remains the thin legacy adapter until the old reducer is removed.
-func (m logsModel) setStreamState(status application.LoadStatus, lines []string, err string, eof bool) logsModel {
+func (m logsModel) setStreamState(status directLoadStatus, lines []string, err string, eof bool) logsModel {
 	m.state = logDisplayState{Status: status, Lines: sanitizeLogLines(lines), Err: sanitizeUntrustedText(err), EOF: eof}
 	return m
 }
@@ -184,7 +148,7 @@ func (m logsModel) viewSized(size contentSize) string {
 	if m.state.Err != "" {
 		// m.state.Err is sanitized in setState alongside m.state.Lines.
 		lines = append(lines, m.state.Err)
-	} else if m.state.Status == application.Loading {
+	} else if m.state.Status == directLoading {
 		lines = append(lines, "Opening log stream…")
 	} else if m.state.EOF {
 		lines = append(lines, "End of stream")

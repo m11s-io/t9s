@@ -16,9 +16,9 @@ import (
 )
 
 func TestDirectNodesFilterUsesCurrentSharedSnapshot(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	model.splash = false
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{ID: "cp-id", Name: "control-plane"},
 		{ID: "worker-id", Name: "worker-1"},
 	}}}
@@ -150,7 +150,7 @@ func TestDirectNodesRefreshKeyReloadsSnapshotAndKeepsSelection(t *testing.T) {
 func TestDirectNodeFocusResolvesNameAndAddressToStableIDOnce(t *testing.T) {
 	for _, focus := range []string{"worker-1", "10.0.0.2"} {
 		t.Run(focus, func(t *testing.T) {
-			model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{NodeFocus: focus})
+			model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{NodeFocus: focus})
 			model.splash = false
 			first := domain.NodeSet{Nodes: []domain.NodeSnapshot{
 				{ID: "cp-id", Name: "control-plane", Addresses: []string{"10.0.0.1"}},
@@ -176,7 +176,7 @@ func TestDirectNodeFocusResolvesNameAndAddressToStableIDOnce(t *testing.T) {
 }
 
 func TestDirectNodeFocusWithNoMatchLeavesNodesShowingNormally(t *testing.T) {
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{NodeFocus: "missing-node"})
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{NodeFocus: "missing-node"})
 	model.splash = false
 	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
 	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1"}}}})
@@ -194,16 +194,18 @@ func TestDirectNodeFocusAcceptsStableID(t *testing.T) {
 	assert.Equal(t, "worker-id", model.nodes.selectedID)
 }
 
-func updateDirect(model directModel, message tea.Msg) (directModel, tea.Cmd) {
+func updateDirect(model model, message tea.Msg) (model, tea.Cmd) {
 	updated, command := model.Update(message)
-	return updated.(directModel), command
+	return modelFromTea(updated), command
 }
 
-func newDirectNodesModel(t *testing.T, options LaunchOptions, nodes []domain.NodeSnapshot) directModel {
+func modelFromTea(value tea.Model) model { return value.(model) }
+
+func newDirectNodesModel(t *testing.T, options LaunchOptions, nodes []domain.NodeSnapshot) model {
 	t.Helper()
-	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), options)
+	model := newModel(context.Background(), application.NewClient(application.Dependencies{}), options)
 	model.splash = false
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: nodes}}
 	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
 	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: model.cluster.nodes.Value})
 	return model

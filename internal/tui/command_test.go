@@ -38,7 +38,7 @@ func TestCommandResolutionIsClosedOverKnownNamesAndArguments(t *testing.T) {
 }
 
 func TestDirectNodesPaletteClosesAndShowsNodes(t *testing.T) {
-	model := newDirectModel(t.Context(), nil, LaunchOptions{})
+	model := newModel(t.Context(), nil, LaunchOptions{})
 	model.splash = false
 	model, command := runDirectPalette(t, model, "nodes")
 	assert.NotNil(t, command, "Enter schedules the direct command message")

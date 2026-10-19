@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -27,7 +26,7 @@ type healthcheckModel struct {
 }
 
 type healthcheckDisplayState struct {
-	Status       application.LoadStatus
+	Status       directLoadStatus
 	Request      domain.ClusterHealthRequest
 	Lines        []string
 	Err          string
@@ -35,23 +34,9 @@ type healthcheckDisplayState struct {
 	VerdictReady bool
 }
 
-func newHealthcheckModel(state application.ClusterHealthState) healthcheckModel {
-	m := healthcheckModel{title: "CLUSTER HEALTH", viewport: viewport.New()}
-	return m.setState(state)
-}
-
 func newDirectHealthcheckModel(state healthcheckDisplayState) healthcheckModel {
 	m := healthcheckModel{title: "CLUSTER HEALTH", viewport: viewport.New()}
 	return m.setStreamState(state)
-}
-
-// setState is the single point where health-check content enters the model. It
-// sanitizes Lines and Err so m.state is always sanitized thereafter.
-func (m healthcheckModel) setState(state application.ClusterHealthState) healthcheckModel {
-	return m.setStreamState(healthcheckDisplayState{
-		Status: state.Status, Request: state.Request, Lines: state.Lines, Err: state.Err,
-		EOF: state.EOF, VerdictReady: state.VerdictReady,
-	})
 }
 
 func (m healthcheckModel) setStreamState(state healthcheckDisplayState) healthcheckModel {
@@ -146,7 +131,7 @@ func (m healthcheckModel) verdictLine() string {
 		return "✔ cluster is healthy"
 	case m.state.EOF:
 		return "… check ended without a verdict"
-	case m.state.Status == application.Loading:
+	case m.state.Status == directLoading:
 		return "… starting"
 	default:
 		return "… checking"

@@ -45,7 +45,7 @@ func (r tuiLogReader) Open(ctx context.Context, request domain.LogRequest) (port
 	return r.stream, nil
 }
 
-func runStreamCommand(t *testing.T, model directModel, command tea.Cmd) (directModel, tea.Cmd) {
+func runStreamCommand(t *testing.T, model model, command tea.Cmd) (model, tea.Cmd) {
 	t.Helper()
 	require.NotNil(t, command)
 	message := command()
@@ -59,7 +59,7 @@ func TestDirectServiceLogsOpenNextAndPreserveCleanEOF(t *testing.T) {
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	command := model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"})
 	model, command = runStreamCommand(t, model, command)
@@ -107,7 +107,7 @@ func TestDirectDmesgNextEOFClosesOnceAndRetainsTerminalLines(t *testing.T) {
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	command := model.openDirectDmesg("node-a")
 	model, command = runStreamCommand(t, model, command)
@@ -156,7 +156,7 @@ func TestDirectLogViewEscapeCancelsNextAndClosesStreamOnce(t *testing.T) {
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	command := model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"})
 	model, command = runStreamCommand(t, model, command)
@@ -179,7 +179,7 @@ func TestDirectLateLogOpenAfterEscapeIsDisposedOnce(t *testing.T) {
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	open := model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"})
 	result := make(chan tea.Msg, 1)
@@ -204,7 +204,7 @@ func TestDirectLogNextCancellationClosesStreamAndPreservesPauseSettings(t *testi
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	open := model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"})
 	model, next := runStreamCommand(t, model, open)
@@ -227,9 +227,9 @@ func TestDirectLogStreamRetentionAndClear(t *testing.T) {
 	for i := range lines {
 		lines[i] = fmt.Sprintf("line-%d", i)
 	}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	request, _ := model.requests.begin("service-logs", model.generation())
-	model.logStream = directLogStreamState{request: request, status: application.Ready}
+	model.logStream = directLogStreamState{request: request, status: directReady}
 	model.views = model.views.push(viewFrame{Kind: viewServiceLogs, Label: "api@node-a > logs"})
 	model, _ = updateDirect(model, directServiceLogBatch{request: request.stamp, batch: domain.LogBatch{Lines: lines}})
 	assert.Len(t, model.logs.state.Lines, 5000)
@@ -241,11 +241,11 @@ func TestDirectLogStreamRetentionAndClear(t *testing.T) {
 }
 
 func TestDirectServiceLogBatchPreservesUnrelatedState(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	request, _ := model.requests.begin("service-logs", model.generation())
-	model.logStream = directLogStreamState{request: request, status: application.Ready}
-	model.logs = model.logs.setStreamState(application.Ready, []string{"old log"}, "", false)
-	model.dmesg = model.dmesg.setStreamState(application.Ready, []string{"old dmesg"}, "", false)
+	model.logStream = directLogStreamState{request: request, status: directReady}
+	model.logs = model.logs.setStreamState(directReady, []string{"old log"}, "", false)
+	model.dmesg = model.dmesg.setStreamState(directReady, []string{"old dmesg"}, "", false)
 	model.nodes.selectedID = "worker-id"
 	model.problems.filter = "degraded"
 
@@ -271,7 +271,7 @@ func TestDirectServiceLogReconnectUsesOriginalServiceIdentity(t *testing.T) {
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model, command := runStreamCommand(t, model, model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"}))
 	model, _ = runStreamCommand(t, model, command)
@@ -291,7 +291,7 @@ func TestDirectPaletteNavigationClosesLogStream(t *testing.T) {
 	}}})
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model, command := runStreamCommand(t, model, model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"}))
 	model, _ = runStreamCommand(t, model, command)
@@ -304,7 +304,7 @@ func TestDirectPaletteNavigationClosesLogStream(t *testing.T) {
 func TestDirectPaletteNavigationClosesStreamBehindHelp(t *testing.T) {
 	for _, kind := range []viewKind{viewServiceLogs, viewDmesg, viewEvents, viewClusterHealth} {
 		t.Run(frameLabel(kind), func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			var request directRequest
 			var closeCount func() int32
 			switch kind {
@@ -382,7 +382,7 @@ func TestDirectPendingLogAndDmesgOpenSurvivesHelpAndLateRemovedOpenClosesOnce(t 
 				client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: openSession}})
 				session, err := client.Open(context.Background(), "prod", application.Options{})
 				require.NoError(t, err)
-				model := newDirectModel(context.Background(), client, LaunchOptions{})
+				model := newModel(context.Background(), client, LaunchOptions{})
 				model.session, model.sessionCtx = session, context.Background()
 				var open tea.Cmd
 				if kind == viewServiceLogs {
@@ -407,10 +407,10 @@ func TestDirectPendingLogAndDmesgOpenSurvivesHelpAndLateRemovedOpenClosesOnce(t 
 					assert.NotNil(t, next, "retained owner frame accepts the opened stream and continues reading")
 					if kind == viewServiceLogs {
 						assert.NotNil(t, model.logStream.stream)
-						assert.Equal(t, application.Ready, model.logStream.status)
+						assert.Equal(t, directReady, model.logStream.status)
 					} else {
 						assert.NotNil(t, model.dmesgStream.stream)
-						assert.Equal(t, application.Ready, model.dmesgStream.status)
+						assert.Equal(t, directReady, model.dmesgStream.status)
 					}
 				} else if kind == viewServiceLogs {
 					assert.Equal(t, int32(1), logStream.closes.Load(), "late result for a removed owner is disposed once")
@@ -449,7 +449,7 @@ func TestDirectLogStreamClosesOnContextSwitchAndQuit(t *testing.T) {
 			require.NoError(t, err)
 			sessionCtx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			model := newDirectModel(context.Background(), client, LaunchOptions{})
+			model := newModel(context.Background(), client, LaunchOptions{})
 			model.session, model.sessionCtx, model.sessionCancel = session, sessionCtx, cancel
 			model, command := runStreamCommand(t, model, model.openDirectServiceLogs(domain.ServiceSnapshot{Node: "node-a", Name: "api"}))
 			model, _ = runStreamCommand(t, model, command)
@@ -468,7 +468,7 @@ func TestDirectLogStreamClosesOnContextSwitchAndQuit(t *testing.T) {
 func TestDirectLogReconnectKeyIsTypedIntoActiveFilter(t *testing.T) {
 	for _, kind := range []viewKind{viewServiceLogs, viewDmesg} {
 		t.Run(map[viewKind]string{viewServiceLogs: "logs", viewDmesg: "dmesg"}[kind], func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			model.session = &application.Session{}
 			model.sessionCtx = context.Background()
 			model.views = model.views.replaceRoot(viewFrame{Kind: kind, Label: "stream"})
@@ -496,7 +496,7 @@ func TestDirectLogReconnectKeyIsTypedIntoActiveFilter(t *testing.T) {
 func TestDirectServiceDetailLogsUsePinnedFrameService(t *testing.T) {
 	opened := domain.ServiceSnapshot{Node: "node-a", Name: "api"}
 	other := domain.ServiceSnapshot{Node: "node-b", Name: "worker"}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session = &application.Session{}
 	model.sessionCtx = context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{opened, other}}}
@@ -512,7 +512,7 @@ func TestDirectServiceDetailLogsUsePinnedFrameService(t *testing.T) {
 func TestDirectServiceDetailLogsDoNotRetargetWhenPinnedServiceDisappears(t *testing.T) {
 	opened := domain.ServiceSnapshot{Node: "node-a", Name: "api"}
 	other := domain.ServiceSnapshot{Node: "node-b", Name: "worker"}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session = &application.Session{}
 	model.sessionCtx = context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{other}}}
@@ -529,10 +529,10 @@ func TestDirectLogViewportScrollAndResizeKeepPosition(t *testing.T) {
 	for i := range lines {
 		lines[i] = fmt.Sprintf("line-%02d", i+1)
 	}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewServiceLogs, Label: "api@node-a > logs"})
-	model.logs = model.logs.setStreamState(application.Ready, lines, "", false)
+	model.logs = model.logs.setStreamState(directReady, lines, "", false)
 	model, _ = updateDirect(model, tea.WindowSizeMsg{Width: 60, Height: 14})
 	model, _ = updateDirect(model, keyPress('G'))
 	_ = model.View()

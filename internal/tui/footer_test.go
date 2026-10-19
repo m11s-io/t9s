@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +27,7 @@ func TestK9sFooterPromptTakesTheStatusRow(t *testing.T) {
 }
 
 func TestRenderUpgradeNoticeShowsBoundedKnownProgress(t *testing.T) {
-	notice := renderUpgradeNotice(application.UpgradeState{
+	notice := renderDirectUpgradeNotice(directUpgradeDisplayState{
 		Active: true,
 		Target: "worker-2",
 		Event:  ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling installer", Current: 125, Total: 100},
@@ -38,7 +37,7 @@ func TestRenderUpgradeNoticeShowsBoundedKnownProgress(t *testing.T) {
 }
 
 func TestRenderUpgradeNoticeOmitsPercentageWithoutATotal(t *testing.T) {
-	notice := renderUpgradeNotice(application.UpgradeState{
+	notice := renderDirectUpgradeNotice(directUpgradeDisplayState{
 		Active: true,
 		Target: "worker-2",
 		Event:  ports.UpgradeEvent{Phase: ports.UpgradeInstalling, Message: "installing"},
@@ -48,7 +47,7 @@ func TestRenderUpgradeNoticeOmitsPercentageWithoutATotal(t *testing.T) {
 }
 
 func TestRenderUpgradeNoticeRendersRecoveryWarning(t *testing.T) {
-	notice := renderUpgradeNotice(application.UpgradeState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually."})
+	notice := renderDirectUpgradeNotice(directUpgradeDisplayState{Target: "cp-1", Warning: "Talos upgrade applied; node recovery is pending — check node readiness and scheduling manually."})
 
 	assert.Contains(t, notice, "Applied")
 	assert.Contains(t, notice, "cp-1")
@@ -57,7 +56,7 @@ func TestRenderUpgradeNoticeRendersRecoveryWarning(t *testing.T) {
 }
 
 func TestRenderUpgradeNoticeKeepsFailedPhaseAndCancellation(t *testing.T) {
-	notice := renderUpgradeNotice(application.UpgradeState{
+	notice := renderDirectUpgradeNotice(directUpgradeDisplayState{
 		Target: "worker-2",
 		Event:  ports.UpgradeEvent{Phase: ports.UpgradeRebooting},
 		Err:    "context canceled",
@@ -67,7 +66,7 @@ func TestRenderUpgradeNoticeKeepsFailedPhaseAndCancellation(t *testing.T) {
 }
 
 func TestRenderUpgradeNoticeSanitizesUntrustedFields(t *testing.T) {
-	notice := renderUpgradeNotice(application.UpgradeState{
+	notice := renderDirectUpgradeNotice(directUpgradeDisplayState{
 		Active: true,
 		Target: "worker-\x1b[31m2\x1b[0m\n",
 		Event: ports.UpgradeEvent{
@@ -80,7 +79,7 @@ func TestRenderUpgradeNoticeSanitizesUntrustedFields(t *testing.T) {
 	assert.NotContains(t, notice, "\x1b")
 	assert.NotContains(t, notice, "\n")
 
-	failure := renderUpgradeNotice(application.UpgradeState{
+	failure := renderDirectUpgradeNotice(directUpgradeDisplayState{
 		Target: "worker-\r2",
 		Event:  ports.UpgradeEvent{Phase: ports.UpgradePhase("rebooting\x1b[31m")},
 		Err:    "request failed\nBearer token",

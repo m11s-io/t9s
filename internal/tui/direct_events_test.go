@@ -17,7 +17,7 @@ import (
 )
 
 func TestDirectEventsFilterSelectionAndPaletteNavigation(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.width, model.height = 120, 30
 	events := []domain.EventSnapshot{
@@ -59,7 +59,7 @@ func TestDirectEventsFilterSelectionAndPaletteNavigation(t *testing.T) {
 func TestDirectEventsFollowToggleIsIsolatedFromFilterInput(t *testing.T) {
 	stream := &directEventStreamFake{started: make(chan struct{}, 1)}
 	session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 
@@ -83,7 +83,7 @@ func TestDirectEventsFollowToggleIsIsolatedFromFilterInput(t *testing.T) {
 }
 
 func TestDirectEventsKeepSelectedIdentityAcrossRefreshAndClearWhenMissing(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	first := domain.EventSnapshot{Node: "node-a", Kind: "Sequence", Message: "first", ObservedAt: time.Unix(10, 0)}
 	selected := domain.EventSnapshot{Node: "node-b", Kind: "ServiceState", Message: "selected", ObservedAt: time.Unix(20, 0)}
@@ -123,7 +123,7 @@ func TestEventKeysIgnoreObservationTimeAndDisambiguateDuplicatesByOrder(t *testi
 }
 
 func TestDirectEventsIgnoresStaleRefreshResults(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.cluster.events = directEventState{Status: directReady, Value: domain.EventSet{Events: []domain.EventSnapshot{{Node: "node-a", Message: "current"}}}}
 	oldRequest, _ := model.requests.begin("cluster-events", model.generation())
 	newRequest, _ := model.requests.begin("cluster-events", model.generation())
@@ -134,7 +134,7 @@ func TestDirectEventsIgnoresStaleRefreshResults(t *testing.T) {
 }
 
 func TestDirectEventsPartialProblemsSurviveWithoutAggregateError(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 	request, _ := model.requests.begin("cluster-events", model.generation())
@@ -150,9 +150,9 @@ func TestDirectEventsPartialProblemsSurviveWithoutAggregateError(t *testing.T) {
 }
 
 func TestDirectEventsPartialWarningStaysVisibleWhenFilterHidesProblems(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "healthy", Name: "healthy", Health: domain.HealthHealthy}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "healthy", Name: "healthy", Health: domain.HealthHealthy}}}}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 	request, _ := model.requests.begin("cluster-events", model.generation())
 	model, _ = updateDirect(model, directEventsLoaded{request: request.stamp, events: domain.EventSet{
@@ -176,7 +176,7 @@ func TestDirectEventsPartialWarningStaysVisibleWhenFilterHidesProblems(t *testin
 }
 
 func TestDirectEventsAggregateErrorKeepsUsefulRowsVisible(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 	request, _ := model.requests.begin("cluster-events", model.generation())
@@ -192,7 +192,7 @@ func TestDirectEventsAggregateErrorKeepsUsefulRowsVisible(t *testing.T) {
 }
 
 func TestDirectEventsRefreshUsesOnlyEventsRequestSlot(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session = &application.Session{}
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 	model, command := updateDirect(model, keyPress('r'))
@@ -204,7 +204,7 @@ func TestDirectEventsRefreshUsesOnlyEventsRequestSlot(t *testing.T) {
 func TestDirectEventsAliasesRouteFromPalette(t *testing.T) {
 	for _, alias := range []string{"events", "ev"} {
 		t.Run(alias, func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			model.splash = false
 			model, _ = runDirectPalette(t, model, alias)
 			assert.Equal(t, viewEvents, model.views.top().Kind)
@@ -213,7 +213,7 @@ func TestDirectEventsAliasesRouteFromPalette(t *testing.T) {
 }
 
 func TestDirectEventsContextResetClearsFilterAndSelection(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.events.filter = "old"
 	model.events.filtering = true
 	model.events.selectedKey = "old identity"
@@ -223,7 +223,7 @@ func TestDirectEventsContextResetClearsFilterAndSelection(t *testing.T) {
 	assert.Empty(t, model.events.selectedKey)
 }
 
-func runDirectPalette(t *testing.T, model directModel, value string) (directModel, tea.Cmd) {
+func runDirectPalette(t *testing.T, model model, value string) (model, tea.Cmd) {
 	t.Helper()
 	if !model.palette.active {
 		model, _ = updateDirect(model, keyPress(':'))

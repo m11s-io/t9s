@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -209,13 +208,13 @@ func (m nodesModel) view(width int, snapshot []domain.NodeSnapshot) string {
 	return contents
 }
 
-func (m nodesModel) viewSized(size contentSize, state application.NodeState) string {
-	if state.Status == application.Failed {
+func (m nodesModel) viewSized(size contentSize, state directNodeState) string {
+	if state.Status == directFailed {
 		return fallback(state.Err)
 	}
 	nodes := m.visibleNodes(state.Value.Nodes)
 	if len(nodes) == 0 {
-		if state.Status == application.Loading || state.Status == application.Idle {
+		if state.Status == directLoading {
 			return "Loading nodes…"
 		}
 		return "No nodes"
@@ -225,7 +224,7 @@ func (m nodesModel) viewSized(size contentSize, state application.NodeState) str
 	return renderNodeTable(size.Width, nodes[start:end], m.control.Cursor()-start, m.marked)
 }
 
-func renderNodes(width int, state application.NodeState) string {
+func renderNodes(width int, state directNodeState) string {
 	model := newNodesModel().normalizeSelection(state.Value.Nodes, 0)
 	return model.view(width, state.Value.Nodes)
 }

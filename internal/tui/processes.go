@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -20,29 +19,7 @@ type processesModel struct {
 	control   listControl
 }
 
-func newProcessesModel(state application.ProcessesState) processesModel {
-	model := processesModel{status: directLoading}
-	return model.setState(state)
-}
-
 func newDirectProcessesModel() processesModel { return processesModel{status: directLoading} }
-
-func (m processesModel) setState(state application.ProcessesState) processesModel {
-	previousIndex := m.control.Cursor()
-	m.values = state.Value
-	m.err = state.Err
-	switch state.Status {
-	case application.Loading, application.Idle:
-		m.status = directLoading
-	case application.Partial:
-		m.status = directPartial
-	case application.Failed:
-		m.status = directFailed
-	default:
-		m.status = directReady
-	}
-	return m.normalizeSelection(previousIndex)
-}
 
 func (m processesModel) setResult(node string, values domain.ProcessSet, err error) processesModel {
 	selectedPID, hadSelection := m.selectedDirect()

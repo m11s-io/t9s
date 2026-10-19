@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
 )
@@ -24,13 +23,7 @@ type timeModel struct {
 	offset      int
 }
 
-func newTimeModel(state application.TimeState) timeModel { return timeModel{}.setState(state) }
-func newDirectTimeModel() timeModel                      { return timeModel{status: directLoading} }
-func (m timeModel) setState(state application.TimeState) timeModel {
-	m.status, m.node, m.value, m.err = directStatusFromApplication(state.Status), state.Node, state.Value, state.Err
-	m.checkStatus, m.check, m.checkErr = directStatusFromApplication(state.CheckStatus), state.Check, state.CheckErr
-	return m
-}
+func newDirectTimeModel() timeModel { return timeModel{status: directLoading} }
 func (m timeModel) setReadResult(node string, value domain.TimeSnapshot, err error) timeModel {
 	m.node, m.value, m.err = node, value, ""
 	switch {

@@ -6,25 +6,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func mountsTestState() application.MountState {
-	return application.MountState{
-		Status: application.Ready,
-		Node:   "cp-1",
-		Value: domain.MountSet{Mounts: []domain.MountSnapshot{
-			{Filesystem: "/dev/sda1", MountedOn: "/", SizeBytes: 1000, UsedBytes: 600, AvailableBytes: 400, UsedPercent: 60},
-			{Filesystem: "tmpfs", MountedOn: "/var", SizeBytes: 2048, UsedBytes: 1024, AvailableBytes: 1024, UsedPercent: 50},
-		}},
-	}
+func mountsTestState() domain.MountSet {
+	return domain.MountSet{Mounts: []domain.MountSnapshot{
+		{Filesystem: "/dev/sda1", MountedOn: "/", SizeBytes: 1000, UsedBytes: 600, AvailableBytes: 400, UsedPercent: 60},
+		{Filesystem: "tmpfs", MountedOn: "/var", SizeBytes: 2048, UsedBytes: 1024, AvailableBytes: 1024, UsedPercent: 50},
+	}}
 }
 
-func renderMounts(width int, state application.MountState) string {
-	return newMountsModel(state).view(width)
+func renderMounts(width int, state domain.MountSet) string {
+	return newDirectMountsModel().setResult("cp-1", state, nil).view(width)
 }
 
 func TestMountsRenderSemanticColumns(t *testing.T) {
@@ -40,13 +35,13 @@ func TestMountsRenderSemanticColumns(t *testing.T) {
 }
 
 func TestMountsRenderEmptyState(t *testing.T) {
-	model := newMountsModel(application.MountState{Status: application.Ready})
+	model := newDirectMountsModel().setResult("cp-1", domain.MountSet{}, nil)
 	rendered := model.viewSized(contentSize{Width: 80, Height: 10})
 	assert.Equal(t, "No mounts", rendered)
 }
 
 func TestMountsFilterMatchesMountedOn(t *testing.T) {
-	mounts := newMountsModel(mountsTestState())
+	mounts := newDirectMountsModel().setResult("cp-1", mountsTestState(), nil)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('/'), keyPress('v'), keyPress('a'), keyPress('r'),
 		{Code: tea.KeyEnter},

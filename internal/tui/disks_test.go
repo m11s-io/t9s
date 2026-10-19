@@ -6,25 +6,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func disksTestState() application.DisksState {
-	return application.DisksState{
-		Status: application.Ready,
-		Node:   "cp-1",
-		Value: domain.DiskSet{Disks: []domain.DiskSnapshot{
-			{DeviceName: "sda", Type: "ssd", SizeBytes: 536870912000, Model: "SAMSUNG MZVL", SystemDisk: true},
-			{DeviceName: "sdb", Type: "hdd", SizeBytes: 1073741824000, Model: "WDC WD10"},
-		}},
-	}
+func disksTestState() domain.DiskSet {
+	return domain.DiskSet{Disks: []domain.DiskSnapshot{
+		{DeviceName: "sda", Type: "ssd", SizeBytes: 536870912000, Model: "SAMSUNG MZVL", SystemDisk: true},
+		{DeviceName: "sdb", Type: "hdd", SizeBytes: 1073741824000, Model: "WDC WD10"},
+	}}
 }
 
-func renderDisks(width int, state application.DisksState) string {
-	return newDisksModel(state).view(width)
+func renderDisks(width int, state domain.DiskSet) string {
+	return newDirectDisksModel().setResult("cp-1", state, nil).view(width)
 }
 
 func TestDisksRenderSemanticColumns(t *testing.T) {
@@ -42,13 +37,13 @@ func TestDisksRenderSemanticColumns(t *testing.T) {
 }
 
 func TestDisksRenderEmptyState(t *testing.T) {
-	model := newDisksModel(application.DisksState{Status: application.Ready})
+	model := newDirectDisksModel().setResult("cp-1", domain.DiskSet{}, nil)
 	rendered := model.viewSized(contentSize{Width: 80, Height: 10})
 	assert.Equal(t, "No disks", rendered)
 }
 
 func TestDisksFilterMatchesDeviceName(t *testing.T) {
-	disks := newDisksModel(disksTestState())
+	disks := newDirectDisksModel().setResult("cp-1", disksTestState(), nil)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('s'), keyPress('d'), keyPress('b'),
 		{Code: tea.KeyEnter},

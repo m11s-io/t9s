@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -22,12 +21,7 @@ type cpuModel struct {
 	offset    int
 }
 
-func newCPUModel(state application.CPUState) cpuModel { return cpuModel{}.setState(state) }
-func newDirectCPUModel() cpuModel                     { return cpuModel{status: directLoading} }
-func (m cpuModel) setState(state application.CPUState) cpuModel {
-	m.status, m.node, m.value, m.err = directStatusFromApplication(state.Status), state.Node, state.Value, state.Err
-	return m
-}
+func newDirectCPUModel() cpuModel { return cpuModel{status: directLoading} }
 func (m cpuModel) setResult(node string, value domain.CPUSnapshot, err error) cpuModel {
 	m.node, m.value, m.err = node, value, ""
 	switch {

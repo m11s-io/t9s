@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -53,7 +52,7 @@ func (m contextsModel) update(message tea.KeyPressMsg, current string) (contexts
 		}
 		selected := m.values[m.control.Cursor()].Name
 		return m, func() tea.Msg {
-			return applicationMessage{message: application.SelectContext{Name: selected}}
+			return directSelectContext{name: selected}
 		}
 	}
 

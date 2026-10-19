@@ -48,7 +48,7 @@ func TestDirectFollowedEventsCancellationAndLateOpenCloseExactlyOnce(t *testing.
 		t.Run("blocked next on "+exit, func(t *testing.T) {
 			stream := &directEventStreamFake{started: make(chan struct{}, 1)}
 			session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			model.session, model.sessionCtx = session, context.Background()
 			model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 			model, command := updateDirect(model, keyPress('s'))
@@ -77,7 +77,7 @@ func TestDirectFollowedEventsCancellationAndLateOpenCloseExactlyOnce(t *testing.
 	}
 
 	t.Run("late open is disposed once", func(t *testing.T) {
-		model := newDirectModel(context.Background(), nil, LaunchOptions{})
+		model := newModel(context.Background(), nil, LaunchOptions{})
 		model.session, model.sessionCtx = &application.Session{}, context.Background()
 		model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 		model, command := updateDirect(model, keyPress('s'))
@@ -122,7 +122,7 @@ func directStreamSession(t *testing.T, event ports.EventReader, health ports.Clu
 func TestDirectFollowedEventsUpdatesSharedSnapshotAndStopsOnCleanEOF(t *testing.T) {
 	stream := &directEventStreamFake{batches: []domain.EventSet{{Events: []domain.EventSnapshot{{Node: "node-a", Kind: "Sequence", Message: "new event"}}}}}
 	session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	prior := make([]domain.EventSnapshot, 2000)
 	for index := range prior {
@@ -150,7 +150,7 @@ func TestDirectFollowedEventsKeepNewestRowsVisibleAfterOverflow(t *testing.T) {
 	}
 	stream := &directEventStreamFake{batches: []domain.EventSet{{Events: batch}}}
 	session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model.width, model.height = 100, 12
 	model.cluster.events = directEventState{Status: directReady, Value: domain.EventSet{Events: []domain.EventSnapshot{{Node: "cp-1", Kind: "Sequence", Message: "boot START"}}}}
@@ -175,9 +175,9 @@ func TestDirectClusterHealthStreamPinsExactNodeRequestAndKeepsFailedVerdict(t *t
 		return stream, nil
 	}}
 	session, _ := directStreamSession(t, nil, health)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{Role: domain.NodeRoleControl, Name: "cp-name", Addresses: []string{"not-an-ip", "10.0.0.1"}},
 		{Role: domain.NodeRoleWorker, Name: "worker-name", Addresses: []string{"10.0.0.2"}},
 	}}}
@@ -200,7 +200,7 @@ func TestDirectClusterHealthHealthyEOFShowsVerdictAndClosesStream(t *testing.T) 
 	session, _ := directStreamSession(t, nil, &testkit.FakeClusterHealthReader{OpenFunc: func(context.Context, domain.ClusterHealthRequest) (ports.ClusterHealthStream, error) {
 		return stream, nil
 	}})
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model, command := runDirectPaletteCommand(t, model, "healthcheck")
 	for command != nil {
@@ -223,7 +223,7 @@ func TestDirectClusterHealthFilterShortcutsAndResizeUseStoredDisplayState(t *tes
 		return stream, nil
 	}}
 	session, _ := directStreamSession(t, nil, health)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
 	model.width, model.height = 100, 20
 	model, command := runDirectPaletteCommand(t, model, "healthcheck")
@@ -251,14 +251,14 @@ func TestDirectHealthcheckReconnectRebuildsPinnedRequestFromCurrentNodes(t *test
 		return &directHealthStreamFake{}, nil
 	}}
 	session, _ := directStreamSession(t, nil, health)
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.session, model.sessionCtx = session, context.Background()
-	model.cluster.nodes = application.NodeState{Status: application.Loading}
+	model.cluster.nodes = directNodeState{Status: directLoading}
 	model, command := runDirectPaletteCommand(t, model, "healthcheck 45s")
 	for command != nil {
 		model, command = runStreamCommand(t, model, command)
 	}
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{Role: domain.NodeRoleControl, Addresses: []string{"10.1.0.1"}},
 		{Role: domain.NodeRoleWorker, Addresses: []string{"10.1.0.2"}},
 	}}}
@@ -274,7 +274,7 @@ func TestDirectHealthcheckReconnectRebuildsPinnedRequestFromCurrentNodes(t *test
 }
 
 func TestDirectHealthcheckColonKeyStaysInActiveFilter(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewClusterHealth, Label: "healthcheck"})
 	model, _ = updateDirect(model, keyPress('/'))
@@ -284,7 +284,7 @@ func TestDirectHealthcheckColonKeyStaysInActiveFilter(t *testing.T) {
 	assert.Equal(t, ":", model.healthcheck.filter)
 }
 
-func runDirectPaletteCommand(t *testing.T, model directModel, value string) (directModel, tea.Cmd) {
+func runDirectPaletteCommand(t *testing.T, model model, value string) (model, tea.Cmd) {
 	t.Helper()
 	model, _ = updateDirect(model, keyPress(':'))
 	for _, key := range []rune(value) {

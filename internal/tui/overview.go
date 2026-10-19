@@ -59,19 +59,10 @@ func renderOverview(observations application.HealthInput) string {
 	return strings.TrimSuffix(view.String(), "\n")
 }
 
-func legacyHealthInput(model application.Model) application.HealthInput {
-	return application.HealthInput{
-		Nodes:      model.Nodes.Value,
-		NodesKnown: model.Nodes.Status == application.Ready || model.Nodes.Status == application.Partial,
-		Etcd:       model.Etcd.Value,
-		EtcdKnown:  model.Etcd.Status == application.Ready || model.Etcd.Status == application.Partial,
-	}
-}
-
 func directHealthInput(cluster directClusterState) application.HealthInput {
 	return application.HealthInput{
 		Nodes:      cluster.nodes.Value,
-		NodesKnown: cluster.nodes.Status == application.Ready || cluster.nodes.Status == application.Partial,
+		NodesKnown: cluster.nodes.Status == directReady || cluster.nodes.Status == directPartial,
 		Etcd:       cluster.etcd.Value,
 		EtcdKnown:  cluster.etcd.Status == directReady || cluster.etcd.Status == directPartial,
 	}
@@ -80,9 +71,9 @@ func directHealthInput(cluster directClusterState) application.HealthInput {
 func directHealthNotices(cluster directClusterState) []string {
 	var notices []string
 	switch cluster.nodes.Status {
-	case application.Partial:
+	case directPartial:
 		notices = append(notices, "NODES PARTIAL: "+fallback(cluster.nodes.Err))
-	case application.Failed:
+	case directFailed:
 		notices = append(notices, "NODES UNAVAILABLE: "+fallback(cluster.nodes.Err))
 	}
 	switch cluster.etcd.Status {

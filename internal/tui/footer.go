@@ -5,17 +5,9 @@ import (
 	"math/bits"
 	"strings"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/m11s-io/t9s/internal/ports"
 )
-
-// renderUpgradeNotice creates the compact global upgrade status shown while an
-// upgrade is running and after it fails. The adapter only reports byte totals
-// when Talos supplies them, so a percentage is intentionally absent otherwise.
-func renderUpgradeNotice(upgrade application.UpgradeState) string {
-	return renderUpgradeStatus(upgrade.Active, upgrade.Target, upgrade.Event.Phase, upgrade.Event.Message, upgrade.Event.Current, upgrade.Event.Total, upgrade.Err, upgrade.Warning, upgrade.Outcome)
-}
 
 func renderDirectUpgradeNotice(upgrade directUpgradeDisplayState) string {
 	return renderUpgradeStatus(upgrade.Active, upgrade.Target, upgrade.Event.Phase, upgrade.Event.Message, upgrade.Event.Current, upgrade.Event.Total, upgrade.Err, upgrade.Warning, upgrade.Outcome)

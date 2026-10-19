@@ -6,33 +6,28 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func memoryTestState() application.MemoryState {
-	return application.MemoryState{
-		Status: application.Ready,
-		Node:   "cp-1",
-		Value: domain.MemorySnapshot{
-			TotalBytes:     1024,
-			FreeBytes:      100,
-			AvailableBytes: 256,
-			UsedBytes:      768,
-			BuffersBytes:   16,
-			CachedBytes:    32,
-			SwapTotalBytes: 512,
-			SwapFreeBytes:  500,
-			DirtyBytes:     4,
-			SlabBytes:      8,
-		},
+func memoryTestState() domain.MemorySnapshot {
+	return domain.MemorySnapshot{
+		TotalBytes:     1024,
+		FreeBytes:      100,
+		AvailableBytes: 256,
+		UsedBytes:      768,
+		BuffersBytes:   16,
+		CachedBytes:    32,
+		SwapTotalBytes: 512,
+		SwapFreeBytes:  500,
+		DirtyBytes:     4,
+		SlabBytes:      8,
 	}
 }
 
-func renderMemory(width int, state application.MemoryState) string {
-	return newMemoryModel(state).view(width)
+func renderMemory(width int, state domain.MemorySnapshot) string {
+	return newDirectMemoryModel().setResult("cp-1", state, nil).view(width)
 }
 
 func TestMemoryRenderSemanticColumns(t *testing.T) {
@@ -50,15 +45,15 @@ func TestMemoryRenderSemanticColumns(t *testing.T) {
 }
 
 func TestMemoryRenderEmptyState(t *testing.T) {
-	loading := newMemoryModel(application.MemoryState{Status: application.Loading})
+	loading := newDirectMemoryModel()
 	assert.Equal(t, "Loading memory…", loading.viewSized(contentSize{Width: 80, Height: 10}))
 
-	empty := newMemoryModel(application.MemoryState{Status: application.Ready})
+	empty := newDirectMemoryModel().setResult("cp-1", domain.MemorySnapshot{}, nil)
 	assert.Equal(t, "No memory data", empty.viewSized(contentSize{Width: 80, Height: 10}))
 }
 
 func TestMemoryFilterMatchesMetric(t *testing.T) {
-	memory := newMemoryModel(memoryTestState())
+	memory := newDirectMemoryModel().setResult("cp-1", memoryTestState(), nil)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('s'), keyPress('w'), keyPress('a'), keyPress('p'),
 		{Code: tea.KeyEnter},

@@ -181,7 +181,7 @@ func TestDirectAuxDiagnosticRejectsAtoBtoAResult(t *testing.T) {
 	assert.Contains(t, model.View().Content, "fresh-a")
 }
 
-func applyAuxDiagnostic(model directModel, kind viewKind, stamp directRequestStamp, failed bool) directModel {
+func applyAuxDiagnostic(model model, kind viewKind, stamp directRequestStamp, failed bool) model {
 	var message tea.Msg
 	switch kind {
 	case viewNetstat:
@@ -207,7 +207,7 @@ func applyAuxDiagnostic(model directModel, kind viewKind, stamp directRequestSta
 	return updated
 }
 
-func applyAuxPartial(model directModel, kind viewKind, stamp directRequestStamp) directModel {
+func applyAuxPartial(model model, kind viewKind, stamp directRequestStamp) model {
 	var message tea.Msg
 	switch kind {
 	case viewNetstat:
@@ -221,7 +221,7 @@ func applyAuxPartial(model directModel, kind viewKind, stamp directRequestStamp)
 	return updated
 }
 
-func directAuxFilter(model directModel, kind viewKind) (string, bool) {
+func directAuxFilter(model model, kind viewKind) (string, bool) {
 	switch kind {
 	case viewNetstat:
 		return model.netstat.filter, model.netstat.filtering
@@ -232,7 +232,7 @@ func directAuxFilter(model directModel, kind viewKind) (string, bool) {
 	}
 }
 
-func directAuxStatus(model directModel, kind viewKind) directLoadStatus {
+func directAuxStatus(model model, kind viewKind) directLoadStatus {
 	switch kind {
 	case viewNetstat:
 		return model.netstat.status

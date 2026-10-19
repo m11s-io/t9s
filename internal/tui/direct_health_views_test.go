@@ -8,17 +8,16 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
 
-func directHealthModel() directModel {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+func directHealthModel() model {
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	model.cluster.contextName = "prod"
 	model.cluster.contexts = []domain.ClusterContext{{Name: "prod", Cluster: "production", Endpoints: []string{"10.0.0.1"}}}
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{
 		{ID: "node-1", Name: "cp-1", Health: domain.HealthHealthy, Services: domain.ServiceSummary{Healthy: 7, Total: 7, Known: true}, Version: "v1.2"},
 		{ID: "node-2", Name: "worker-1", Health: domain.HealthUnhealthy, Stage: "maintenance", Problem: "rebooting", Services: domain.ServiceSummary{Known: true}, Version: "v1.2"},
 	}}}
@@ -116,7 +115,7 @@ func TestDirectMetadataUsesSharedHealthProjectionForReadyUnhealthyNode(t *testin
 func TestDirectProblemsBottomSelectionVisibleWithPartialOrUnavailableNotice(t *testing.T) {
 	for _, status := range []directLoadStatus{directPartial, directFailed} {
 		t.Run(string(status), func(t *testing.T) {
-			model := newDirectModel(context.Background(), nil, LaunchOptions{})
+			model := newModel(context.Background(), nil, LaunchOptions{})
 			model.splash = false
 			model.width, model.height = 120, 16
 			nodes := make([]domain.NodeSnapshot, 10)
@@ -125,7 +124,7 @@ func TestDirectProblemsBottomSelectionVisibleWithPartialOrUnavailableNotice(t *t
 					ID: fmt.Sprintf("node-%02d", index), Name: fmt.Sprintf("worker-%02d", index), Health: domain.HealthUnhealthy,
 				}
 			}
-			model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+			model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: nodes}}
 			model.cluster.etcd = directEtcdState{Status: status, Err: "Etcd data is unavailable"}
 			model, _ = runDirectPalette(t, model, "problems")
 			for range 9 {
@@ -145,13 +144,13 @@ func TestDirectProblemsBottomSelectionVisibleWithPartialOrUnavailableNotice(t *t
 }
 
 func TestDirectProblemsSelectionResetsAcrossContextsWithSameDiagnosisIdentity(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false
 	nodes := []domain.NodeSnapshot{
 		{ID: "node-a", Name: "worker-a", Health: domain.HealthUnhealthy},
 		{ID: "node-b", Name: "worker-b", Health: domain.HealthUnhealthy},
 	}
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: nodes}}
 	model.cluster.etcd = directEtcdState{Status: directReady}
 	model, _ = runDirectPalette(t, model, "problems")
 	model, _ = updateDirect(model, keyPress('j'))
@@ -160,7 +159,7 @@ func TestDirectProblemsSelectionResetsAcrossContextsWithSameDiagnosisIdentity(t 
 	model.beginSessionOpen("staging")
 	assert.Empty(t, model.problems.selectedKey)
 	assert.Equal(t, 0, model.problems.control.Cursor())
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: nodes}}
 	model.cluster.etcd = directEtcdState{Status: directReady}
 	model, _ = runDirectPalette(t, model, "problems")
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})

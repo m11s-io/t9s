@@ -6,15 +6,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func etcdTestState() application.EtcdState {
-	return application.EtcdState{
-		Status: application.Ready,
+func etcdTestState() directEtcdState {
+	return directEtcdState{
+		Status: directReady,
 		Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 			{Hostname: "cp-1", MemberID: 1, IsLeader: true, StatusKnown: true, DBSize: 2097152, RaftIndex: 4200},
 			{Hostname: "cp-2", MemberID: 2, StatusKnown: false},
@@ -38,8 +37,8 @@ func TestEtcdRenderSemanticColumns(t *testing.T) {
 }
 
 func TestEtcdRenderShowsAlarms(t *testing.T) {
-	state := application.EtcdState{
-		Status: application.Ready,
+	state := directEtcdState{
+		Status: directReady,
 		Value: domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{
 			{Hostname: "cp-1", MemberID: 1, StatusKnown: true, Alarms: []string{"NOSPACE"}},
 		}},

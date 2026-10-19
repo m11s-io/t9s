@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -15,7 +14,6 @@ type LaunchOptions struct {
 }
 
 // directClusterState is the single root-owned store for shared cluster data.
-// The node renderer still consumes application.NodeState during migration.
 type directClusterState struct {
 	contexts    []domain.ClusterContext
 	contextName string
@@ -24,6 +22,14 @@ type directClusterState struct {
 	events      directEventState
 	etcd        directEtcdState
 	kubernetes  directKubernetesState
+}
+
+// directNodeState contains the node data and presentation status owned by the
+// TUI. The backend returns domain snapshots and does not know about this state.
+type directNodeState struct {
+	Status directLoadStatus
+	Value  domain.NodeSet
+	Err    string
 }
 
 type directLoadStatus string
@@ -68,6 +74,18 @@ type directKubernetesState struct {
 	Err    string
 }
 
+// resourceBrowserState is a small TUI fixture/input shape for the resource
+// screens. Live results and load status are owned by each screen model.
+type resourceBrowserState struct {
+	KindsStatus     directLoadStatus
+	KindsErr        string
+	Kinds           domain.ResourceKindSet
+	InstancesStatus directLoadStatus
+	InstancesErr    string
+	Instances       domain.ResourceInstanceSet
+	SelectedKind    string
+}
+
 func directNodeLoadStatus(nodes domain.NodeSet) directLoadStatus {
 	for _, node := range nodes.Nodes {
 		if node.Problem != "" {
@@ -84,10 +102,13 @@ func directServiceLoadStatus(services domain.ServiceSet) directLoadStatus {
 	return directReady
 }
 
-// directNodeState temporarily aliases the node renderer's presentation
-// contract. Task 18 can remove it after that renderer consumes direct state.
-type directNodeState = application.NodeState
-
 type directViewState struct {
 	notice string
+}
+
+func fallback(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }

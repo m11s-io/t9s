@@ -6,25 +6,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func processesTestState() application.ProcessesState {
-	return application.ProcessesState{
-		Status: application.Ready,
-		Node:   "cp-1",
-		Value: domain.ProcessSet{Processes: []domain.ProcessSnapshot{
-			{PID: 1, State: "Running", CPUTime: 12.3, ResidentMemory: 2097152, Command: "init"},
-			{PID: 42, State: "Sleeping", CPUTime: 0.4, ResidentMemory: 1048576, Command: "kubelet"},
-		}},
-	}
+func processesTestState() domain.ProcessSet {
+	return domain.ProcessSet{Processes: []domain.ProcessSnapshot{
+		{PID: 1, State: "Running", CPUTime: 12.3, ResidentMemory: 2097152, Command: "init"},
+		{PID: 42, State: "Sleeping", CPUTime: 0.4, ResidentMemory: 1048576, Command: "kubelet"},
+	}}
 }
 
-func renderProcesses(width int, state application.ProcessesState) string {
-	return newProcessesModel(state).view(width)
+func renderProcesses(width int, state domain.ProcessSet) string {
+	return newDirectProcessesModel().setResult("cp-1", state, nil).view(width)
 }
 
 func TestProcessesRenderSemanticColumns(t *testing.T) {
@@ -43,13 +38,13 @@ func TestProcessesRenderSemanticColumns(t *testing.T) {
 }
 
 func TestProcessesRenderEmptyState(t *testing.T) {
-	model := newProcessesModel(application.ProcessesState{Status: application.Ready})
+	model := newDirectProcessesModel().setResult("cp-1", domain.ProcessSet{}, nil)
 	rendered := model.viewSized(contentSize{Width: 80, Height: 10})
 	assert.Equal(t, "No processes", rendered)
 }
 
 func TestProcessesFilterMatchesCommand(t *testing.T) {
-	processes := newProcessesModel(processesTestState())
+	processes := newDirectProcessesModel().setResult("cp-1", processesTestState(), nil)
 	for _, message := range []tea.KeyPressMsg{
 		keyPress('/'), keyPress('k'), keyPress('u'), keyPress('b'), keyPress('e'),
 		{Code: tea.KeyEnter},

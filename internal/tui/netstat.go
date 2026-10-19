@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -20,27 +19,7 @@ type netstatModel struct {
 	control   listControl
 }
 
-func newNetstatModel(state application.SocketState) netstatModel {
-	return (netstatModel{status: directLoading}).setState(state)
-}
-
 func newDirectNetstatModel() netstatModel { return netstatModel{status: directLoading} }
-
-func (m netstatModel) setState(state application.SocketState) netstatModel {
-	previousIndex := m.control.Cursor()
-	m.values, m.err, m.node = state.Value, state.Err, state.Node
-	switch state.Status {
-	case application.Loading, application.Idle:
-		m.status = directLoading
-	case application.Partial:
-		m.status = directPartial
-	case application.Failed:
-		m.status = directFailed
-	default:
-		m.status = directReady
-	}
-	return m.normalizeSelection(previousIndex)
-}
 
 func (m netstatModel) setResult(node string, values domain.SocketSet, err error) netstatModel {
 	previousIndex := m.control.Cursor()

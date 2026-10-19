@@ -8,7 +8,6 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -17,21 +16,6 @@ func sensitivityMarker(sensitive bool) string {
 		return "⚠"
 	}
 	return ""
-}
-
-func directStatusFromLegacy(status application.LoadStatus) directLoadStatus {
-	switch status {
-	case application.Loading:
-		return directLoading
-	case application.Ready:
-		return directReady
-	case application.Partial:
-		return directPartial
-	case application.Failed:
-		return directFailed
-	default:
-		return ""
-	}
 }
 
 func firstNonEmpty(values ...string) string {
@@ -44,7 +28,6 @@ func firstNonEmpty(values ...string) string {
 }
 
 type resourceKindsModel struct {
-	state       application.ResourceBrowserState
 	status      directLoadStatus
 	values      domain.ResourceKindSet
 	err         string
@@ -54,15 +37,8 @@ type resourceKindsModel struct {
 	control     listControl
 }
 
-func newResourceKindsModel(state application.ResourceBrowserState) resourceKindsModel {
-	return (resourceKindsModel{state: state, values: state.Kinds, status: directStatusFromLegacy(state.KindsStatus), err: state.KindsErr}).normalizeSelection(0)
-}
-
-func (m resourceKindsModel) setState(state application.ResourceBrowserState) resourceKindsModel {
-	previousIndex := m.control.Cursor()
-	m.state = state
-	m.values, m.status, m.err = state.Kinds, directStatusFromLegacy(state.KindsStatus), state.KindsErr
-	return m.normalizeSelection(previousIndex)
+func newResourceKindsModel(state resourceBrowserState) resourceKindsModel {
+	return (resourceKindsModel{values: state.Kinds, status: state.KindsStatus, err: state.KindsErr}).normalizeSelection(0)
 }
 
 func (m resourceKindsModel) setKinds(values domain.ResourceKindSet, status directLoadStatus, err string) resourceKindsModel {
@@ -151,9 +127,6 @@ func (m resourceKindsModel) selectedValue() domain.ResourceKindSnapshot {
 
 func (m resourceKindsModel) visibleKinds() []domain.ResourceKindSnapshot {
 	kinds := m.values.Kinds
-	if kinds == nil {
-		kinds = m.state.Kinds.Kinds
-	}
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
 		return kinds
@@ -177,11 +150,11 @@ func (m resourceKindsModel) view(width int) string {
 
 func (m resourceKindsModel) viewSized(size contentSize) string {
 	kinds := m.visibleKinds()
-	if (m.status == directFailed || m.state.KindsStatus == application.Failed) && len(kinds) == 0 {
-		return fallback(firstNonEmpty(m.err, m.state.KindsErr))
+	if m.status == directFailed && len(kinds) == 0 {
+		return fallback(m.err)
 	}
 	if len(kinds) == 0 {
-		if m.status == directLoading || m.status == "" || m.state.KindsStatus == application.Loading || m.state.KindsStatus == application.Idle {
+		if m.status == directLoading || m.status == "" {
 			return "Loading resource kinds…"
 		}
 		if m.err != "" {
@@ -243,25 +216,18 @@ func resourceKindRowValues(kind domain.ResourceKindSnapshot) []string {
 }
 
 type resourceInstancesModel struct {
-	state       application.ResourceBrowserState
-	status      directLoadStatus
-	values      domain.ResourceInstanceSet
-	err         string
-	selectedKey string
-	filter      string
-	filtering   bool
-	control     listControl
+	status       directLoadStatus
+	values       domain.ResourceInstanceSet
+	err          string
+	selectedKey  string
+	selectedKind string
+	filter       string
+	filtering    bool
+	control      listControl
 }
 
-func newResourceInstancesModel(state application.ResourceBrowserState) resourceInstancesModel {
-	return (resourceInstancesModel{state: state, values: state.Instances, status: directStatusFromLegacy(state.InstancesStatus), err: state.InstancesErr}).normalizeSelection(0)
-}
-
-func (m resourceInstancesModel) setState(state application.ResourceBrowserState) resourceInstancesModel {
-	previousIndex := m.control.Cursor()
-	m.state = state
-	m.values, m.status, m.err = state.Instances, directStatusFromLegacy(state.InstancesStatus), state.InstancesErr
-	return m.normalizeSelection(previousIndex)
+func newResourceInstancesModel(state resourceBrowserState) resourceInstancesModel {
+	return (resourceInstancesModel{values: state.Instances, status: state.InstancesStatus, err: state.InstancesErr, selectedKind: state.SelectedKind}).normalizeSelection(0)
 }
 
 func resourceInstanceIdentity(value domain.ResourceInstanceSnapshot) string {
@@ -353,9 +319,6 @@ func (m resourceInstancesModel) selectedValue() domain.ResourceInstanceSnapshot 
 
 func (m resourceInstancesModel) visibleInstances() []domain.ResourceInstanceSnapshot {
 	instances := m.values.Instances
-	if instances == nil {
-		instances = m.state.Instances.Instances
-	}
 	query := strings.ToLower(strings.TrimSpace(m.filter))
 	if query == "" {
 		return instances
@@ -392,11 +355,11 @@ func (m resourceInstancesModel) view(width int) string {
 
 func (m resourceInstancesModel) viewSized(size contentSize) string {
 	instances := m.visibleInstances()
-	if (m.status == directFailed || m.state.InstancesStatus == application.Failed) && len(instances) == 0 {
-		return fallback(firstNonEmpty(m.err, m.state.InstancesErr))
+	if m.status == directFailed && len(instances) == 0 {
+		return fallback(m.err)
 	}
 	if len(instances) == 0 {
-		if m.status == directLoading || m.status == "" || m.state.InstancesStatus == application.Loading || m.state.InstancesStatus == application.Idle {
+		if m.status == directLoading || m.status == "" {
 			return "Loading instances…"
 		}
 		if m.err != "" {

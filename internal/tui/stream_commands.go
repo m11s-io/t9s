@@ -13,27 +13,27 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
-func (m *directModel) openDirectServiceLogs(service domain.ServiceSnapshot) tea.Cmd {
+func (m *model) openDirectServiceLogs(service domain.ServiceSnapshot) tea.Cmd {
 	target := domain.LogRequest{Node: service.Node, Service: service.Name}
 	request, _ := m.requests.beginWithContext("service-logs", m.generation(), m.sessionCtx)
-	m.logStream = directLogStreamState{request: request, target: target, status: application.Loading}
+	m.logStream = directLogStreamState{request: request, target: target, status: directLoading}
 	m.logs = newDirectServiceLogsModel()
 	m.views = m.views.push(viewFrame{Kind: viewServiceLogs, Label: fallback(service.Name) + "@" + fallback(service.Node) + " > logs"})
 	m.syncDirectStreamViewports()
 	return directOpenServiceLogsCommand(m.session, request, target)
 }
 
-func (m *directModel) openDirectDmesg(node string) tea.Cmd {
+func (m *model) openDirectDmesg(node string) tea.Cmd {
 	target := domain.DmesgRequest{Node: node, Follow: true, Tail: true}
 	request, _ := m.requests.beginWithContext("dmesg", m.generation(), m.sessionCtx)
-	m.dmesgStream = directDmesgStreamState{request: request, target: target, status: application.Loading}
+	m.dmesgStream = directDmesgStreamState{request: request, target: target, status: directLoading}
 	m.dmesg = newDirectDmesgModel()
 	m.views = m.views.push(viewFrame{Kind: viewDmesg, Label: fallback(node) + " > dmesg"})
 	m.syncDirectStreamViewports()
 	return directOpenDmesgCommand(m.session, request, target)
 }
 
-func (m *directModel) closeDirectLogs(dmesg bool) {
+func (m *model) closeDirectLogs(dmesg bool) {
 	if dmesg {
 		m.requests.cancelSlot("dmesg")
 		if m.dmesgStream.stream != nil {
@@ -49,36 +49,36 @@ func (m *directModel) closeDirectLogs(dmesg bool) {
 	}
 }
 
-func (m *directModel) reconnectDirectLogs(dmesg bool) tea.Cmd {
+func (m *model) reconnectDirectLogs(dmesg bool) tea.Cmd {
 	if dmesg {
 		target := m.dmesgStream.target
 		m.closeDirectLogs(true)
 		request, _ := m.requests.beginWithContext("dmesg", m.generation(), m.sessionCtx)
-		m.dmesgStream = directDmesgStreamState{request: request, target: target, status: application.Loading}
-		m.dmesg = m.dmesg.setStreamState(application.Loading, nil, "", false)
+		m.dmesgStream = directDmesgStreamState{request: request, target: target, status: directLoading}
+		m.dmesg = m.dmesg.setStreamState(directLoading, nil, "", false)
 		m.syncDirectStreamViewports()
 		return directOpenDmesgCommand(m.session, request, target)
 	}
 	target := m.logStream.target
 	m.closeDirectLogs(false)
 	request, _ := m.requests.beginWithContext("service-logs", m.generation(), m.sessionCtx)
-	m.logStream = directLogStreamState{request: request, target: target, status: application.Loading}
-	m.logs = m.logs.setStreamState(application.Loading, nil, "", false)
+	m.logStream = directLogStreamState{request: request, target: target, status: directLoading}
+	m.logs = m.logs.setStreamState(directLoading, nil, "", false)
 	m.syncDirectStreamViewports()
 	return directOpenServiceLogsCommand(m.session, request, target)
 }
 
-func (m *directModel) reconnectDirectClusterHealth() tea.Cmd {
+func (m *model) reconnectDirectClusterHealth() tea.Cmd {
 	target := pureClusterHealthRequestFromNodes(m.cluster.nodes.Value.Nodes, m.healthStream.target.WaitTimeout)
 	m.closeDirectHealth()
 	request, _ := m.requests.beginWithContext("cluster-health", m.generation(), m.sessionCtx)
 	m.healthStream = directHealthStreamState{request: request, target: target}
-	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{Status: application.Loading, Request: target})
+	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{Status: directLoading, Request: target})
 	m.syncDirectStreamViewports()
 	return directOpenClusterHealthCommand(m.session, request, target)
 }
 
-func (m *directModel) syncDirectStreamViewports() {
+func (m *model) syncDirectStreamViewports() {
 	layout := layoutShell(m.width, m.height)
 	frame := layoutResourceFrame(layout.Width, layout.ContentHeight, directResourceTitle(*m, m.views.top().Kind))
 	size := contentSize{Width: frame.InnerWidth, Height: frame.InnerHeight}
@@ -104,7 +104,7 @@ func appendBoundedLines(current, batch []string, limit int) []string {
 	return result
 }
 
-func (m *directModel) closeStreamsOutsideView(previous viewStack) {
+func (m *model) closeStreamsOutsideView(previous viewStack) {
 	if previous.contains(viewServiceLogs) && !m.views.contains(viewServiceLogs) {
 		m.closeDirectLogs(false)
 	}
@@ -171,7 +171,7 @@ func directDmesgNextCommand(stream ports.DmesgStream, request directRequest) tea
 	})
 }
 
-func (m *directModel) openDirectEventFollow() tea.Cmd {
+func (m *model) openDirectEventFollow() tea.Cmd {
 	m.requests.cancelSlot("cluster-events")
 	request, _ := m.requests.beginWithContext("cluster-events-follow", m.generation(), m.sessionCtx)
 	m.eventFollow = directEventFollowState{request: request, attempted: true, following: true}
@@ -183,7 +183,7 @@ func (m *directModel) openDirectEventFollow() tea.Cmd {
 	return directFollowEventsCommand(m.session, request)
 }
 
-func (m *directModel) closeDirectEventFollow() {
+func (m *model) closeDirectEventFollow() {
 	m.requests.cancelSlot("cluster-events-follow")
 	if m.eventFollow.stream != nil {
 		_ = m.eventFollow.stream.Close()
@@ -192,7 +192,7 @@ func (m *directModel) closeDirectEventFollow() {
 	m.eventFollow.following = false
 }
 
-func (m *directModel) applyDirectEventBatch(batch domain.EventSet, err error) {
+func (m *model) applyDirectEventBatch(batch domain.EventSet, err error) {
 	m.cluster.events.Value.Events = appendBoundedEvents(m.cluster.events.Value.Events, batch.Events, 2000)
 	for _, problem := range batch.Problems {
 		found := false
@@ -235,7 +235,7 @@ func appendBoundedEvents(current, batch []domain.EventSnapshot, limit int) []dom
 	return result
 }
 
-func (m *directModel) openDirectClusterHealth(timeout time.Duration) (directModel, tea.Cmd) {
+func (m *model) openDirectClusterHealth(timeout time.Duration) (model, tea.Cmd) {
 	if m.session == nil {
 		m.view.notice = "Session unavailable"
 		return *m, nil
@@ -243,13 +243,13 @@ func (m *directModel) openDirectClusterHealth(timeout time.Duration) (directMode
 	requestTarget := pureClusterHealthRequestFromNodes(m.cluster.nodes.Value.Nodes, timeout)
 	request, _ := m.requests.beginWithContext("cluster-health", m.generation(), m.sessionCtx)
 	m.healthStream = directHealthStreamState{request: request, target: requestTarget}
-	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{Status: application.Loading, Request: requestTarget})
+	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{Status: directLoading, Request: requestTarget})
 	m.views = m.views.push(viewFrame{Kind: viewClusterHealth, Label: "healthcheck"})
 	m.syncDirectStreamViewports()
 	return *m, directOpenClusterHealthCommand(m.session, request, requestTarget)
 }
 
-func (m *directModel) closeDirectHealth() {
+func (m *model) closeDirectHealth() {
 	m.requests.cancelSlot("cluster-health")
 	if m.healthStream.stream != nil {
 		_ = m.healthStream.stream.Close()
@@ -313,7 +313,7 @@ func directClusterHealthNextCommand(stream ports.ClusterHealthStream, request di
 	})
 }
 
-func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) updateDirectEventAndHealthResult(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case directEventFollowOpened:
 		current := m.requests.current(message.request) && message.request.generation == m.generation() && message.request == m.eventFollow.request.stamp && m.eventFollow.following
@@ -369,12 +369,12 @@ func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Mode
 			if message.stream != nil {
 				_ = message.stream.Close()
 			}
-			m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Failed, Request: m.healthStream.target, Err: "Cluster health check is unavailable"})
+			m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: directFailed, Request: m.healthStream.target, Err: "Cluster health check is unavailable"})
 			m.requests.cancelSlot("cluster-health")
 			return m, nil
 		}
 		m.healthStream.stream = message.stream
-		m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: application.Ready, Request: m.healthStream.target})
+		m.healthcheck = m.healthcheck.setStreamState(healthcheckDisplayState{Status: directReady, Request: m.healthStream.target})
 		return m, directClusterHealthNextCommand(message.stream, m.healthStream.request)
 	case directClusterHealthBatch:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.healthStream.request.stamp {
@@ -385,7 +385,7 @@ func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Mode
 			state.Lines = appendBoundedLines(state.Lines, []string{message.progress.Message}, 500)
 		}
 		if (message.err != nil && !errors.Is(message.err, io.EOF)) || message.progress.Err != "" {
-			state.Status = application.Failed
+			state.Status = directFailed
 			state.Err = "Cluster health check is unavailable"
 			if message.progress.Err != "" {
 				state.Err = message.progress.Err
@@ -399,7 +399,7 @@ func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Mode
 		if message.progress.EOF {
 			state.EOF = true
 			state.VerdictReady = true
-			state.Status = application.Ready
+			state.Status = directReady
 			m.healthcheck = m.healthcheck.setStreamState(state)
 			m.syncDirectStreamViewports()
 			m.closeDirectHealth()
@@ -418,7 +418,7 @@ func (m directModel) updateDirectEventAndHealthResult(message tea.Msg) (tea.Mode
 	return m, nil
 }
 
-func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case directServiceLogsOpened:
 		current := m.requests.current(message.request)
@@ -435,14 +435,14 @@ func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd
 			if message.stream != nil {
 				_ = message.stream.Close()
 			}
-			m.logStream.status, m.logStream.err = application.Failed, "Service logs are unavailable"
-			m.logs = m.logs.setStreamState(application.Failed, nil, m.logStream.err, false)
+			m.logStream.status, m.logStream.err = directFailed, "Service logs are unavailable"
+			m.logs = m.logs.setStreamState(directFailed, nil, m.logStream.err, false)
 			m.syncDirectStreamViewports()
 			m.requests.cancelSlot("service-logs")
 			return m, nil
 		}
 		m.logStream.stream = message.stream
-		m.logStream.status = application.Ready
+		m.logStream.status = directReady
 		return m, directServiceLogNextCommand(message.stream, m.logStream.request)
 	case directServiceLogBatch:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.logStream.request.stamp {
@@ -450,15 +450,15 @@ func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd
 		}
 		lines := appendBoundedLines(m.logs.state.Lines, message.batch.Lines, 5000)
 		if message.batch.Err != "" {
-			m.logStream.status, m.logStream.err = application.Failed, message.batch.Err
+			m.logStream.status, m.logStream.err = directFailed, message.batch.Err
 		}
 		if message.err != nil && !errors.Is(message.err, io.EOF) {
-			m.logStream.status, m.logStream.err = application.Failed, "Service log stream failed"
+			m.logStream.status, m.logStream.err = directFailed, "Service log stream failed"
 		}
 		m.logStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
 		m.logs = m.logs.setStreamState(m.logStream.status, lines, m.logStream.err, m.logStream.eof)
 		m.syncDirectStreamViewports()
-		if !m.logStream.eof && m.logStream.status != application.Failed {
+		if !m.logStream.eof && m.logStream.status != directFailed {
 			return m, directServiceLogNextCommand(m.logStream.stream, m.logStream.request)
 		}
 		m.requests.cancelSlot("service-logs")
@@ -478,14 +478,14 @@ func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd
 			if message.stream != nil {
 				_ = message.stream.Close()
 			}
-			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream is unavailable"
-			m.dmesg = m.dmesg.setStreamState(application.Failed, nil, m.dmesgStream.err, false)
+			m.dmesgStream.status, m.dmesgStream.err = directFailed, "Dmesg stream is unavailable"
+			m.dmesg = m.dmesg.setStreamState(directFailed, nil, m.dmesgStream.err, false)
 			m.syncDirectStreamViewports()
 			m.requests.cancelSlot("dmesg")
 			return m, nil
 		}
 		m.dmesgStream.stream = message.stream
-		m.dmesgStream.status = application.Ready
+		m.dmesgStream.status = directReady
 		return m, directDmesgNextCommand(message.stream, m.dmesgStream.request)
 	case directDmesgBatch:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() || message.request != m.dmesgStream.request.stamp {
@@ -493,15 +493,15 @@ func (m directModel) updateDirectLogsResult(message tea.Msg) (tea.Model, tea.Cmd
 		}
 		lines := appendBoundedLines(m.dmesg.state.Lines, message.batch.Lines, 5000)
 		if message.batch.Err != "" {
-			m.dmesgStream.status, m.dmesgStream.err = application.Failed, message.batch.Err
+			m.dmesgStream.status, m.dmesgStream.err = directFailed, message.batch.Err
 		}
 		if message.err != nil && !errors.Is(message.err, io.EOF) {
-			m.dmesgStream.status, m.dmesgStream.err = application.Failed, "Dmesg stream failed"
+			m.dmesgStream.status, m.dmesgStream.err = directFailed, "Dmesg stream failed"
 		}
 		m.dmesgStream.eof = message.batch.EOF || errors.Is(message.err, io.EOF)
 		m.dmesg = m.dmesg.setStreamState(m.dmesgStream.status, lines, m.dmesgStream.err, m.dmesgStream.eof)
 		m.syncDirectStreamViewports()
-		if !m.dmesgStream.eof && m.dmesgStream.status != application.Failed {
+		if !m.dmesgStream.eof && m.dmesgStream.status != directFailed {
 			return m, directDmesgNextCommand(m.dmesgStream.stream, m.dmesgStream.request)
 		}
 		m.requests.cancelSlot("dmesg")

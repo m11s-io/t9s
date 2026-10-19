@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -179,25 +178,7 @@ func (m etcdModel) viewSized(size contentSize, state directEtcdState) string {
 	return contents
 }
 
-// legacyViewSized adapts reducer state for the legacy root until Task 18.
-func (m etcdModel) legacyViewSized(size contentSize, state application.EtcdState) string {
-	direct := directEtcdState{Value: state.Value}
-	switch state.Status {
-	case application.Loading, application.Idle:
-		direct.Status = directLoading
-	case application.Ready:
-		direct.Status = directReady
-	case application.Partial:
-		direct.Status = directPartial
-		direct.Err = "Some etcd data is unavailable"
-	case application.Failed:
-		direct.Status = directFailed
-		direct.Err = "Etcd data is unavailable"
-	}
-	return m.viewSized(size, direct)
-}
-
-func renderEtcd(width int, state application.EtcdState) string {
+func renderEtcd(width int, state directEtcdState) string {
 	model := newEtcdModel()
 	return model.view(width, state.Value.Members)
 }

@@ -16,19 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func directResourceModel(t *testing.T, kindReader *testkit.FakeResourceKindReader, instanceReader *testkit.FakeResourceInstanceReader) directModel {
+func directResourceModel(t *testing.T, kindReader *testkit.FakeResourceKindReader, instanceReader *testkit.FakeResourceInstanceReader) model {
 	t.Helper()
 	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
 		return &testkit.FakeSession{ResourceKindReader: kindReader, ResourceInstanceReader: instanceReader}, nil
 	}}})
-	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model := newModel(context.Background(), client, LaunchOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	session, err := client.Open(ctx, "dev", application.Options{})
 	require.NoError(t, err)
 	model.session, model.sessionCtx, model.sessionCancel = session, ctx, cancel
 	model.splash = false
-	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-id", Name: "worker-1"}}}}
+	model.cluster.nodes = directNodeState{Status: directReady, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-id", Name: "worker-1"}}}}
 	model.nodes = model.nodes.normalizeSelection(model.cluster.nodes.Value.Nodes, 0)
 	return model
 }
@@ -94,7 +94,7 @@ func TestDirectResourceAliasesOpenRequestedKind(t *testing.T) {
 	command := model.runClusterCommand("res machine")
 	require.NotNil(t, command)
 	updated, command := model.Update(command())
-	model = updated.(directModel)
+	model = modelFromTea(updated)
 	require.NotNil(t, command, "loading the requested kind should continue into its metadata list")
 	model, _ = updateDirect(model, command())
 	assert.Equal(t, viewResourceInstances, model.views.top().Kind, "the resources/res alias and kind argument should open the matching list")
@@ -126,7 +126,7 @@ func TestDirectResourceDetailPinsIdentityAndDiscardsStaleABAKindResults(t *testi
 	assert.Equal(t, "fresh", model.resourceInstances.values.Instances[0].ID)
 	firstItem := domain.ResourceInstanceSnapshot{Namespace: "runtime", ID: "first"}
 	selectedItem := domain.ResourceInstanceSnapshot{Namespace: "runtime", ID: "selected"}
-	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{firstItem, selectedItem}}, directReady, "")
+	model.resourceInstances = newResourceInstancesModel(resourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{firstItem, selectedItem}}, directReady, "")
 	model.resourceInstances.control.SetCursor(1)
 	model.resourceInstances.selectedKey = resourceInstanceIdentity(selectedItem)
 	model.resourceInstances = model.resourceInstances.setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{selectedItem, firstItem}}, directReady, "")
@@ -177,7 +177,7 @@ func TestDirectResourceKindKeyboardSelectionSurvivesRefreshReorder(t *testing.T)
 		return domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{{Type: "kind-b", DisplayType: "B"}, {Type: "kind-a", DisplayType: "A"}}}, nil
 	}}, &testkit.FakeResourceInstanceReader{})
 	model.views = model.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
-	model.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{}).setKinds(domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{{Type: "kind-a", DisplayType: "A"}, {Type: "kind-b", DisplayType: "B"}}}, directReady, "")
+	model.resourceKinds = newResourceKindsModel(resourceBrowserState{}).setKinds(domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{{Type: "kind-a", DisplayType: "A"}, {Type: "kind-b", DisplayType: "B"}}}, directReady, "")
 	model, _ = updateDirect(model, keyPress('j'))
 	assert.Equal(t, "kind-b", model.resourceKinds.selectedValue().Type)
 	model, command := updateDirect(model, keyPress('r'))
@@ -199,7 +199,7 @@ func TestDirectResourceInstanceKeyboardSelectionSurvivesRefreshReorder(t *testin
 	}})
 	frame := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind"}
 	model.views = model.views.push(frame)
-	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "a"}, {Namespace: "ns", ID: "b"}}}, directReady, "")
+	model.resourceInstances = newResourceInstancesModel(resourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "a"}, {Namespace: "ns", ID: "b"}}}, directReady, "")
 	model, _ = updateDirect(model, keyPress('j'))
 	assert.Equal(t, "b", model.resourceInstances.selectedValue().ID)
 	model, command := updateDirect(model, keyPress('r'))
@@ -219,8 +219,8 @@ func TestDirectResourceCommandReentryReplacesExistingBrowserBranch(t *testing.T)
 	model.views = model.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
 	frameA := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind-a"}
 	model.views = model.views.push(frameA)
-	model.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{}).setKinds(domain.ResourceKindSet{Kinds: kinds}, directReady, "")
-	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{ID: "A-only"}}}, directReady, "")
+	model.resourceKinds = newResourceKindsModel(resourceBrowserState{}).setKinds(domain.ResourceKindSet{Kinds: kinds}, directReady, "")
+	model.resourceInstances = newResourceInstancesModel(resourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{ID: "A-only"}}}, directReady, "")
 	model = runDirectPaletteThroughCommands(t, model, "res kind-b")
 	assert.Equal(t, "kind-b", model.views.top().ResourceKind)
 	resourceFrames := 0
@@ -237,7 +237,7 @@ func TestDirectResourceCommandReentryReplacesExistingBrowserBranch(t *testing.T)
 	assert.Equal(t, viewNodes, model.views.top().Kind)
 }
 
-func runDirectPaletteThroughCommands(t *testing.T, model directModel, value string) directModel {
+func runDirectPaletteThroughCommands(t *testing.T, model model, value string) model {
 	t.Helper()
 	model, _ = updateDirect(model, keyPress(':'))
 	for _, character := range value {
@@ -282,7 +282,7 @@ func TestDirectResourceDetailShowsLoadingAndRetainsYAMLScrollAcrossResize(t *tes
 	model.width, model.height = 100, 32
 	frame := viewFrame{Kind: viewResourceInstances, NodeID: "node-id", NodeTarget: "worker-1", ResourceKind: "kind"}
 	model.views = model.views.push(frame)
-	model.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "selected"}}}, directReady, "")
+	model.resourceInstances = newResourceInstancesModel(resourceBrowserState{}).setInstances(domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{{Namespace: "ns", ID: "selected"}}}, directReady, "")
 	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, command)
 	assert.Contains(t, model.View().Content, "Loading resource…")

@@ -13,7 +13,7 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
-type directModel struct {
+type model struct {
 	client               *application.Client
 	options              LaunchOptions
 	requests             *directRequests
@@ -96,7 +96,7 @@ type directLogStreamState struct {
 	request directRequest
 	stream  ports.ServiceLogStream
 	target  domain.LogRequest
-	status  application.LoadStatus
+	status  directLoadStatus
 	err     string
 	eof     bool
 }
@@ -105,7 +105,7 @@ type directDmesgStreamState struct {
 	request directRequest
 	stream  ports.DmesgStream
 	target  domain.DmesgRequest
-	status  application.LoadStatus
+	status  directLoadStatus
 	err     string
 	eof     bool
 }
@@ -130,17 +130,17 @@ type directClearLogs struct{ dmesg bool }
 // The returned command is an idempotent fallback for terminal runtimes that
 // exit without delivering Bubble Tea's normal shutdown message.
 func NewWithCleanup(parent context.Context, client *application.Client, options LaunchOptions) (tea.Model, tea.Cmd) {
-	model := newDirectModel(parent, client, options)
+	model := newModel(parent, client, options)
 	return model, model.cleanup(tea.Quit())
 }
 
-func newDirectModel(parent context.Context, client *application.Client, options LaunchOptions) directModel {
+func newModel(parent context.Context, client *application.Client, options LaunchOptions) model {
 	if parent == nil {
 		parent = context.Background()
 	}
 	rootCtx, rootCancel := context.WithCancel(parent)
-	nodeState := application.NodeState{Status: application.Loading}
-	return directModel{
+	nodeState := directNodeState{Status: directLoading}
+	return model{
 		client: client, options: options, requests: newDirectRequests(), lifecycle: &directLifecycle{},
 		rootCtx: rootCtx, rootCancel: rootCancel,
 		cluster: directClusterState{
@@ -164,8 +164,8 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 		memory:            newDirectMemoryModel(),
 		time:              newDirectTimeModel(),
 		cpu:               newDirectCPUModel(),
-		resourceKinds:     newResourceKindsModel(application.ResourceBrowserState{}),
-		resourceInstances: newResourceInstancesModel(application.ResourceBrowserState{}),
+		resourceKinds:     newResourceKindsModel(resourceBrowserState{}),
+		resourceInstances: newResourceInstancesModel(resourceBrowserState{}),
 		resourceDetail:    newResourceDetailModel(),
 		logs:              newDirectServiceLogsModel(),
 		dmesg:             newDirectDmesgModel(),
@@ -176,12 +176,12 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 	}
 }
 
-func (m directModel) Init() tea.Cmd {
+func (m model) Init() tea.Cmd {
 	request, _ := m.requests.beginWithContext("contexts", 0, m.rootCtx)
 	return tea.Batch(directContextsCommand(m.client, request), splashTimer(), nodeAutoRefreshTick())
 }
 
-func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = message.Width, message.Height
@@ -204,7 +204,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.requests.cancelSlot("contexts")
 		m.cluster.contexts = append([]domain.ClusterContext(nil), message.contexts...)
 		if message.err != nil {
-			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Context discovery failed"}
+			m.cluster.nodes = directNodeState{Status: directFailed, Err: "Context discovery failed"}
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
 			m.cluster.etcd = directEtcdState{Status: directFailed, Err: "Etcd data is unavailable"}
@@ -214,7 +214,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		selected, err := directResolveContext(message.contexts, m.options.ContextName)
 		if err != nil {
-			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Selected context is unavailable"}
+			m.cluster.nodes = directNodeState{Status: directFailed, Err: "Selected context is unavailable"}
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
 			m.cluster.etcd = directEtcdState{Status: directFailed, Err: "Etcd data is unavailable"}
@@ -243,7 +243,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if message.err != nil {
-			m.cluster.nodes = application.NodeState{Status: application.Failed, Err: "Session unavailable"}
+			m.cluster.nodes = directNodeState{Status: directFailed, Err: "Session unavailable"}
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
 			m.cluster.etcd = directEtcdState{Status: directFailed, Err: "Etcd data is unavailable"}
@@ -644,12 +644,12 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m directModel) timeViewportHeight() int {
+func (m model) timeViewportHeight() int {
 	layout := layoutShell(m.width, m.height)
 	return layoutResourceFrame(layout.Width, layout.ContentHeight, "").InnerHeight
 }
 
-func (m *directModel) startClusterObservations(session *application.Session, generation uint64) tea.Cmd {
+func (m *model) startClusterObservations(session *application.Session, generation uint64) tea.Cmd {
 	nodeRequest, _ := m.requests.beginWithContext("cluster-nodes-services", generation, m.sessionCtx)
 	eventsRequest, _ := m.requests.beginWithContext("cluster-events", generation, m.sessionCtx)
 	etcdRequest, _ := m.requests.beginWithContext("cluster-etcd", generation, m.sessionCtx)
@@ -689,7 +689,7 @@ func resolveNodeFocus(nodes []domain.NodeSnapshot, focus string) string {
 	return ""
 }
 
-func (m *directModel) refreshDirectNodes() tea.Cmd {
+func (m *model) refreshDirectNodes() tea.Cmd {
 	if m.session == nil {
 		return nil
 	}
@@ -714,7 +714,7 @@ func directServiceActionKind(key string) application.ServiceActionKind {
 	}
 }
 
-func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapshot, kind application.ServiceActionKind) tea.Cmd {
+func (m *model) prepareDirectServiceMutation(service domain.ServiceSnapshot, kind application.ServiceActionKind) tea.Cmd {
 	m.mutation.upgrade = directUpgradeDisplayState{}
 	m.mutation.upgradeResult = nil
 	m.mutation.upgradeErr = nil
@@ -727,7 +727,7 @@ func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapsho
 	return directPrepareServiceCommand(m.session, m.sessionCtx, operation, m.generation(), application.ServiceActionRequest{Kind: kind, Node: service.Node, Service: service.Name})
 }
 
-func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRequest, member domain.EtcdMemberSnapshot) tea.Cmd {
+func (m *model) prepareDirectEtcdMutation(request application.EtcdActionRequest, member domain.EtcdMemberSnapshot) tea.Cmd {
 	m.mutation.upgrade = directUpgradeDisplayState{}
 	m.mutation.upgradeResult = nil
 	m.mutation.upgradeErr = nil
@@ -744,12 +744,12 @@ func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRe
 	return directPrepareEtcdCommand(m.session, m.sessionCtx, operation, m.generation(), request, member)
 }
 
-func (m *directModel) nextMutationOperation() uint64 {
+func (m *model) nextMutationOperation() uint64 {
 	m.mutationSequence++
 	return m.mutationSequence
 }
 
-func (m directModel) View() tea.View {
+func (m model) View() tea.View {
 	layout := layoutShell(m.width, m.height)
 	headerKind := m.views.top().Kind
 	if m.contexts.active {
@@ -826,11 +826,11 @@ func (m directModel) View() tea.View {
 	flash := m.view.notice
 	if flash == "" {
 		switch m.cluster.nodes.Status {
-		case application.Loading, application.Idle:
+		case directLoading:
 			flash = "Loading nodes…"
-		case application.Failed:
+		case directFailed:
 			flash = m.cluster.nodes.Err
-		case application.Ready, application.Partial:
+		case directReady, directPartial:
 			if len(m.cluster.nodes.Value.Nodes) == 0 {
 				flash = "No nodes"
 			}
@@ -909,11 +909,11 @@ func (m directModel) View() tea.View {
 	return result
 }
 
-func (m directModel) canShowDirectEtcdReceipt() bool {
+func (m model) canShowDirectEtcdReceipt() bool {
 	return m.views.top().Kind == viewEtcd && !m.etcd.filtering && !m.palette.active && !m.contexts.active && m.etcdPathPrompt == nil && m.timePrompt == nil
 }
 
-func (m directModel) directFilterEditing() bool {
+func (m model) directFilterEditing() bool {
 	switch m.views.top().Kind {
 	case viewNodes:
 		return m.nodes.filtering
@@ -956,7 +956,7 @@ func (m directModel) directFilterEditing() bool {
 	}
 }
 
-func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
+func (m *model) beginSessionOpen(contextName string) tea.Cmd {
 	m.requests.cancelSlot("upgrade-image")
 	m.requests.cancelSlot("upgrade-prepare")
 	m.closeDirectLogs(false)
@@ -982,7 +982,7 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.requests.cancelSlot("session-open")
 	m.generationCounter++
 	m.cluster.contextName = contextName
-	m.cluster.nodes = application.NodeState{Status: application.Loading}
+	m.cluster.nodes = directNodeState{Status: directLoading}
 	m.cluster.services = directServiceState{Status: directLoading}
 	m.cluster.events = directEventState{Status: directLoading}
 	m.cluster.etcd = directEtcdState{Status: directLoading}
@@ -1026,7 +1026,7 @@ func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
 	return actionHints(kind, writesEnabled)
 }
 
-func (m directModel) fallbackCleanup() {
+func (m model) fallbackCleanup() {
 	m.closeDirectLogs(false)
 	m.closeDirectLogs(true)
 	m.closeDirectEventFollow()
@@ -1046,7 +1046,7 @@ func (m directModel) fallbackCleanup() {
 	m.requests.cancelAll()
 }
 
-func (m *directModel) closeDirectSession() {
+func (m *model) closeDirectSession() {
 	if m.sessionCancel != nil {
 		m.sessionCancel()
 		m.sessionCancel = nil
@@ -1060,14 +1060,14 @@ func (m *directModel) closeDirectSession() {
 	}
 }
 
-func (m directModel) cleanup(next tea.Msg) tea.Cmd {
+func (m model) cleanup(next tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		m.fallbackCleanup()
 		return next
 	}
 }
 
-func (m directModel) generation() uint64 { return m.generationCounter }
+func (m model) generation() uint64 { return m.generationCounter }
 
 func directResolveContext(contexts []domain.ClusterContext, requested string) (string, error) {
 	if requested != "" {

@@ -202,7 +202,7 @@ func TestDirectDiagnosticFilterCanTypeQThenBackAndOpenPalette(t *testing.T) {
 	}
 }
 
-func directDiagnosticFilter(model directModel, kind viewKind) (string, bool) {
+func directDiagnosticFilter(model model, kind viewKind) (string, bool) {
 	switch kind {
 	case viewProcesses:
 		return model.processes.filter, model.processes.filtering

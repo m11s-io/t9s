@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 )
 
@@ -20,27 +19,7 @@ type mountsModel struct {
 	control   listControl
 }
 
-func newMountsModel(state application.MountState) mountsModel {
-	return (mountsModel{status: directLoading}).setState(state)
-}
-
 func newDirectMountsModel() mountsModel { return mountsModel{status: directLoading} }
-
-func (m mountsModel) setState(state application.MountState) mountsModel {
-	previousIndex := m.control.Cursor()
-	m.values, m.err, m.node = state.Value, state.Err, state.Node
-	switch state.Status {
-	case application.Loading, application.Idle:
-		m.status = directLoading
-	case application.Partial:
-		m.status = directPartial
-	case application.Failed:
-		m.status = directFailed
-	default:
-		m.status = directReady
-	}
-	return m.normalizeSelection(previousIndex)
-}
 
 func (m mountsModel) setResult(node string, values domain.MountSet, err error) mountsModel {
 	previousIndex := m.control.Cursor()

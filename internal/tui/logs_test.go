@@ -23,7 +23,7 @@ func TestServicesLogKeyOpensSelectedServiceLogs(t *testing.T) {
 	session, err := client.Open(context.Background(), "prod", application.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
-	root := newDirectModel(context.Background(), client, LaunchOptions{ContextName: "prod"})
+	root := newModel(context.Background(), client, LaunchOptions{ContextName: "prod"})
 	root.session, root.sessionCtx = session, context.Background()
 	root.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}}}
 	root.services = root.services.normalizeSelection(root.cluster.services.Value.Services, 0)
@@ -43,9 +43,9 @@ func TestServicesLogKeyOpensSelectedServiceLogs(t *testing.T) {
 }
 
 func TestServiceLogsFilterFollowWrapAndClear(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"starting etcd", "health check ok", strings.Repeat("wide ", 30),
-	}})
+	}, "", false)
 	for _, message := range []tea.KeyPressMsg{keyPress('/'), keyPress('h'), keyPress('e'), keyPress('a'), {Code: tea.KeyEnter}} {
 		logs = logs.update(message)
 	}
@@ -54,7 +54,7 @@ func TestServiceLogsFilterFollowWrapAndClear(t *testing.T) {
 
 	logs = logs.update(keyPress('s'))
 	assert.False(t, logs.following)
-	logs = logs.setState(application.LogState{Status: application.Ready, Following: true, Lines: []string{"new batch"}})
+	logs = logs.setStreamState(directReady, []string{"new batch"}, "", false)
 	assert.False(t, logs.following, "incoming batches preserve a user pause")
 	logs = logs.update(keyPress('w'))
 	assert.True(t, logs.wrap)
@@ -63,9 +63,9 @@ func TestServiceLogsFilterFollowWrapAndClear(t *testing.T) {
 }
 
 func TestServiceLogsScrollUpPausesFollowingAndMovesTowardOlderLines(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"line 1", "line 2", "line 3", "line 4", "line 5",
-	}})
+	}, "", false)
 	assert.True(t, logs.following)
 
 	logs = logs.update(tea.KeyPressMsg{Code: tea.KeyUp})
@@ -76,9 +76,9 @@ func TestServiceLogsScrollUpPausesFollowingAndMovesTowardOlderLines(t *testing.T
 }
 
 func TestServiceLogsGotoBottomResumesFollowing(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"line 1", "line 2", "line 3", "line 4", "line 5",
-	}})
+	}, "", false)
 	logs = logs.update(tea.KeyPressMsg{Code: tea.KeyUp})
 	assert.False(t, logs.following)
 
@@ -90,9 +90,9 @@ func TestServiceLogsGotoBottomResumesFollowing(t *testing.T) {
 }
 
 func TestServiceLogsGotoTopMovesToOldestLineAndPausesFollowing(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"line 1", "line 2", "line 3", "line 4", "line 5",
-	}})
+	}, "", false)
 
 	logs = logs.update(keyPress('g'))
 
@@ -102,11 +102,7 @@ func TestServiceLogsGotoTopMovesToOldestLineAndPausesFollowing(t *testing.T) {
 }
 
 func TestServiceLogsRenderIsBoundedAndShowsRetainedFailure(t *testing.T) {
-	logs := newLogsModel(application.LogState{
-		Status: application.Failed,
-		Lines:  []string{"line one", "line two", "line three"},
-		Err:    "log stream unavailable",
-	})
+	logs := newDirectServiceLogsModel().setStreamState(directFailed, []string{"line one", "line two", "line three"}, "log stream unavailable", false)
 
 	view := logs.viewSized(contentSize{Width: 20, Height: 3})
 	assert.LessOrEqual(t, len(strings.Split(view, "\n")), 3)
@@ -114,9 +110,9 @@ func TestServiceLogsRenderIsBoundedAndShowsRetainedFailure(t *testing.T) {
 }
 
 func TestServiceLogsStripANSIBeforeFilteringAndRendering(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"\x1b[31mcritical\x1b[0m service failure",
-	}})
+	}, "", false)
 	logs.filter = "critical"
 
 	lines := logs.visibleLines()
@@ -125,12 +121,12 @@ func TestServiceLogsStripANSIBeforeFilteringAndRendering(t *testing.T) {
 }
 
 func TestServiceLogsSanitizeNeutralizesControlCharacters(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"safe log\rEVIL",
 		"abc\b\b\bXYZ",
 		"hello\x0eworld",
 		"a\tb",
-	}})
+	}, "", false)
 
 	lines := logs.visibleLines()
 
@@ -148,11 +144,7 @@ func TestServiceLogsSanitizeNeutralizesControlCharacters(t *testing.T) {
 }
 
 func TestServiceLogsSanitizesErrBeforeRendering(t *testing.T) {
-	logs := newLogsModel(application.LogState{
-		Status: application.Failed,
-		Lines:  []string{"line one"},
-		Err:    "\x1b[31mstream closed\x1b[0m\rEVIL",
-	})
+	logs := newDirectServiceLogsModel().setStreamState(directFailed, []string{"line one"}, "\x1b[31mstream closed\x1b[0m\rEVIL", false)
 
 	view := logs.viewSized(contentSize{Width: 40, Height: 4})
 
@@ -162,9 +154,9 @@ func TestServiceLogsSanitizesErrBeforeRendering(t *testing.T) {
 }
 
 func TestServiceLogsHardwrapANSIAndWideTextWithinDisplayWidth(t *testing.T) {
-	logs := newLogsModel(application.LogState{Status: application.Ready, Lines: []string{
+	logs := newDirectServiceLogsModel().setStreamState(directReady, []string{
 		"abcde\x1b[31mfghij\x1b[0m界界",
-	}})
+	}, "", false)
 	logs.wrap = true
 
 	rendered := logs.renderedLines(6)

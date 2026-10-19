@@ -25,7 +25,7 @@ func TestServicesShellKeepsMovedSelectionVisible(t *testing.T) {
 	for index := range services {
 		services[index] = domain.ServiceSnapshot{Node: "cp-1", Name: fmt.Sprintf("service-%02d", index)}
 	}
-	root := newDirectModel(context.Background(), nil, LaunchOptions{})
+	root := newModel(context.Background(), nil, LaunchOptions{})
 	root.splash = false
 	root.views = root.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
 	root.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: services}}

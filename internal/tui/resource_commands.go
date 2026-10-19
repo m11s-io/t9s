@@ -46,7 +46,7 @@ func directResourceDetailCommand(session *application.Session, request directReq
 	})
 }
 
-func (m *directModel) applyResourceResult(message tea.Msg) tea.Cmd {
+func (m *model) applyResourceResult(message tea.Msg) tea.Cmd {
 	switch result := message.(type) {
 	case directResourceKindsLoaded:
 		if !m.requests.current(result.request) || result.request.generation != m.generation() || m.views.top().Kind != viewResourceKinds {
@@ -127,7 +127,7 @@ func directResourceDetailSlot(nodeID, kind, namespace, id string) string {
 	return "resources:detail:" + nodeID + ":" + kind + ":" + namespace + ":" + id
 }
 
-func (m directModel) directResourceInstancesOpen(nodeID, kind string) bool {
+func (m model) directResourceInstancesOpen(nodeID, kind string) bool {
 	frame := m.views.top()
 	if frame.Kind == viewResourceInstances {
 		return frame.NodeID == nodeID && frame.ResourceKind == kind
@@ -162,7 +162,7 @@ func resourceKindSensitive(values []domain.ResourceKindSnapshot, kind string) bo
 	return false
 }
 
-func (m *directModel) openDirectResources(kind string) tea.Cmd {
+func (m *model) openDirectResources(kind string) tea.Cmd {
 	previous := m.views
 	if m.session == nil {
 		m.pendingResourceKind = ""
@@ -182,15 +182,15 @@ func (m *directModel) openDirectResources(kind string) tea.Cmd {
 	} else {
 		m.views = m.views.push(viewFrame{Kind: viewResourceKinds, Label: "resources"})
 	}
-	m.resourceKinds = newResourceKindsModel(application.ResourceBrowserState{})
-	m.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{})
+	m.resourceKinds = newResourceKindsModel(resourceBrowserState{})
+	m.resourceInstances = newResourceInstancesModel(resourceBrowserState{})
 	m.resourceDetail = newResourceDetailModel()
 	m.cancelClosedDirectResources(previous)
 	request, _ := m.requests.beginWithContext("resources:kinds", m.generation(), m.sessionCtx)
 	return directResourceKindsCommand(m.session, request)
 }
 
-func (m *directModel) openDirectResourceInstances(kind domain.ResourceKindSnapshot) tea.Cmd {
+func (m *model) openDirectResourceInstances(kind domain.ResourceKindSnapshot) tea.Cmd {
 	node, ok := m.nodes.selected(m.cluster.nodes.Value.Nodes)
 	if !ok {
 		m.view.notice = "Select a node to list resources"
@@ -199,12 +199,12 @@ func (m *directModel) openDirectResourceInstances(kind domain.ResourceKindSnapsh
 	nodeID := directDiagnosticNodeID(node)
 	frame := viewFrame{Kind: viewResourceInstances, Label: kind.DisplayType, NodeID: nodeID, NodeTarget: node.Target(), ResourceKind: kind.Type}
 	m.views = m.views.push(frame)
-	m.resourceInstances = newResourceInstancesModel(application.ResourceBrowserState{})
+	m.resourceInstances = newResourceInstancesModel(resourceBrowserState{SelectedKind: kind.Type})
 	request, _ := m.requests.beginWithContext(directResourceInstanceSlot(nodeID, kind.Type), m.generation(), m.sessionCtx)
 	return directResourceInstancesCommand(m.session, request, nodeID, node.Target(), kind.Type)
 }
 
-func (m *directModel) refreshDirectResources(frame viewFrame) tea.Cmd {
+func (m *model) refreshDirectResources(frame viewFrame) tea.Cmd {
 	switch frame.Kind {
 	case viewResourceKinds:
 		request, _ := m.requests.beginWithContext("resources:kinds", m.generation(), m.sessionCtx)
@@ -222,7 +222,7 @@ func (m *directModel) refreshDirectResources(frame viewFrame) tea.Cmd {
 	return nil
 }
 
-func (m *directModel) resizeDirectResourceDetail() {
+func (m *model) resizeDirectResourceDetail() {
 	if m.views.top().Kind != viewResourceDetail || m.resourceDetail.status == directLoading {
 		return
 	}
@@ -235,7 +235,7 @@ func (m *directModel) resizeDirectResourceDetail() {
 	}
 }
 
-func (m *directModel) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
+func (m *model) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	frame, key := m.views.top(), message.String()
 	switch frame.Kind {
 	case viewResourceKinds:
@@ -287,7 +287,7 @@ func (m *directModel) handleResourceKey(message tea.KeyPressMsg) (tea.Cmd, bool)
 	return nil, false
 }
 
-func (m *directModel) popDirectResourceView() {
+func (m *model) popDirectResourceView() {
 	frame := m.views.top()
 	if len(m.views) <= 1 {
 		return
@@ -304,7 +304,7 @@ func (m *directModel) popDirectResourceView() {
 	}
 }
 
-func (m *directModel) cancelClosedDirectResources(previous viewStack) {
+func (m *model) cancelClosedDirectResources(previous viewStack) {
 	for _, frame := range previous {
 		if frame.Kind != viewResourceKinds && frame.Kind != viewResourceInstances && frame.Kind != viewResourceDetail {
 			continue
@@ -331,7 +331,7 @@ func (m *directModel) cancelClosedDirectResources(previous viewStack) {
 	}
 }
 
-func (m directModel) directResourceContent(size contentSize) (string, bool) {
+func (m model) directResourceContent(size contentSize) (string, bool) {
 	switch m.views.top().Kind {
 	case viewResourceKinds:
 		return m.resourceKinds.viewSized(size), true

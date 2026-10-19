@@ -22,7 +22,7 @@ func destructiveIntentInput() textinput.Model {
 	return input
 }
 
-func (m *directModel) prepareDirectNodeMutation(request application.NodeActionRequest) tea.Cmd {
+func (m *model) prepareDirectNodeMutation(request application.NodeActionRequest) tea.Cmd {
 	m.mutation.upgrade = directUpgradeDisplayState{}
 	m.mutation.upgradeResult = nil
 	m.mutation.upgradeErr = nil
@@ -35,7 +35,7 @@ func (m *directModel) prepareDirectNodeMutation(request application.NodeActionRe
 	return directPrepareNodeCommand(m.session, m.sessionCtx, operation, m.generation(), request)
 }
 
-func (m *directModel) updateDirectDestructivePrompt(message tea.KeyPressMsg) (tea.Cmd, bool) {
+func (m *model) updateDirectDestructivePrompt(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	prompt := m.mutation.prompt
 	if prompt == nil || (prompt.nodeKind != application.ActionReset && prompt.nodeKind != application.ActionWipeDevice) {
 		return nil, false
@@ -170,7 +170,7 @@ func (m *directModel) updateDirectDestructivePrompt(message tea.KeyPressMsg) (te
 	return nil, true
 }
 
-func (m *directModel) destructivePreviewPageSize() int {
+func (m *model) destructivePreviewPageSize() int {
 	layout := layoutShell(m.width, m.height)
 	innerHeight := layoutResourceFrame(layout.Width, layout.ContentHeight, "reset").InnerHeight
 	return max(1, innerHeight-7)
@@ -343,7 +343,7 @@ func directCurrentInstallImageCommand(session *application.Session, request dire
 	}
 }
 
-func (m *directModel) beginDirectUpgrade(target string) tea.Cmd {
+func (m *model) beginDirectUpgrade(target string) tea.Cmd {
 	operation := m.nextMutationOperation()
 	m.mutation.operation = operation
 	m.mutation.busy = true
@@ -881,7 +881,7 @@ func renderDirectEtcdReceiptOverlay(state directMutationState, width, height int
 	return strings.Join(visible, "\n")
 }
 
-func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case directCurrentInstallImage:
 		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.requests.current(message.request) {
@@ -1100,7 +1100,7 @@ func (m directModel) updateDirectMutationResult(message tea.Msg) (tea.Model, tea
 	return m, nil
 }
 
-func (m *directModel) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, bool) {
+func (m *model) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, bool) {
 	if m.mutation.upgradePending && message.String() == "esc" {
 		m.requests.cancelSlot("upgrade-image")
 		m.requests.cancelSlot("upgrade-prepare")

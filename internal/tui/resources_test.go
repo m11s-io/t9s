@@ -6,15 +6,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func resourceKindsTestState() application.ResourceBrowserState {
-	return application.ResourceBrowserState{
-		KindsStatus: application.Ready,
+func resourceKindsTestState() resourceBrowserState {
+	return resourceBrowserState{
+		KindsStatus: directReady,
 		Kinds: domain.ResourceKindSet{Kinds: []domain.ResourceKindSnapshot{
 			{Type: "MachineStatuses.runtime.talos.dev", DisplayType: "MachineStatus", DefaultNamespace: "runtime"},
 			{Type: "SecretsBundle.v1alpha1.talos.dev", DisplayType: "SecretsBundle", DefaultNamespace: "controlplane", Sensitive: true},
@@ -49,9 +48,9 @@ func TestResourceKindsFilterMatchesDisplayType(t *testing.T) {
 	assert.NotContains(t, rendered, "MachineStatus")
 }
 
-func resourceInstancesTestState() application.ResourceBrowserState {
-	return application.ResourceBrowserState{
-		InstancesStatus: application.Ready,
+func resourceInstancesTestState() resourceBrowserState {
+	return resourceBrowserState{
+		InstancesStatus: directReady,
 		SelectedKind:    "MachineStatus",
 		Instances: domain.ResourceInstanceSet{Instances: []domain.ResourceInstanceSnapshot{
 			{Namespace: "runtime", Type: "MachineStatuses.runtime.talos.dev", ID: "machine", Phase: "running"},
