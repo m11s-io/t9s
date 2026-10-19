@@ -13,6 +13,7 @@ type directRunCommand struct{ value string }
 // each screen is migrated in its own task.
 func (m *directModel) runClusterCommand(value string) tea.Cmd {
 	previous := m.views
+	m.mutation.receiptVisible = false
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))
 	var command tea.Cmd
 	switch resolveCommand(value) {

@@ -225,15 +225,16 @@ type directMutationPrompt struct {
 }
 
 type directMutationState struct {
-	prompt        *directMutationPrompt
-	busy          bool
-	operation     uint64
-	results       []application.TargetResult
-	snapshot      *domain.EtcdSnapshotResult
-	etcdKind      application.EtcdActionKind
-	receiptOffset int
-	total         int
-	notice        string
+	prompt         *directMutationPrompt
+	busy           bool
+	operation      uint64
+	results        []application.TargetResult
+	snapshot       *domain.EtcdSnapshotResult
+	etcdKind       application.EtcdActionKind
+	receiptVisible bool
+	receiptOffset  int
+	total          int
+	notice         string
 }
 
 func cloneEtcdSnapshotResult(result *domain.EtcdSnapshotResult) *domain.EtcdSnapshotResult {

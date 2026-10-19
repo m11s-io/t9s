@@ -289,6 +289,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mutation.prompt = nil
 		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
 		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
+		m.mutation.receiptVisible = m.mutation.snapshot != nil
 		if m.mutation.etcdKind != "" {
 			failure := ""
 			if message.err != nil {
@@ -656,6 +657,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.mutation.total = len(prompt.assessment.Targets)
 				m.mutation.results = nil
 				m.mutation.snapshot = nil
+				m.mutation.receiptVisible = false
 				m.mutation.etcdKind = prompt.etcdKind
 				m.mutation.receiptOffset = 0
 				m.mutation.notice = "Mutation in progress…"
@@ -889,7 +891,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				request, _ := m.requests.beginWithContext("cluster-etcd", m.generation(), m.sessionCtx)
 				return m, directEtcdCommand(m.session, request)
 			}
-			if m.mutation.snapshot != nil && !m.mutation.busy && m.mutation.prompt == nil && (message.Code == tea.KeyPgDown || message.Code == tea.KeyPgUp) {
+			if m.mutation.snapshot != nil && m.mutation.receiptVisible && !m.mutation.busy && m.mutation.prompt == nil && (message.Code == tea.KeyPgDown || message.Code == tea.KeyPgUp) {
 				frame := layoutResourceFrame(m.width, layoutShell(m.width, m.height).ContentHeight, "etcd receipt")
 				pageSize := max(1, frame.InnerHeight-1)
 				lines := etcdReceiptLines(m.mutation, frame.InnerWidth)
@@ -899,6 +901,14 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.mutation.receiptOffset = max(0, m.mutation.receiptOffset-pageSize)
 				}
+				return m, nil
+			}
+			if m.mutation.snapshot != nil && m.mutation.receiptVisible && !m.mutation.busy && m.mutation.prompt == nil && (message.String() == "esc" || message.String() == "q") {
+				m.mutation.receiptVisible = false
+				return m, nil
+			}
+			if m.mutation.snapshot != nil && !m.mutation.busy && m.mutation.prompt == nil && message.String() == "v" {
+				m.mutation.receiptVisible = !m.mutation.receiptVisible
 				return m, nil
 			}
 			if !m.etcd.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
@@ -927,6 +937,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 							m.mutation.notice = ""
 							m.mutation.etcdKind = ""
 							m.mutation.snapshot = nil
+							m.mutation.receiptVisible = false
 							m.mutation.receiptOffset = 0
 							m.etcdPathPrompt = &pathPrompt
 							return m, nil
@@ -1094,6 +1105,7 @@ func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRe
 	m.mutation.notice = "Preparing mutation…"
 	m.mutation.results = nil
 	m.mutation.snapshot = nil
+	m.mutation.receiptVisible = false
 	m.mutation.etcdKind = request.Kind
 	m.mutation.receiptOffset = 0
 	m.view.notice = ""
@@ -1164,7 +1176,7 @@ func (m directModel) View() tea.View {
 	} else if prompt := m.mutation.prompt; prompt != nil && prompt.etcd != nil {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd action")
 		content = renderResourceFrame(frame, renderDirectEtcdMutationOverlay(prompt, frame.InnerWidth), m.styles.k9s)
-	} else if m.mutation.snapshot != nil && !m.mutation.busy && m.views.top().Kind == viewEtcd {
+	} else if m.mutation.snapshot != nil && m.mutation.receiptVisible && !m.mutation.busy && m.mutation.prompt == nil && m.etcdPathPrompt == nil && m.timePrompt == nil && !m.palette.active && !m.contexts.active && m.views.top().Kind == viewEtcd {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd receipt")
 		content = renderResourceFrame(frame, renderDirectEtcdReceiptOverlay(m.mutation, frame.InnerWidth, frame.InnerHeight), m.styles.k9s)
 	}
@@ -1234,8 +1246,10 @@ func (m directModel) View() tea.View {
 		prompt = "/" + m.logs.filter
 	} else if !m.palette.active && m.views.top().Kind == viewDmesg && (m.dmesg.filtering || m.dmesg.filter != "") {
 		prompt = "/" + m.dmesg.filter
-	} else if m.mutation.snapshot != nil && !m.mutation.busy && m.views.top().Kind == viewEtcd {
-		prompt = "Receipt details above · PgUp/PgDn"
+	} else if m.mutation.snapshot != nil && m.mutation.receiptVisible && !m.mutation.busy && !m.contexts.active && m.views.top().Kind == viewEtcd {
+		prompt = "Receipt details · PgUp/PgDn · Esc/q hide · v toggle"
+	} else if m.mutation.snapshot != nil && !m.mutation.busy && !m.contexts.active && m.views.top().Kind == viewEtcd {
+		prompt = m.mutation.notice + " · v receipt"
 	} else if m.mutation.notice != "" {
 		prompt = m.mutation.notice
 	} else if m.mutation.busy {
@@ -1260,6 +1274,7 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.mutation.busy = false
 	m.mutation.results = nil
 	m.mutation.snapshot = nil
+	m.mutation.receiptVisible = false
 	m.mutation.notice = ""
 	m.mutation.operation = m.nextMutationOperation()
 	m.mutationWork = directMutationWork{}

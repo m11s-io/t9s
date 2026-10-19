@@ -322,6 +322,70 @@ func TestDirectEtcdReceiptPanelPagesFullMetadataAfterMembershipFailure(t *testin
 	assert.NotContains(t, allPages, "private membership transport error")
 }
 
+func TestDirectEtcdReceiptCanBeDismissedAndReopenedWithoutLosingSelection(t *testing.T) {
+	ops := &testkit.FakeEtcdOperations{SnapshotFunc: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+		return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 1024, SHA256: strings.Repeat("d", 64)}, nil
+	}}
+	model := directEtcdModel(directEtcdMutationSession(t, true, ops), true)
+	model.width, model.height = 80, 24
+	model, _ = updateDirect(model, keyPress('s'))
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = applyDirectCommand(t, model, command)
+	model, command = updateDirect(model, keyPress('y'))
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.snapshot)
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "cp-1")
+	assert.Contains(t, content, "cp-2", "the member table should be visible")
+	assert.NotContains(t, content, "SNAPSHOT RECEIPT")
+	assert.NotNil(t, model.mutation.snapshot, "dismissing the receipt only hides it")
+	assert.Equal(t, etcdMemberKey(model.cluster.etcd.Value.Members[0]), model.etcd.selectedKey, "the selected member remains selected")
+	assert.Equal(t, 0, model.etcd.control.Cursor(), "the selected row remains the first member")
+
+	model, _ = updateDirect(model, keyPress('v'))
+	assert.Contains(t, ansi.Strip(model.View().Content), "SNAPSHOT RECEIPT")
+	assert.Contains(t, ansi.Strip(model.View().Content), model.mutation.snapshot.Path)
+}
+
+func TestDirectEtcdReceiptDoesNotCoverContextPicker(t *testing.T) {
+	ops := &testkit.FakeEtcdOperations{SnapshotFunc: func(_ context.Context, node, path string) (domain.EtcdSnapshotResult, error) {
+		return domain.EtcdSnapshotResult{Node: node, Path: path, Size: 1024, SHA256: strings.Repeat("e", 64)}, nil
+	}}
+	model := directEtcdModel(directEtcdMutationSession(t, true, ops), true)
+	model.width, model.height = 80, 24
+	model.cluster.contexts = []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "staging"}}
+	model, _ = updateDirect(model, keyPress('s'))
+	model, command := updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = applyDirectCommand(t, model, command)
+	model, command = updateDirect(model, keyPress('y'))
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.snapshot)
+
+	model, _ = updateDirect(model, keyPress(':'))
+	for _, character := range "ctx" {
+		model, _ = updateDirect(model, keyPress(character))
+	}
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	content := ansi.Strip(model.View().Content)
+	assert.True(t, model.contexts.active)
+	assert.Contains(t, content, "prod")
+	assert.Contains(t, content, "staging")
+	assert.NotContains(t, content, "SNAPSHOT RECEIPT")
+	assert.NotContains(t, content, "v receipt")
+	assert.NotNil(t, model.mutation.snapshot, "opening the context picker preserves receipt metadata")
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyDown})
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	assert.Equal(t, "staging", model.cluster.contextName)
+	assert.Nil(t, model.mutation.snapshot, "switching context clears the old receipt metadata")
+	assert.False(t, model.mutation.receiptVisible)
+}
+
 func compactEtcdView(content string) string {
 	content = ansi.Strip(content)
 	return strings.NewReplacer("\n", "", " ", "", "│", "", "┌", "", "┐", "", "└", "", "┘", "", "─", "").Replace(content)
