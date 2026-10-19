@@ -37,23 +37,29 @@ func (m *directModel) updateDirectDestructivePrompt(message tea.KeyPressMsg) (te
 		return nil, false
 	}
 	key := message.String()
-	if prompt.assessment.Blocked != "" {
-		if key == "n" || key == "N" || key == "esc" {
-			m.mutation.prompt = nil
-			m.view.notice = "Action canceled"
+	fields := 2
+	if prompt.nodeKind == application.ActionReset {
+		fields = 4
+		if message.Code == tea.KeyPgDown || message.Code == tea.KeyPgUp {
+			pageSize := m.destructivePreviewPageSize()
+			maxOffset := max(0, len(resetPreviewRows(prompt.assessment.ResetPreview))-pageSize)
+			if message.Code == tea.KeyPgDown {
+				prompt.previewOffset = min(maxOffset, prompt.previewOffset+pageSize)
+			} else {
+				prompt.previewOffset = max(0, prompt.previewOffset-pageSize)
+			}
+			return nil, true
 		}
-		return nil, true
 	}
 	if prompt.intentReady {
 		return nil, false
 	}
-	fields := 2
-	if prompt.nodeKind == application.ActionReset {
-		fields = 4
-	}
 	if (key == "n" || key == "N") && prompt.field != fields-1 {
 		m.mutation.prompt = nil
 		m.view.notice = "Action canceled"
+		return nil, true
+	}
+	if prompt.assessment.Blocked != "" && prompt.field == fields-1 && key != "tab" && key != "shift+tab" && key != "enter" && key != "esc" {
 		return nil, true
 	}
 	switch key {
@@ -94,6 +100,9 @@ func (m *directModel) updateDirectDestructivePrompt(message tea.KeyPressMsg) (te
 			m.mutation.busy = true
 			m.mutation.notice = "Preparing mutation…"
 			return directPrepareNodeCommand(prompt.session, m.sessionCtx, prompt.operation, prompt.generation, request), true
+		}
+		if prompt.assessment.Blocked != "" {
+			return nil, true
 		}
 		if prompt.intent.Value() != prompt.assessment.RequiredToken || prompt.assessment.RequiredToken == "" {
 			prompt.err = "typed confirmation does not match the prepared assessment"
@@ -157,26 +166,57 @@ func (m *directModel) updateDirectDestructivePrompt(message tea.KeyPressMsg) (te
 	return nil, true
 }
 
+func (m *directModel) destructivePreviewPageSize() int {
+	layout := layoutShell(m.width, m.height)
+	innerHeight := layoutResourceFrame(layout.Width, layout.ContentHeight, "reset").InnerHeight
+	return max(1, innerHeight-7)
+}
+
+func resetPreviewRows(previews []application.ResetPreview) []string {
+	rows := make([]string, 0, len(previews)*2)
+	for _, preview := range previews {
+		node := sanitizeUntrustedText(preview.Node)
+		if !preview.Known {
+			rows = append(rows, "DISKS  "+node+": inventory unknown")
+			continue
+		}
+		system := preview.SystemDisk
+		if system == "" {
+			system = "unknown"
+		}
+		rows = append(rows, "DISKS  "+node+": system "+sanitizeUntrustedText(system))
+		if len(preview.UserDisks) == 0 {
+			rows = append(rows, "DISKS  "+node+": user disks none reported")
+			continue
+		}
+		for _, device := range preview.UserDisks {
+			rows = append(rows, "DISKS  "+node+": user "+sanitizeUntrustedText(device))
+		}
+	}
+	return rows
+}
+
 // directMutationPrompt is frontend-owned and stores the concrete prepared
 // backend plan. Its assessment is a snapshot used only to render the prompt.
 type directMutationPrompt struct {
-	operation    uint64
-	generation   uint64
-	node         *application.PreparedNodeAction
-	service      *application.PreparedServiceAction
-	assessment   application.Assessment
-	session      *application.Session
-	serviceKind  application.ServiceActionKind
-	nodeKind     application.ActionKind
-	label        string
-	reset        *ports.ResetOptions
-	deviceWipe   *ports.DeviceWipeOptions
-	intent       textinput.Model
-	intentReady  bool
-	confirm      application.Confirmation
-	needsPrepare bool
-	field        int
-	err          string
+	operation     uint64
+	generation    uint64
+	node          *application.PreparedNodeAction
+	service       *application.PreparedServiceAction
+	assessment    application.Assessment
+	session       *application.Session
+	serviceKind   application.ServiceActionKind
+	nodeKind      application.ActionKind
+	label         string
+	reset         *ports.ResetOptions
+	deviceWipe    *ports.DeviceWipeOptions
+	intent        textinput.Model
+	intentReady   bool
+	confirm       application.Confirmation
+	needsPrepare  bool
+	field         int
+	previewOffset int
+	err           string
 }
 
 type directMutationState struct {
@@ -363,7 +403,7 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 	return verb + " " + target + "? (y/n)"
 }
 
-func renderDirectMutationOverlay(prompt *directMutationPrompt) string {
+func renderDirectMutationOverlay(prompt *directMutationPrompt, innerHeight int) string {
 	var lines []string
 	if prompt.nodeKind == application.ActionReset && prompt.reset != nil {
 		mode := []string{"ALL", "SYSTEM_DISK", "USER_DISKS"}
@@ -382,29 +422,19 @@ func renderDirectMutationOverlay(prompt *directMutationPrompt) string {
 				rebootMark = "*"
 			}
 		}
-		lines = append(lines, "TARGETS  "+strings.Join(prompt.assessment.Targets, ", "))
-		lines = append(lines, fmt.Sprintf("MODE%s      %s", modeMark, label))
-		lines = append(lines, fmt.Sprintf("GRACEFUL%s  %s (leave etcd before reset)", gracefulMark, boolLabel(prompt.reset.Graceful)))
-		lines = append(lines, fmt.Sprintf("REBOOT%s    %s (off halts after reset)", rebootMark, boolLabel(prompt.reset.Reboot)))
-		lines = append(lines, "")
-		if len(prompt.assessment.ResetPreview) == 0 {
-			lines = append(lines, "DISKS  inventory unknown")
+		rows := resetPreviewRows(prompt.assessment.ResetPreview)
+		if len(rows) == 0 {
+			rows = []string{"DISKS  inventory unknown"}
 		}
-		for _, preview := range prompt.assessment.ResetPreview {
-			if !preview.Known {
-				lines = append(lines, "DISKS  "+sanitizeUntrustedText(preview.Node)+": inventory unknown")
-				continue
-			}
-			system := preview.SystemDisk
-			if system == "" {
-				system = "unknown"
-			}
-			users := strings.Join(preview.UserDisks, ", ")
-			if users == "" {
-				users = "none reported"
-			}
-			lines = append(lines, "DISKS  "+sanitizeUntrustedText(preview.Node)+": system "+sanitizeUntrustedText(system)+" · user "+sanitizeUntrustedText(users))
-		}
+		pageSize := max(1, innerHeight-7)
+		maxOffset := max(0, len(rows)-pageSize)
+		offset := min(maxOffset, max(0, prompt.previewOffset))
+		pageCount := max(1, (len(rows)+pageSize-1)/pageSize)
+		page := min(pageCount, (offset+pageSize-1)/pageSize+1)
+		lines = append(lines, fmt.Sprintf("TARGETS %d · SCOPES Page %d/%d (PgUp/PgDn)", len(prompt.assessment.Targets), page, pageCount))
+		lines = append(lines, fmt.Sprintf("MODE%s %s · GRACEFUL%s %s · REBOOT%s %s", modeMark, label, gracefulMark, boolLabel(prompt.reset.Graceful), rebootMark, boolLabel(prompt.reset.Reboot)))
+		end := min(len(rows), offset+pageSize)
+		lines = append(lines, rows[offset:end]...)
 	} else if prompt.deviceWipe != nil {
 		method := "fast"
 		if prompt.deviceWipe.Method == ports.DeviceWipeZeroes {
@@ -418,25 +448,40 @@ func renderDirectMutationOverlay(prompt *directMutationPrompt) string {
 		lines = append(lines, "DEVICE  "+sanitizeUntrustedText(prompt.deviceWipe.Device)+" (selected from visible inventory)")
 		lines = append(lines, "METHOD"+mark+" "+method+" (zeroes writes across the whole device)")
 	}
-	if prompt.assessment.Warning != "" {
-		lines = append(lines, "WARNING: "+truncateWarningTail(prompt.assessment.Warning, pendingActionWarningBudget))
-	}
+	status := ""
 	if prompt.assessment.Blocked != "" {
-		lines = append(lines, "BLOCKED: "+truncateWarningTail(prompt.assessment.Blocked, pendingActionWarningBudget))
-		lines = append(lines, "Action refused. Press n or Esc to cancel.")
-	} else if prompt.intentReady {
-		lines = append(lines, "", "Prepared assessment accepted. Press y to execute or n/Esc to cancel.")
-	} else {
-		lines = append(lines, "", "Type \""+sanitizeUntrustedText(prompt.assessment.RequiredToken)+"\" and press Enter. Then confirm with y/n.")
-		if prompt.nodeKind == application.ActionReset {
-			lines = append(lines, "Tab moves between reset options and typed intent; Space or arrows adjust options.")
-		} else {
-			lines = append(lines, "Tab selects wipe method or typed intent; Space changes method.")
-		}
-		lines = append(lines, prompt.intent.View())
+		status = "BLOCKED: " + truncateWarningTail(prompt.assessment.Blocked, pendingActionWarningBudget)
+	} else if prompt.assessment.Warning != "" {
+		status = "WARNING: " + truncateWarningTail(prompt.assessment.Warning, pendingActionWarningBudget)
 	}
 	if prompt.err != "" {
-		lines = append(lines, "ERROR: "+prompt.err)
+		status = "ERROR: " + prompt.err
+	}
+	if prompt.nodeKind == application.ActionReset {
+		lines = append(lines, "STATUS  "+status)
+		lines = append(lines, "Type \""+sanitizeUntrustedText(prompt.assessment.RequiredToken)+"\" then press Enter")
+		lines = append(lines, "Tab fields · Space/arrows options · PgUp/PgDn scopes")
+		lines = append(lines, prompt.intent.View())
+		if prompt.assessment.Blocked != "" {
+			lines = append(lines, "Approval unavailable while blocked; revise options and prepare")
+		} else if prompt.intentReady {
+			lines = append(lines, "Prepared assessment accepted. Press y to execute or n/Esc to cancel.")
+		} else {
+			lines = append(lines, "After token Enter, then confirm with y/n")
+		}
+	} else {
+		if status != "" {
+			lines = append(lines, status)
+		}
+		if prompt.assessment.Blocked != "" {
+			lines = append(lines, "Action refused. Press n or Esc to cancel.")
+		} else if prompt.intentReady {
+			lines = append(lines, "", "Prepared assessment accepted. Press y to execute or n/Esc to cancel.")
+		} else {
+			lines = append(lines, "", "Type \""+sanitizeUntrustedText(prompt.assessment.RequiredToken)+"\" and press Enter. Then confirm with y/n.")
+			lines = append(lines, "Tab selects wipe method or typed intent; Space changes method.")
+			lines = append(lines, prompt.intent.View())
+		}
 	}
 	return strings.Join(lines, "\n")
 }

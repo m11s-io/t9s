@@ -1034,7 +1034,7 @@ func (m directModel) View() tea.View {
 			title = "wipe device"
 		}
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, title)
-		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt), m.styles.k9s)
+		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt, frame.InnerHeight), m.styles.k9s)
 	}
 	if m.palette.active {
 		content += "\n" + m.palette.view()

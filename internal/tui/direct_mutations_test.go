@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -529,6 +530,160 @@ func TestDirectResetRequiresReprepareWhenDerivedDiskScopeChanges(t *testing.T) {
 	}
 	assert.Zero(t, calls.Load(), "a newly discovered user disk cannot silently join the prepared wipe scope")
 	assert.Contains(t, model.view.notice, "assessment changed")
+}
+
+func TestBlockedReadOnlySystemDiskResetCanChangeToUserDisks(t *testing.T) {
+	disks := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true, ReadOnly: true}, {DeviceName: "/dev/sdb"}}}
+	var resetCalls atomic.Int32
+	var got ports.ResetOptions
+	session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return disks, nil }, &testkit.FakeNodeController{ResetFunc: func(_ context.Context, _ string, options ports.ResetOptions) error {
+		resetCalls.Add(1)
+		got = options
+		return nil
+	}}, true)
+	model := directResetPromptModel(t, session, []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}})
+	model, command := updateDirect(model, keyPress('W'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.prompt)
+	require.NotEmpty(t, model.mutation.prompt.assessment.Blocked)
+	for range 3 {
+		model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	}
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyRight})
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyRight})
+	assert.Equal(t, ports.WipeModeUserDisks, model.mutation.prompt.reset.Mode)
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command, "blocked options must allow fresh backend preparation")
+	model, _ = applyDirectCommand(t, model, command)
+	require.Empty(t, model.mutation.prompt.assessment.Blocked)
+	model.mutation.prompt.intent.SetValue("cp-1")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, command = updateDirect(model, keyPress('y'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.Equal(t, int32(1), resetCalls.Load())
+	assert.Equal(t, ports.WipeModeUserDisks, got.Mode)
+	assert.Equal(t, []string{"/dev/sdb"}, got.UserDisks)
+}
+
+func TestBlockedEmptyUserDiskResetCanChangeToSystemDisk(t *testing.T) {
+	disks := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sda", SystemDisk: true}}}
+	var resetCalls atomic.Int32
+	var got ports.ResetOptions
+	session := directDestructiveSession(t, func(context.Context, string) (domain.DiskSet, error) { return disks, nil }, &testkit.FakeNodeController{ResetFunc: func(_ context.Context, _ string, options ports.ResetOptions) error {
+		resetCalls.Add(1)
+		got = options
+		return nil
+	}}, true)
+	model := directResetPromptModel(t, session, []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl}})
+	model, command := updateDirect(model, keyPress('W'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	for range 3 {
+		model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	}
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyLeft})
+	assert.Equal(t, ports.WipeModeUserDisks, model.mutation.prompt.reset.Mode)
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotEmpty(t, model.mutation.prompt.assessment.Blocked)
+	for range 3 {
+		model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	}
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyRight})
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyRight})
+	assert.Equal(t, ports.WipeModeSystemDisk, model.mutation.prompt.reset.Mode)
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	require.Empty(t, model.mutation.prompt.assessment.Blocked)
+	model.mutation.prompt.intent.SetValue("cp-1")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, command = updateDirect(model, keyPress('y'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.Equal(t, int32(1), resetCalls.Load())
+	assert.Equal(t, ports.WipeModeSystemDisk, got.Mode)
+}
+
+func directResetPromptModel(t *testing.T, session *application.Session, nodes []domain.NodeSnapshot) directModel {
+	t.Helper()
+	root := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	root.splash, root.session, root.sessionCtx = false, session, context.Background()
+	root.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: nodes}}
+	root.nodes = root.nodes.normalizeSelection(nodes, 0)
+	root.views = root.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
+	return root
+}
+
+func TestResetPromptAt80x24PagesAllTargetsAndKeepsControlsVisible(t *testing.T) {
+	previews := make([]application.ResetPreview, 7)
+	targets := make([]string, len(previews))
+	for index := range previews {
+		targets[index] = fmt.Sprintf("worker-%d", index+1)
+		previews[index] = application.ResetPreview{Node: targets[index], Known: true, SystemDisk: "/dev/sda", UserDisks: []string{"/dev/sdb"}}
+	}
+	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model.splash, model.width, model.height = false, 80, 24
+	model.mutation.prompt = preparedResetPrompt(targets, previews)
+	first := ansi.Strip(model.View().Content)
+	assert.Contains(t, first, "wipe 7 nodes")
+	assert.Contains(t, first, "TYPE :")
+	assert.Contains(t, first, "Page 1/")
+	assert.Contains(t, first, "worker-1")
+	assert.NotContains(t, first, "worker-7")
+	model.mutation.prompt.intent.SetValue("wipe 2")
+	for range 20 {
+		model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	}
+	second := ansi.Strip(model.View().Content)
+	assert.Contains(t, second, "Page 3/")
+	assert.Contains(t, second, "worker-7")
+	assert.Contains(t, second, "wipe 2", "paging must not edit the confirmation token")
+	assert.Contains(t, second, "Type \"wipe 7 nodes\"")
+	assert.Contains(t, second, "then confirm with y/n")
+}
+
+func TestResetPromptAt80x24PagesTwentyDiskRowsWithoutHidingToken(t *testing.T) {
+	preview := application.ResetPreview{Node: "worker-1", Known: true, SystemDisk: "/dev/sda"}
+	for index := 1; index <= 20; index++ {
+		preview.UserDisks = append(preview.UserDisks, fmt.Sprintf("/dev/sd%c", 'a'+rune(index)))
+	}
+	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model.splash, model.width, model.height = false, 80, 24
+	model.mutation.prompt = preparedResetPrompt([]string{"worker-1"}, []application.ResetPreview{preview})
+	first := ansi.Strip(model.View().Content)
+	assert.Contains(t, first, "worker-1")
+	assert.Contains(t, first, "TYPE :")
+	assert.Contains(t, first, "Page 1/")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	second := ansi.Strip(model.View().Content)
+	assert.Contains(t, second, "Page 2/")
+	assert.Contains(t, second, "TYPE :")
+	assert.Contains(t, second, "Type \"worker-1\"")
+}
+
+func TestResetPromptAt80x20SingleNodeKeepsConfirmationControlsVisible(t *testing.T) {
+	preview := application.ResetPreview{Node: "worker-1", Known: true, SystemDisk: "/dev/sda", UserDisks: []string{"/dev/sdb"}}
+	model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+	model.splash, model.width, model.height = false, 80, 20
+	model.mutation.prompt = preparedResetPrompt([]string{"worker-1"}, []application.ResetPreview{preview})
+	view := ansi.Strip(model.View().Content)
+	assert.Contains(t, view, "Type \"worker-1\"")
+	assert.Contains(t, view, "TYPE :")
+	assert.Contains(t, view, "then confirm with y/n")
+}
+
+func preparedResetPrompt(targets []string, previews []application.ResetPreview) *directMutationPrompt {
+	input := destructiveIntentInput()
+	return &directMutationPrompt{
+		nodeKind:   application.ActionReset,
+		reset:      &ports.ResetOptions{Mode: ports.WipeModeAll, Reboot: true},
+		intent:     input,
+		assessment: application.Assessment{Targets: append([]string(nil), targets...), RequiredToken: application.ResetConfirmationToken(targets), ResetPreview: previews},
+	}
 }
 
 func TestDirectNodeActionAcceptedOperationSurvivesViewNavigationAndBlocksDuplicateConfirm(t *testing.T) {
