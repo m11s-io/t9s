@@ -403,6 +403,19 @@ func TestDirectStartupHonorsContextAndNodeFocus(t *testing.T) {
 	assert.Equal(t, "node-b", model.nodes.selectedID)
 }
 
+func TestDirectOpenContextPickerClosesOnlyOnceAfterDiscovery(t *testing.T) {
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{OpenContextPicker: true})
+	request, _ := model.requests.begin("contexts", model.generation())
+	model, _ = updateDirect(model, directContextsLoaded{request: request.stamp, contexts: []domain.ClusterContext{{Name: "prod", Current: true}, {Name: "dev"}}})
+	require.True(t, model.contexts.active, "the launch option opens the picker after discovery")
+
+	model, _ = updateDirect(model, keyPress('q'))
+	require.False(t, model.contexts.active)
+	request, _ = model.requests.begin("contexts", model.generation())
+	model, _ = updateDirect(model, directContextsLoaded{request: request.stamp, contexts: []domain.ClusterContext{{Name: "dev", Current: true}, {Name: "prod"}}})
+	assert.False(t, model.contexts.active, "later valid discovery does not reopen a dismissed picker")
+}
+
 func applyDirectCommand(t *testing.T, model directModel, command tea.Cmd) (directModel, tea.Cmd) {
 	t.Helper()
 	require.NotNil(t, command)

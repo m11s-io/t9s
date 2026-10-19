@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
+	"github.com/m11s-io/t9s/internal/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,6 +54,32 @@ func TestDirectEventsFilterSelectionAndPaletteNavigation(t *testing.T) {
 	model, command := runDirectPalette(t, model, "nodes")
 	require.NotNil(t, command)
 	assert.Equal(t, viewNodes, model.views.top().Kind)
+}
+
+func TestDirectEventsFollowToggleIsIsolatedFromFilterInput(t *testing.T) {
+	stream := &directEventStreamFake{started: make(chan struct{}, 1)}
+	session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.session, model.sessionCtx = session, context.Background()
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
+
+	model, command := updateDirect(model, keyPress('s'))
+	require.NotNil(t, command, "s starts FOLLOW")
+	model, _ = updateDirect(model, command())
+	require.True(t, model.eventFollow.following)
+	assert.Contains(t, ansi.Strip(model.View().Content), "EVENTS FOLLOW")
+
+	model, _ = updateDirect(model, keyPress('/'))
+	model, _ = updateDirect(model, keyPress('s'))
+	assert.Equal(t, "s", model.events.filter)
+	assert.True(t, model.eventFollow.following, "s while filtering is query input and leaves follow active")
+	assert.Contains(t, ansi.Strip(model.View().Content), "EVENTS FOLLOW")
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = updateDirect(model, keyPress('s'))
+	assert.False(t, model.eventFollow.following)
+	assert.Contains(t, ansi.Strip(model.View().Content), "EVENTS PAUSED")
+	assert.Equal(t, 1, stream.closed)
 }
 
 func TestDirectEventsKeepSelectedIdentityAcrossRefreshAndClearWhenMissing(t *testing.T) {

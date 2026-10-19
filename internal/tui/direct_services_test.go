@@ -64,6 +64,44 @@ func TestDirectServicesFilterPromptsAndDetailPaletteNavigation(t *testing.T) {
 	assert.Contains(t, model.View().Content, "SERVICE")
 }
 
+func TestDirectServicesEscapeReturnsFromDetailAndRoot(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
+	model.cluster.nodes = application.NodeState{Status: application.Ready, Value: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "node-a", Name: "node-a"}}}}
+	model.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{
+		{Node: "node-a", Name: "etcd", State: "Running"},
+		{Node: "node-a", Name: "kubelet", State: "Running"},
+	}}}
+	model.services = model.services.normalizeSelection(model.cluster.services.Value.Services, 0)
+	model.views = model.views.replaceRoot(viewFrame{Kind: viewServices, Label: "services"})
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Contains(t, model.View().Content, "SERVICE    etcd")
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.Equal(t, viewServices, model.views.top().Kind)
+	assert.Contains(t, model.View().Content, "etcd", "Escape from detail returns to the rendered service list")
+
+	model, _ = updateDirect(model, keyPress('/'))
+	model, _ = updateDirect(model, keyPress('e'))
+	model, _ = updateDirect(model, keyPress('t'))
+	model, _ = updateDirect(model, keyPress('c'))
+	model, _ = updateDirect(model, keyPress('d'))
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, "etcd", model.services.filter)
+	assert.NotContains(t, model.View().Content, "kubelet")
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.Equal(t, viewServices, model.views.top().Kind, "Escape first clears an accepted filter")
+	assert.Empty(t, model.services.filter)
+	assert.Contains(t, model.View().Content, "kubelet", "the cleared service list is rendered")
+
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+	assert.Equal(t, viewServices, model.views.top().Kind, "Escape at the services root keeps the list open")
+	assert.Contains(t, model.View().Content, "services(all)[2]", "the services header remains visible")
+	assert.Contains(t, model.View().Content, "etcd")
+	assert.Contains(t, model.View().Content, "kubelet")
+}
+
 func TestDirectServicesAliasRoutesFromPalette(t *testing.T) {
 	model := newDirectModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false

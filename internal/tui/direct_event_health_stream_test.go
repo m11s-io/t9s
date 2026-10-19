@@ -195,6 +195,23 @@ func TestDirectClusterHealthStreamPinsExactNodeRequestAndKeepsFailedVerdict(t *t
 	assert.Contains(t, model.healthcheck.viewSized(contentSize{Width: 80, Height: 8}), "unhealthy members")
 }
 
+func TestDirectClusterHealthHealthyEOFShowsVerdictAndClosesStream(t *testing.T) {
+	stream := &directHealthStreamFake{progress: []domain.ClusterHealthProgress{{Message: "all members reachable"}, {EOF: true}}}
+	session, _ := directStreamSession(t, nil, &testkit.FakeClusterHealthReader{OpenFunc: func(context.Context, domain.ClusterHealthRequest) (ports.ClusterHealthStream, error) {
+		return stream, nil
+	}})
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	model.session, model.sessionCtx = session, context.Background()
+	model, command := runDirectPaletteCommand(t, model, "healthcheck")
+	for command != nil {
+		model, command = runStreamCommand(t, model, command)
+	}
+
+	assert.True(t, model.healthcheck.state.VerdictReady)
+	assert.Contains(t, ansi.Strip(model.View().Content), "cluster is healthy")
+	assert.Equal(t, 1, stream.closed)
+}
+
 func TestDirectClusterHealthFilterShortcutsAndResizeUseStoredDisplayState(t *testing.T) {
 	progress := make([]domain.ClusterHealthProgress, 12)
 	for index := range progress {

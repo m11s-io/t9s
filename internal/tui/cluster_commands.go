@@ -106,6 +106,10 @@ func (m directModel) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.
 		if m.options.NodeFocus != "" {
 			if focusedID := resolveNodeFocus(state.Value.Nodes, m.options.NodeFocus); focusedID != "" {
 				m.nodes = m.nodes.selectID(focusedID, state.Value.Nodes)
+				if m.views.top().Kind == viewNodes {
+					node := m.nodes.selectedValue(state.Value.Nodes)
+					m.views = m.views.push(viewFrame{Kind: viewNodeDetail, Label: fallback(node.DisplayName())})
+				}
 			}
 			m.options.NodeFocus = ""
 		}

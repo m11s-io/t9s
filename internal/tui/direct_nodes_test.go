@@ -159,14 +159,31 @@ func TestDirectNodeFocusResolvesNameAndAddressToStableIDOnce(t *testing.T) {
 			request, _ := model.requests.begin("cluster-nodes-services", model.generation())
 			model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: first})
 			require.Equal(t, "worker-id", model.nodes.selectedID)
+			require.Equal(t, viewNodeDetail, model.views.top().Kind, "a matching initial NodeFocus opens node detail")
+			assert.Contains(t, ansi.Strip(model.View().Content), "NAME       worker-1")
+
+			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEsc})
+			require.Equal(t, viewNodes, model.views.top().Kind, "Escape returns to the node list")
 
 			model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyUp})
 			refreshed := domain.NodeSet{Nodes: []domain.NodeSnapshot{first.Nodes[1], first.Nodes[0]}}
 			request, _ = model.requests.begin("cluster-nodes-services", model.generation())
 			model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: refreshed})
 			assert.Equal(t, "cp-id", model.nodes.selectedID, "a later refresh must preserve the user's current selection")
+			assert.Equal(t, viewNodes, model.views.top().Kind, "a later refresh must not reopen matched NodeFocus")
 		})
 	}
+}
+
+func TestDirectNodeFocusWithNoMatchLeavesNodesShowingNormally(t *testing.T) {
+	model := newDirectModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{NodeFocus: "missing-node"})
+	model.splash = false
+	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
+	model, _ = updateDirect(model, directNodeServicesLoaded{request: request.stamp, nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1"}}}})
+
+	assert.Equal(t, viewNodes, model.views.top().Kind)
+	assert.Contains(t, ansi.Strip(model.View().Content), "worker-1")
+	assert.NotContains(t, ansi.Strip(model.View().Content), "NODE DETAIL")
 }
 
 func TestDirectNodeFocusAcceptsStableID(t *testing.T) {

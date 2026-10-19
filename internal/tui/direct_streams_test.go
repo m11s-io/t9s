@@ -118,6 +118,37 @@ func TestDirectDmesgNextEOFClosesOnceAndRetainsTerminalLines(t *testing.T) {
 	assert.Equal(t, int32(1), stream.closes.Load())
 }
 
+func TestDirectDmesgKeyOpensSelectedNodeAndRendersTerminalLine(t *testing.T) {
+	stream := &tuiDmesgStream{}
+	var got domain.DmesgRequest
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{DmesgReader: tuiDmesgReader{open: func(_ context.Context, request domain.DmesgRequest) (ports.DmesgStream, error) {
+			got = request
+			return stream, nil
+		}}}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	defer session.Close()
+
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{
+		{ID: "node-a-id", Name: "node-a"},
+		{ID: "node-b-id", Name: "node-b"},
+	})
+	model.session, model.sessionCtx = session, context.Background()
+	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyDown})
+	model, command := updateDirect(model, keyPress('e'))
+	require.Equal(t, viewDmesg, model.views.top().Kind)
+	model, command = runStreamCommand(t, model, command)
+	model, command = runStreamCommand(t, model, command)
+	require.Nil(t, command)
+
+	assert.Equal(t, domain.DmesgRequest{Node: "node-b", Follow: true, Tail: true}, got)
+	assert.Contains(t, model.View().Content, "kernel")
+	assert.True(t, model.dmesg.state.EOF)
+	assert.Equal(t, int32(1), stream.closes.Load())
+}
+
 func TestDirectLogViewEscapeCancelsNextAndClosesStreamOnce(t *testing.T) {
 	stream := &tuiLogStream{batches: []domain.LogBatch{{Lines: []string{"unused"}}}}
 	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
