@@ -317,11 +317,24 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mutation.upgrade = directUpgradeDisplayState{Active: true, Target: message.target, Event: message.event}
 		m.mutation.notice = renderDirectUpgradeNotice(m.mutation.upgrade)
 		return m, directMutationAwaitCommand(m.mutationWork)
+	case directMutationCanceled:
+		// A session switch or root shutdown can stop the TUI waiter before
+		// backend cleanup has published its retained terminal result. The
+		// session still owns that wait and mutation lease.
+		return m, nil
 	case directMutationFinished:
 		if message.generation != m.generation() || message.operation != m.mutation.operation {
 			return m, nil
 		}
 		m.mutation.busy = false
+		if message.upgradeStartErr != nil {
+			m.mutation.upgradePending = false
+			m.mutation.upgradeErr = message.upgradeStartErr
+			m.mutation.upgrade = directUpgradeDisplayState{Target: message.upgradeTarget}
+			m.mutation.notice = directUpgradeAdmissionNotice(message.upgradeTarget, message.upgradeStartErr)
+			m.mutationWork = directMutationWork{}
+			return m, nil
+		}
 		if message.upgrade != nil || message.upgradeWaitErr != nil {
 			m.mutation.upgradePending = false
 			m.mutation.upgradeResult = message.upgrade
@@ -1204,6 +1217,9 @@ func directServiceActionKind(key string) application.ServiceActionKind {
 }
 
 func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapshot, kind application.ServiceActionKind) tea.Cmd {
+	m.mutation.upgrade = directUpgradeDisplayState{}
+	m.mutation.upgradeResult = nil
+	m.mutation.upgradeErr = nil
 	operation := m.nextMutationOperation()
 	m.mutation.operation = operation
 	m.mutation.busy = true
@@ -1214,6 +1230,9 @@ func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapsho
 }
 
 func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRequest, member domain.EtcdMemberSnapshot) tea.Cmd {
+	m.mutation.upgrade = directUpgradeDisplayState{}
+	m.mutation.upgradeResult = nil
+	m.mutation.upgradeErr = nil
 	operation := m.nextMutationOperation()
 	m.mutation.operation = operation
 	m.mutation.busy = true
@@ -1327,6 +1346,8 @@ func (m directModel) View() tea.View {
 		prompt = m.etcdPathPrompt.view()
 	} else if m.timePrompt != nil {
 		prompt = m.timePrompt.view()
+	} else if !m.palette.active && !m.contexts.active && m.mutation.upgrade.Target != "" && m.mutation.notice != "" && !m.directFilterEditing() {
+		prompt = m.mutation.notice
 	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
 		prompt = "/" + m.nodes.filter
 	} else if !m.palette.active && m.views.top().Kind == viewServices && (m.services.filtering || m.services.filter != "") {
@@ -1384,6 +1405,49 @@ func (m directModel) canShowDirectEtcdReceipt() bool {
 	return m.views.top().Kind == viewEtcd && !m.etcd.filtering && !m.palette.active && !m.contexts.active && m.etcdPathPrompt == nil && m.timePrompt == nil
 }
 
+func (m directModel) directFilterEditing() bool {
+	switch m.views.top().Kind {
+	case viewNodes:
+		return m.nodes.filtering
+	case viewServices:
+		return m.services.filtering
+	case viewEvents:
+		return m.events.filtering
+	case viewClusterHealth:
+		return m.healthcheck.filtering
+	case viewEtcd:
+		return m.etcd.filtering
+	case viewProblems:
+		return m.problems.filtering
+	case viewProcesses:
+		return m.processes.filtering
+	case viewDisks:
+		return m.disks.filtering
+	case viewNetwork:
+		return m.network.filtering
+	case viewNetstat:
+		return m.netstat.filtering
+	case viewMounts:
+		return m.mounts.filtering
+	case viewMemory:
+		return m.memory.filtering
+	case viewCPU:
+		return m.cpu.filtering
+	case viewTime:
+		return m.time.filtering
+	case viewResourceKinds:
+		return m.resourceKinds.filtering
+	case viewResourceInstances:
+		return m.resourceInstances.filtering
+	case viewServiceLogs:
+		return m.logs.filtering
+	case viewDmesg:
+		return m.dmesg.filtering
+	default:
+		return false
+	}
+}
+
 func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.requests.cancelSlot("upgrade-image")
 	m.requests.cancelSlot("upgrade-prepare")
@@ -1395,6 +1459,9 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.mutation.prompt = nil
 	m.upgradePrompt = nil
 	m.mutation.upgradePending = false
+	m.mutation.upgrade = directUpgradeDisplayState{}
+	m.mutation.upgradeResult = nil
+	m.mutation.upgradeErr = nil
 	m.etcdPathPrompt = nil
 	m.mutation.busy = false
 	m.mutation.results = nil

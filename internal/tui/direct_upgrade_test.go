@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -190,10 +192,167 @@ func TestDirectUpgradeProgressIsBestEffortAndTerminalWaitFinishes(t *testing.T) 
 	assert.Contains(t, model.mutation.notice, "Upgrade cp-1 applied")
 }
 
+func TestDirectUpgradeAwaitReturnsOnSessionSwitchWhileWaitRetainsTerminal(t *testing.T) {
+	stream := newCancelObservedUpgradeStream()
+	stream.results <- ports.UpgradeResult{Event: &ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling installer"}}
+	session := directUpgradeSession(t, "installer:v1.14.0", nil, func(context.Context, string, string) ports.UpgradeStream { return stream })
+	model := directUpgradeModel(t, session)
+	operationCtx, cancel := context.WithCancel(context.Background())
+	model.sessionCtx, model.sessionCancel = operationCtx, cancel
+	work := directUpgradeWorkForTest(t, model, session, operationCtx)
+	model.mutationWork = work
+	model.mutation.operation, model.mutation.busy = work.operation, true
+	model.mutation.operation, model.mutation.busy = work.operation, true
+	startMessage := make(chan tea.Msg, 1)
+	go func() { startMessage <- directMutationStartCommand(work)() }()
+	select {
+	case <-stream.waitStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upgrade Wait observer did not start")
+	}
+	var first tea.Msg
+	select {
+	case first = <-startMessage:
+	case <-time.After(time.Second):
+		t.Fatal("best-effort progress did not reach the UI")
+	}
+	require.IsType(t, directUpgradeProgress{}, first)
+	_, await := updateDirect(model, first)
+	require.NotNil(t, await)
+	model.beginSessionOpen("next-context") // cancels the session that owns the accepted upgrade
+	require.ErrorIs(t, operationCtx.Err(), context.Canceled)
+	returned := make(chan tea.Msg, 1)
+	go func() { returned <- await() }()
+	select {
+	case message := <-returned:
+		assert.IsType(t, directMutationCanceled{}, message)
+	case <-time.After(100 * time.Millisecond):
+		// Release simulated remote cleanup so a failed assertion cannot leak test goroutines.
+		close(stream.release)
+		<-returned
+		t.Fatal("await Tea command remained blocked after session cancellation")
+	}
+	select {
+	case <-stream.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("session cancellation did not cancel the upgrade stream")
+	}
+	select {
+	case <-stream.waitFinished:
+		t.Fatal("TUI cancellation released the retained Wait before cleanup completed")
+	default:
+	}
+	close(stream.release)
+	select {
+	case <-stream.waitFinished:
+	case <-time.After(time.Second):
+		t.Fatal("retained Wait observer did not finish after cancellation cleanup")
+	}
+	updated, _ := updateDirect(model, directMutationFinished{operation: work.operation, generation: work.generation,
+		upgradeTarget: "cp-1", upgrade: &ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAccepted, Done: true}})
+	assert.Equal(t, "next-context", updated.cluster.contextName)
+	assert.NotContains(t, updated.mutation.notice, "Upgrade cp-1")
+}
+
+func TestDirectUpgradeAdmissionAssessmentChangeIsKnownPreDispatchFailure(t *testing.T) {
+	var changed atomic.Bool
+	var dispatches atomic.Int32
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{
+			NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				version := "v1.14.0"
+				if changed.Load() {
+					version = "v1.14.1"
+				}
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleControl, Version: version}}}, nil
+			}},
+			NodeController: &testkit.FakeNodeController{
+				CurrentInstallImageFunc: func(context.Context, string) (string, error) { return "installer:v1.14.0", nil },
+				UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
+					dispatches.Add(1)
+					return &directUpgradeTestStream{results: make(chan ports.UpgradeResult), terminal: ports.UpgradeResult{Outcome: ports.UpgradeOutcomeApplied, Done: true}}
+				},
+			},
+		}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
+	require.NoError(t, err)
+	defer session.Close()
+	model := directUpgradeModel(t, session)
+	model, command := updateDirect(model, keyPress('U'))
+	model, _ = applyDirectCommand(t, model, command)
+	model.upgradePrompt.input.SetValue("installer:v1.15.0")
+	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = applyDirectCommand(t, model, command)
+	require.NotNil(t, model.mutation.prompt)
+	changed.Store(true)
+	model, command = updateDirect(model, keyPress('y'))
+	for model.mutation.busy {
+		model, command = updateDirect(model, command())
+	}
+	assert.Zero(t, dispatches.Load(), "assessment change is detected before the controller receives UpgradeStream")
+	assert.Contains(t, model.mutation.notice, "assessment changed")
+	assert.NotContains(t, model.mutation.notice, "unconfirmed")
+	assert.NotContains(t, model.mutation.notice, "remote outcome")
+	assert.Contains(t, ansi.Strip(model.View().Content), "assessment changed")
+}
+
+func TestDirectUpgradeStatusOutranksInactiveFilterButPreservesEditingPrompt(t *testing.T) {
+	model := directUpgradeModel(t, directUpgradeSession(t, "installer:v1.14.0", nil, nil))
+	model.mutation.operation, model.mutation.busy = 7, true
+	model.nodes.filter = "cp"
+	model, _ = updateDirect(model, directUpgradeProgress{operation: 7, generation: model.generation(), target: "cp-1", event: ports.UpgradeEvent{Phase: ports.UpgradePulling, Message: "pulling installer", Current: 1, Total: 2}})
+	content := ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "Upgrading cp-1: pulling 50%")
+	model.nodes.filtering = true
+	model.nodes.filter = "worker"
+	assert.Contains(t, ansi.Strip(model.View().Content), "/worker", "active filter entry remains the footer prompt")
+	model.nodes.filtering = false
+	model.nodes.filter = "cp"
+	recovery := ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAppliedWithRecoveryWarning, Warning: "private adapter detail", Err: errors.New("private adapter detail"), Done: true}
+	model, _ = updateDirect(model, directMutationFinished{operation: 7, generation: model.generation(), upgradeTarget: "cp-1", upgrade: &recovery})
+	content = ansi.Strip(model.View().Content)
+	assert.Contains(t, content, "recovery warning")
+	assert.NotContains(t, content, "private adapter detail")
+}
+
 type gatedDirectUpgradeStream struct {
 	results  <-chan ports.UpgradeResult
 	release  <-chan struct{}
 	terminal ports.UpgradeResult
+}
+
+type cancelObservedUpgradeStream struct {
+	results      chan ports.UpgradeResult
+	cancelled    chan struct{}
+	waitStarted  chan struct{}
+	waitFinished chan struct{}
+	release      chan struct{}
+}
+
+func newCancelObservedUpgradeStream() *cancelObservedUpgradeStream {
+	return &cancelObservedUpgradeStream{results: make(chan ports.UpgradeResult, 1), cancelled: make(chan struct{}), waitStarted: make(chan struct{}), waitFinished: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (s *cancelObservedUpgradeStream) Results() <-chan ports.UpgradeResult { return s.results }
+func (s *cancelObservedUpgradeStream) Cancel()                             { close(s.cancelled) }
+func (s *cancelObservedUpgradeStream) Wait(ctx context.Context) (ports.UpgradeResult, error) {
+	close(s.waitStarted)
+	defer close(s.waitFinished)
+	select {
+	case <-s.release:
+		return ports.UpgradeResult{Outcome: ports.UpgradeOutcomeAccepted, Err: context.Canceled, Done: true}, nil
+	case <-ctx.Done():
+		return ports.UpgradeResult{}, ctx.Err()
+	}
+}
+
+func directUpgradeWorkForTest(t *testing.T, model directModel, session *application.Session, ctx context.Context) directMutationWork {
+	t.Helper()
+	return directMutationWork{operation: 3, generation: model.generation(), ctx: ctx, session: session, plan: &directMutationPrompt{
+		operation: 3, generation: model.generation(), nodeKind: application.ActionUpgrade, node: mustPrepareUpgradeForDirectTest(t, session),
+		assessment: application.Assessment{Targets: []string{"cp-1"}}, confirm: application.Confirmation{Approved: true}, session: session,
+	}, events: make(chan directMutationWorkItem, 2)}
 }
 
 func (s *gatedDirectUpgradeStream) Results() <-chan ports.UpgradeResult { return s.results }

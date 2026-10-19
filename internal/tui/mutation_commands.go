@@ -23,6 +23,9 @@ func destructiveIntentInput() textinput.Model {
 }
 
 func (m *directModel) prepareDirectNodeMutation(request application.NodeActionRequest) tea.Cmd {
+	m.mutation.upgrade = directUpgradeDisplayState{}
+	m.mutation.upgradeResult = nil
+	m.mutation.upgradeErr = nil
 	operation := m.nextMutationOperation()
 	m.mutation.operation = operation
 	m.mutation.busy = true
@@ -302,6 +305,7 @@ type directMutationFinished struct {
 	err                   error
 	upgradeTarget         string
 	upgrade               *ports.UpgradeResult
+	upgradeStartErr       error
 	upgradeWaitErr        error
 }
 
@@ -309,6 +313,10 @@ type directUpgradeProgress struct {
 	operation, generation uint64
 	target                string
 	event                 ports.UpgradeEvent
+}
+
+type directMutationCanceled struct {
+	operation, generation uint64
 }
 
 type directMutationWork struct {
@@ -342,7 +350,7 @@ func (m *directModel) beginDirectUpgrade(target string) tea.Cmd {
 	m.mutation.upgradePending = true
 	m.mutation.notice = "Reading current install image…"
 	m.mutation.results = nil
-	m.mutation.upgrade = directUpgradeDisplayState{}
+	m.mutation.upgrade = directUpgradeDisplayState{Target: target}
 	m.mutation.upgradeResult = nil
 	m.mutation.upgradeErr = nil
 	m.view.notice = ""
@@ -419,7 +427,7 @@ func runDirectUpgrade(work directMutationWork, plan *directMutationPrompt) {
 		if startErr == nil {
 			startErr = application.ErrCapabilityUnavailable
 		}
-		finished := directMutationFinished{operation: work.operation, generation: work.generation, upgradeTarget: target, upgradeWaitErr: startErr}
+		finished := directMutationFinished{operation: work.operation, generation: work.generation, upgradeTarget: target, upgradeStartErr: startErr}
 		sendDirectMutationItem(work, directMutationWorkItem{finished: &finished})
 		return
 	}
@@ -461,6 +469,10 @@ func runDirectUpgrade(work directMutationWork, plan *directMutationPrompt) {
 
 func directMutationAwaitCommand(work directMutationWork) tea.Cmd {
 	return func() tea.Msg {
+		ctx := work.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		select {
 		case item := <-work.events:
 			if item.result != nil {
@@ -473,6 +485,8 @@ func directMutationAwaitCommand(work directMutationWork) tea.Cmd {
 				return *item.finished
 			}
 			return nil
+		case <-ctx.Done():
+			return directMutationCanceled{operation: work.operation, generation: work.generation}
 		}
 	}
 }
@@ -520,6 +534,25 @@ func mutationErrorMessage(err error) string {
 	default:
 		return ""
 	}
+}
+
+func directUpgradeAdmissionNotice(target string, err error) string {
+	reason := "upgrade was not started"
+	switch {
+	case errors.Is(err, application.ErrAssessmentChanged):
+		reason = "assessment changed — prepare the action again"
+	case errors.Is(err, application.ErrActionBlocked):
+		reason = "action blocked by current cluster state"
+	case errors.Is(err, application.ErrWritesDisabled):
+		reason = "writes are disabled for this session"
+	case errors.Is(err, application.ErrMutationBusy):
+		reason = "another mutation is active"
+	case errors.Is(err, application.ErrConfirmationRequired):
+		reason = "confirmation is required"
+	case errors.Is(err, context.Canceled):
+		reason = "request canceled before upgrade dispatch"
+	}
+	return "Upgrade " + sanitizeUntrustedText(fallback(target)) + " not started: " + reason
 }
 
 func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
