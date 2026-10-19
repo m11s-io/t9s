@@ -25,8 +25,10 @@ available. Leaving the context cancels local work, but does not undo a request
 already accepted by Talos. Rediscover remote state before retrying.
 
 Client deadlines are 30 seconds for ordinary control requests, 10 minutes for
-etcd snapshots and defragmentation, and 30 minutes for reset/device wipe. Each
-bulk target gets its own budget. Upgrade installation and subsequent maintenance
+etcd snapshots and defragmentation, and 30 minutes for reset/device wipe. One
+bulk node execution shares a single deadline across its targets (30 seconds for
+ordinary actions or 30 minutes for reset/device wipe); the caller context or
+session lifetime can shorten it. Upgrade installation and subsequent maintenance
 stages have separate limits. These initial limits still require disposable-cluster
 validation. A successful control RPC is reported as accepted, not independently
 verified remote completion; a failed submitted RPC reports an unconfirmed
@@ -41,9 +43,14 @@ request private, can be consumed only once, and expose a deep-copied assessment
 for a confirmation interface. Execution verifies the plan belongs to that
 session, then refreshes target identity, scope, risk facts, and confirmation
 before dispatch. The session enforces one active mutation at a time across all
-callers. For bulk node operations, results retain each target's accepted,
-unconfirmed, completed, or recovery-incomplete outcome even when execution also
-returns an error.
+callers. For basic bulk node operations, each dispatched target retains an
+accepted or unconfirmed outcome even when execution also returns an error. A
+target cancelled before dispatch can have an error with no outcome set. A local
+etcd snapshot that finishes reports completed. Upgrade streaming uses the
+separate port-level `UpgradeOutcome` values `accepted`, `applied`, and
+`applied-with-recovery-warning`; its result and error remain inspectable. The TUI
+maps the warning case to `domain.OperationRecoveryIncomplete` for presentation,
+which is not an outcome returned in a `MutationResult`.
 
 Cancellation ends local waiting or work; it cannot prove that a dispatched
 remote action was undone. For an upgrade stream, terminal results and errors

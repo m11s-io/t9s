@@ -62,16 +62,21 @@ identity, scope, risk facts, and confirmation against the prepared assessment.
 Write permission comes from trusted `application.Options` when opening the
 session; a mutation request cannot enable writes itself.
 
-Mutation results preserve per-target outcomes, including when the call returns
-an error after dispatch. `accepted` means the remote RPC acknowledged the
-request, not that remote completion was independently observed; `unconfirmed`
-means the response or outcome is uncertain; completed local snapshots report
-`completed`, and upgrade cleanup can report `recovery-incomplete`. Cancellation
+Mutation results preserve per-target outcomes when execution returns an error.
+For basic bulk node actions, `accepted` means the RPC acknowledged the request
+without independently verifying remote completion, and `unconfirmed` means a
+dispatched RPC's result is uncertain. If cancellation prevents a target from
+being dispatched, its result may have no outcome set. A completed local etcd
+snapshot reports `completed`. Upgrade streams use the separate
+`ports.UpgradeOutcome` values `accepted`, `applied`, and
+`applied-with-recovery-warning`; the warning outcome may include an inspectable
+error. The TUI maps that warning to its `domain.OperationRecoveryIncomplete`
+presentation outcome, which is not a `MutationResult` status. Cancellation
 stops local work but does not roll back a remote request. Never retry a mutation
 only because its response was lost. Upgrade streams retain their terminal result
 and release the mutation lease after terminal cleanup. `Wait(ctx)` returning
 `ctx.Err()` only means that caller stopped waiting; a later `Wait` can still
-return the retained operation result and its separate error.
+return the retained port result and its separate wait error.
 
 Bulk node execution invokes its optional per-target observer serially as results
 arrive. Callbacks must return promptly; callers that forward events to another
@@ -83,10 +88,12 @@ passes among views. A future web frontend must define its own transport and
 policy for local snapshot paths; no React frontend, HTTP server, authentication,
 or download transport is provided here.
 
-Application operations own their client deadlines; bulk targets do not share a
-deadline. The initial budgets live in `application/operation_policy.go`, with
-upgrade stage budgets in the Talos adapter. Keep raw RPC errors out of
-presentation state.
+Application operations own their client deadlines. Targets in one bulk node
+execution share one deadline: 30 seconds for ordinary actions and 30 minutes
+for reset or device wipe. A caller deadline or session cancellation can shorten
+that budget; targets do not receive separate per-target budgets. The initial
+budgets live in `application/operation_policy.go`, with upgrade stage budgets
+in the Talos adapter. Keep raw RPC errors out of presentation state.
 
 Normal tests use `internal/testkit` fakes at port boundaries. A test that needs
 a live Talos endpoint is a manual smoke test and must be explicitly separated
