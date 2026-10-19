@@ -816,9 +816,6 @@ func (m directModel) View() tea.View {
 	if !m.splash && !contentFramed {
 		content = renderResourceFrame(frame, content, m.styles.k9s)
 	}
-	if m.palette.active {
-		content += "\n" + m.palette.view()
-	}
 	flash := m.view.notice
 	if flash == "" {
 		switch m.cluster.nodes.Status {
@@ -840,7 +837,9 @@ func (m directModel) View() tea.View {
 		breadcrumb = m.cluster.contextName + " > contexts"
 	}
 	prompt := ""
-	if m.mutation.prompt != nil {
+	if m.palette.active {
+		prompt = m.palette.view()
+	} else if m.mutation.prompt != nil {
 		prompt = renderDirectMutationPrompt(m.mutation.prompt)
 	} else if m.upgradePrompt != nil {
 		prompt = m.upgradePrompt.view()

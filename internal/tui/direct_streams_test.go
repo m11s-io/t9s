@@ -209,6 +209,27 @@ func TestDirectLogStreamRetentionAndClear(t *testing.T) {
 	assert.Empty(t, model.logs.state.Lines)
 }
 
+func TestDirectServiceLogBatchPreservesUnrelatedState(t *testing.T) {
+	model := newDirectModel(context.Background(), nil, LaunchOptions{})
+	request, _ := model.requests.begin("service-logs", model.generation())
+	model.logStream = directLogStreamState{request: request, status: application.Ready}
+	model.logs = model.logs.setStreamState(application.Ready, []string{"old log"}, "", false)
+	model.dmesg = model.dmesg.setStreamState(application.Ready, []string{"old dmesg"}, "", false)
+	model.nodes.selectedID = "worker-id"
+	model.problems.filter = "degraded"
+
+	model, command := updateDirect(model, directServiceLogBatch{
+		request: request.stamp,
+		batch:   domain.LogBatch{Lines: []string{"new log"}, EOF: true},
+	})
+
+	require.Nil(t, command)
+	assert.Equal(t, []string{"old log", "new log"}, model.logs.state.Lines)
+	assert.Equal(t, []string{"old dmesg"}, model.dmesg.state.Lines)
+	assert.Equal(t, "worker-id", model.nodes.selectedID)
+	assert.Equal(t, "degraded", model.problems.filter)
+}
+
 func TestDirectServiceLogReconnectUsesOriginalServiceIdentity(t *testing.T) {
 	var targets []domain.LogRequest
 	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {

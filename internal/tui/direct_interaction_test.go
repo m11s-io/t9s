@@ -89,6 +89,17 @@ func TestDirectRootUsesOnlyActiveViewFilterForPalettePrecedence(t *testing.T) {
 	assert.Equal(t, "qrvC:", root.nodes.filter, "active filters treat command and action keys as query text")
 }
 
+func TestDirectCommandPaletteRendersPromptAndTypedTextInFooter(t *testing.T) {
+	root := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "node-1", Name: "worker-1"}})
+	root, _ = updateDirect(root, keyPress(':'))
+	for _, key := range "nodes" {
+		root, _ = updateDirect(root, keyPress(key))
+	}
+	content := ansi.Strip(root.View().Content)
+	assert.Contains(t, content, "COMMAND :")
+	assert.Contains(t, content, "nodes")
+}
+
 func TestDirectRootHandlesKittyShiftedKeys(t *testing.T) {
 	root := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "node-1", Name: "worker"}})
 	root, _ = updateDirect(root, tea.KeyPressMsg{Code: ';', Text: ":", Mod: tea.ModShift})

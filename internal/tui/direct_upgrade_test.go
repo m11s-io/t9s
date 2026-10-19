@@ -132,31 +132,49 @@ func TestDirectUpgradeCompletionAfterLeavingNodesDoesNotOpenPrompt(t *testing.T)
 }
 
 func TestDirectUpgradeMinorSkipWarningIsVisibleInPreparedPrompt(t *testing.T) {
-	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
-		return &testkit.FakeSession{
-			NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
-				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleWorker, Version: "v1.13.3"}}}, nil
-			}},
-			NodeController: &testkit.FakeNodeController{CurrentInstallImageFunc: func(context.Context, string) (string, error) {
-				return "factory.talos.dev/metal-installer/id:v1.13.3", nil
-			}},
-		}, nil
-	}}})
-	session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = session.Close() })
-	model := directUpgradeModel(t, session)
-	model, command := updateDirect(model, keyPress('U'))
-	require.NotNil(t, command)
-	model, _ = applyDirectCommand(t, model, command)
-	require.NotNil(t, model.upgradePrompt)
-	model.upgradePrompt.input.SetValue("factory.talos.dev/metal-installer/id:v1.15.0")
-	model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.NotNil(t, command)
-	model, _ = applyDirectCommand(t, model, command)
-	require.NotNil(t, model.mutation.prompt)
-	assert.Contains(t, model.mutation.prompt.assessment.Warning, "skips intermediate Talos minor releases")
-	assert.Contains(t, ansi.Strip(model.View().Content), "skips intermediate Talos minor releases")
+	for _, test := range []struct {
+		name  string
+		image string
+		warn  bool
+	}{
+		{name: "skips a minor", image: "factory.talos.dev/metal-installer/id:v1.15.0", warn: true},
+		{name: "adjacent minor", image: "factory.talos.dev/metal-installer/id:v1.14.0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+				return &testkit.FakeSession{
+					NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+						return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "cp-id", Name: "cp-1", Role: domain.NodeRoleWorker, Version: "v1.13.3"}}}, nil
+					}},
+					NodeController: &testkit.FakeNodeController{CurrentInstallImageFunc: func(context.Context, string) (string, error) {
+						return "factory.talos.dev/metal-installer/id:v1.13.3", nil
+					}},
+				}, nil
+			}}})
+			session, err := client.Open(context.Background(), "prod", application.Options{WritesEnabled: true})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
+			model := directUpgradeModel(t, session)
+			model, command := updateDirect(model, keyPress('U'))
+			require.NotNil(t, command)
+			model, _ = applyDirectCommand(t, model, command)
+			require.NotNil(t, model.upgradePrompt)
+			model.upgradePrompt.input.SetValue(test.image)
+			model, command = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.NotNil(t, command)
+			model, _ = applyDirectCommand(t, model, command)
+			require.NotNil(t, model.mutation.prompt)
+			warning := model.mutation.prompt.assessment.Warning
+			content := ansi.Strip(model.View().Content)
+			if test.warn {
+				assert.Contains(t, warning, "skips intermediate Talos minor releases")
+				assert.Contains(t, content, "skips intermediate Talos minor releases")
+			} else {
+				assert.NotContains(t, warning, "skips intermediate Talos minor releases")
+				assert.NotContains(t, content, "skips intermediate Talos minor releases")
+			}
+		})
+	}
 }
 
 func TestDirectUpgradeReadOnlyAffordanceDoesNotReadOrPrepare(t *testing.T) {

@@ -165,20 +165,30 @@ func TestDirectOldGenerationNodeResultCannotReplaceSwitchedContext(t *testing.T)
 
 func TestDirectRefreshUpdatesHealthAndPreservesServiceSelection(t *testing.T) {
 	serviceSet := domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}, {Node: "worker-1", Name: "kubelet"}}}
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
-	model.splash = false
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{
+			NodeReader: &testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1", Health: domain.HealthUnhealthy}}}, nil
+			}},
+			ServiceReader: &testkit.FakeServiceReader{ListFunc: func(context.Context) (domain.ServiceSet, error) { return serviceSet, nil }},
+		}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	model := newDirectModel(context.Background(), client, LaunchOptions{})
+	model.splash, model.session, model.sessionCtx = false, session, context.Background()
 	model.cluster.services = directServiceState{Status: directReady, Value: serviceSet}
 	model.services = model.services.normalizeSelection(serviceSet.Services, 0)
+	model, _ = runDirectPalette(t, model, "services")
+	assert.Equal(t, viewServices, model.views.top().Kind, "the test must enter the services view through the command palette")
 	model, _ = updateDirect(model, tea.KeyPressMsg{Code: tea.KeyDown})
-	selectedService := model.services.selectedKey
-	request, _ := model.requests.begin("cluster-nodes-services", model.generation())
-	model, _ = updateDirect(model, directNodeServicesLoaded{
-		request:  request.stamp,
-		nodes:    domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "worker-id", Name: "worker-1", Health: domain.HealthUnhealthy}}},
-		services: serviceSet,
-	})
-	model.views = model.views.replaceRoot(viewFrame{Kind: viewProblems, Label: "problems"})
-	assert.Equal(t, selectedService, model.services.selectedKey)
+	selectedService := serviceKey(serviceSet.Services[1])
+	assert.Equal(t, selectedService, model.services.selectedKey, "Down selects the second service before refresh")
+	model, command := updateDirect(model, keyPress('r'))
+	require.NotNil(t, command)
+	model, _ = applyDirectCommand(t, model, command)
+	assert.Equal(t, selectedService, model.services.selectedKey, "refresh preserves the selected service identity")
 	assert.Len(t, application.EvaluateObservations(directHealthInput(model.cluster)), 1)
 	assert.Contains(t, model.View().Content, "worker-1")
 }
@@ -324,23 +334,69 @@ func TestDirectPaletteUnknownEmptyAndEscapeBehavior(t *testing.T) {
 }
 
 func TestDirectWipeCompletionMarksDiskSnapshotLoading(t *testing.T) {
-	model := newDirectModel(context.Background(), nil, LaunchOptions{})
-	model.disks = newDirectDisksModel()
-	model.disks.status = directReady
-	model.disks.node = "cp-1"
-	model.mutation.operation = 7
-	model.mutation.busy = true
-	model.mutationWork = directMutationWork{
-		operation:  7,
-		generation: model.generation(),
-		plan:       &directMutationPrompt{nodeKind: application.ActionWipeDevice},
+	initial := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdb", Serial: "old-disk"}}}
+	refreshed := domain.DiskSet{Disks: []domain.DiskSnapshot{{DeviceName: "/dev/sdc", Serial: "replacement-disk"}}}
+	newModel := func(t *testing.T, diskNode string, outcome domain.OperationOutcome) (directModel, tea.Cmd, *[]string) {
+		var reads []string
+		refreshing := false
+		session := directDestructiveSession(t, func(_ context.Context, node string) (domain.DiskSet, error) {
+			if refreshing {
+				reads = append(reads, node)
+				return refreshed, nil
+			}
+			return initial, nil
+		}, &testkit.FakeNodeController{}, true)
+		model := newDirectModel(context.Background(), nil, LaunchOptions{WritesEnabled: true})
+		model.splash = false
+		model.session, model.sessionCtx = session, context.Background()
+		model.disks = newDisksModel(application.DisksState{Status: application.Ready, Node: diskNode, Value: initial})
+		model.views = model.views.replaceRoot(viewFrame{Kind: viewDisks, Label: diskNode + " > disks", NodeID: diskNode + "-id", NodeTarget: diskNode})
+		options := ports.DeviceWipeOptions{Node: "cp-1", Device: "/dev/sdb", Method: ports.DeviceWipeFast}
+		prepared, err := session.PrepareNodeAction(context.Background(), application.NodeActionRequest{
+			Kind: application.ActionWipeDevice, Targets: []string{"cp-1"}, DeviceWipe: &options,
+		})
+		require.NoError(t, err)
+		model.mutation.operation = 7
+		model.mutation.busy = true
+		model.mutationWork = directMutationWork{
+			operation: 7, generation: model.generation(),
+			plan: &directMutationPrompt{node: prepared, nodeKind: application.ActionWipeDevice, deviceWipe: &options, assessment: prepared.Assessment()},
+		}
+		model, command := updateDirect(model, directMutationFinished{
+			operation: 7, generation: model.generation(),
+			result: application.MutationResult{Targets: []application.TargetResult{{Target: "cp-1", Outcome: outcome}}},
+		})
+		if command != nil {
+			refreshing = true
+		}
+		return model, command, &reads
 	}
-	model, _ = updateDirect(model, directMutationFinished{
-		operation:  7,
-		generation: model.generation(),
-		result:     application.MutationResult{Targets: []application.TargetResult{{Target: "cp-1", Outcome: domain.OperationCompleted}}},
+
+	t.Run("completed matching target refreshes visible inventory", func(t *testing.T) {
+		model, command, reads := newModel(t, "cp-1", domain.OperationCompleted)
+		assert.Equal(t, directLoading, model.disks.status)
+		require.NotNil(t, command, "completed wipe starts the active disk view refresh")
+		model, _ = applyDirectCommand(t, model, command)
+		assert.Equal(t, []string{"cp-1"}, *reads)
+		assert.Equal(t, "cp-1", model.disks.node)
+		assert.Equal(t, refreshed, model.disks.values, "terminal refresh replaces the pre-wipe inventory")
+		assert.Equal(t, directReady, model.disks.status)
 	})
-	assert.Equal(t, directLoading, model.disks.status, "a completed wipe must show disk inventory loading while it refreshes")
+
+	t.Run("another displayed node is left untouched", func(t *testing.T) {
+		model, command, reads := newModel(t, "worker-1", domain.OperationCompleted)
+		assert.Nil(t, command)
+		assert.Zero(t, len(*reads))
+		assert.Equal(t, directReady, model.disks.status)
+		assert.Equal(t, initial, model.disks.values)
+	})
+	t.Run("noncompleted result does not refresh", func(t *testing.T) {
+		model, command, reads := newModel(t, "cp-1", domain.OperationUnconfirmed)
+		assert.Nil(t, command)
+		assert.Zero(t, len(*reads))
+		assert.Equal(t, directReady, model.disks.status)
+		assert.Equal(t, initial, model.disks.values)
+	})
 }
 
 func indexText(value, fragment string) int {
