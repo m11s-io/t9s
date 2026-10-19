@@ -226,7 +226,7 @@ func TestDirectServiceFilterConsumesQBeforeQuit(t *testing.T) {
 
 func TestDirectContextPickerOrderingSelectionMarkerClampAndCancel(t *testing.T) {
 	values := []domain.ClusterContext{
-		{Name: "mgmt", Cluster: "management"},
+		{Name: "mgmt", Cluster: "management", Current: true},
 		{Name: "prod", Cluster: "production"},
 		{Name: "dev", Cluster: "development"},
 	}
