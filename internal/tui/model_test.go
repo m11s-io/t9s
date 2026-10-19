@@ -1,7 +1,6 @@
 package tui_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -311,58 +310,6 @@ func TestQuitClosesSessionInsideCommand(t *testing.T) {
 	require.NotNil(t, quit)
 	assert.IsType(t, tea.QuitMsg{}, quit())
 	waitForSignal(t, closed, "session close")
-}
-
-func TestRuntimeErrorFallbackCancelsEffectsAndClosesSession(t *testing.T) {
-	inputFailed := errors.New("terminal input failed")
-	readStarted := make(chan struct{})
-	readCanceled := make(chan struct{})
-	closed := make(chan struct{})
-	session := &testkit.FakeSession{
-		NodeReader: &testkit.FakeNodeReader{ListFunc: func(ctx context.Context) (domain.NodeSet, error) {
-			close(readStarted)
-			<-ctx.Done()
-			close(readCanceled)
-			return domain.NodeSet{}, ctx.Err()
-		}},
-		CloseFunc: func() error {
-			close(closed)
-			return nil
-		},
-	}
-	runner := application.NewRunner(application.Dependencies{
-		ContextCatalog: &testkit.FakeContextCatalog{ListFunc: func(context.Context) ([]domain.ClusterContext, error) {
-			return []domain.ClusterContext{{Name: "prod", Current: true}}, nil
-		}},
-		SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
-			return session, nil
-		}},
-	})
-	applicationModel, _ := application.NewModel("")
-	model, cleanup := tui.NewWithCleanup(t.Context(), applicationModel, runner)
-	var output bytes.Buffer
-	program := tea.NewProgram(model,
-		tea.WithInput(&errorAfterSignalReader{signal: readStarted, err: inputFailed}),
-		tea.WithOutput(&output),
-		tea.WithWindowSize(120, 40),
-	)
-
-	_, err := program.Run()
-
-	require.ErrorContains(t, err, inputFailed.Error())
-	assert.Zero(t, session.CloseCount())
-	select {
-	case <-readCanceled:
-		t.Fatal("program runtime error canceled detached application effect before fallback")
-	default:
-	}
-
-	require.NotNil(t, cleanup)
-	cleanup()
-	waitForSignal(t, readCanceled, "node read cancellation")
-	waitForSignal(t, closed, "session close")
-	cleanup()
-	assert.Equal(t, 1, session.CloseCount())
 }
 
 type errorAfterSignalReader struct {

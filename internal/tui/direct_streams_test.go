@@ -342,15 +342,15 @@ func TestDirectPendingLogAndDmesgOpenSurvivesHelpAndLateRemovedOpenClosesOnce(t 
 				go func() { result <- open() }()
 				<-entered
 				model, _ = updateDirect(model, keyPress('?'))
-				if exit == "help back" {
-					model, _ = updateDirect(model, keyPress('q'))
-				} else {
+				if exit != "help back" {
 					model, _ = runDirectPaletteCommand(t, model, "nodes")
 				}
 				close(release)
 				opened := <-result
 				model, next := updateDirect(model, opened)
 				if exit == "help back" {
+					assert.Equal(t, viewHelp, model.views.top().Kind, "opened stream is applied while help remains on top")
+					model, _ = updateDirect(model, keyPress('q'))
 					assert.Equal(t, kind, model.views.top().Kind)
 					assert.NotNil(t, next, "retained owner frame accepts the opened stream and continues reading")
 					if kind == viewServiceLogs {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image/color"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -63,6 +64,32 @@ type directModel struct {
 	width               int
 	height              int
 	splash              bool
+	lifecycle           *directLifecycle
+}
+
+type directLifecycle struct {
+	mu      sync.Mutex
+	session *application.Session
+}
+
+func (l *directLifecycle) setSession(session *application.Session) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.session = session
+	l.mu.Unlock()
+}
+
+func (l *directLifecycle) takeSession() *application.Session {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	session := l.session
+	l.session = nil
+	return session
 }
 
 type directLogStreamState struct {
@@ -99,6 +126,14 @@ type directHealthStreamState struct {
 
 type directClearLogs struct{ dmesg bool }
 
+// NewWithCleanup constructs the direct TUI over a shared application client.
+// The returned command is an idempotent fallback for terminal runtimes that
+// exit without delivering Bubble Tea's normal shutdown message.
+func NewWithCleanup(parent context.Context, client *application.Client, options LaunchOptions) (tea.Model, tea.Cmd) {
+	model := newDirectModel(parent, client, options)
+	return model, model.cleanup(tea.Quit())
+}
+
 func newDirectModel(parent context.Context, client *application.Client, options LaunchOptions) directModel {
 	if parent == nil {
 		parent = context.Background()
@@ -106,7 +141,7 @@ func newDirectModel(parent context.Context, client *application.Client, options 
 	rootCtx, rootCancel := context.WithCancel(parent)
 	nodeState := application.NodeState{Status: application.Loading}
 	return directModel{
-		client: client, options: options, requests: newDirectRequests(),
+		client: client, options: options, requests: newDirectRequests(), lifecycle: &directLifecycle{},
 		rootCtx: rootCtx, rootCancel: rootCancel,
 		cluster: directClusterState{
 			contextName: options.ContextName,
@@ -216,6 +251,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.session = message.session
+		m.lifecycle.setSession(message.session)
 		m.cluster.contextName = message.contextName
 		return m, m.startClusterObservations(message.session, message.request.generation)
 	case directCurrentInstallImage, directServicePrepared, directNodePrepared, directEtcdPrepared, directMutationProgress, directUpgradeProgress, directMutationCanceled, directMutationFinished:
@@ -927,9 +963,7 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.mutation.notice = ""
 	m.mutation.operation = m.nextMutationOperation()
 	m.mutationWork = directMutationWork{}
-	if m.sessionCancel != nil {
-		m.sessionCancel()
-	}
+	m.closeDirectSession()
 	m.requests.cancelSlot("session-open")
 	m.generationCounter++
 	m.cluster.contextName = contextName
@@ -992,10 +1026,26 @@ func (m directModel) fallbackCleanup() {
 	}
 	if m.sessionRequestCancel != nil {
 		m.sessionRequestCancel()
-	} else if m.sessionCancel != nil {
-		m.sessionCancel()
+	}
+	m.closeDirectSession()
+	if session := m.lifecycle.takeSession(); session != nil {
+		_ = session.Close()
 	}
 	m.requests.cancelAll()
+}
+
+func (m *directModel) closeDirectSession() {
+	if m.sessionCancel != nil {
+		m.sessionCancel()
+		m.sessionCancel = nil
+	}
+	if m.session != nil {
+		_ = m.session.Close()
+		if m.lifecycle != nil {
+			m.lifecycle.setSession(nil)
+		}
+		m.session = nil
+	}
 }
 
 func (m directModel) cleanup(next tea.Msg) tea.Cmd {

@@ -83,9 +83,9 @@ func NewWithContext(ctx context.Context, applicationModel application.Model, run
 	return newModel(ctx, true, applicationModel, runner)
 }
 
-// NewWithCleanup creates a context-bound model and an idempotent fallback
-// command for callers to execute if Bubble Tea exits without a shutdown message.
-func NewWithCleanup(ctx context.Context, applicationModel application.Model, runner *application.Runner) (tea.Model, tea.Cmd) {
+// legacyNewWithCleanup keeps the reducer-backed composition available only
+// to the migration's old fixture tests until those fixtures are retired.
+func legacyNewWithCleanup(ctx context.Context, applicationModel application.Model, runner *application.Runner) (tea.Model, tea.Cmd) {
 	model := newModel(ctx, true, applicationModel, runner)
 
 	return model, model.lifecycle.cleanup(nil)

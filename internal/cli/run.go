@@ -81,9 +81,6 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 				openPicker = needsPicker
 			}
 
-			applicationModel, _ := application.NewModel(contextOverride)
-			applicationModel.NodeFocus = node
-			applicationModel.OpenContextPicker = openPicker
 			// T9S_ENABLE_WRITES is parsed as a standard Go bool string
 			// (accepts 1, t, T, TRUE, true, True and their false
 			// counterparts per strconv.ParseBool); unset, empty, or any
@@ -91,22 +88,30 @@ func Run(ctx context.Context, args []string, input io.Reader, output io.Writer, 
 			// fail closed, not turn on for an arbitrary non-empty string
 			// like "false" or "0".
 			envEnabled, _ := strconv.ParseBool(os.Getenv("T9S_ENABLE_WRITES"))
-			applicationModel.WritesEnabled = enableWrites || envEnabled
-			runner := application.NewRunner(application.Dependencies{
+			client := application.NewClient(application.Dependencies{
 				ContextCatalog:     catalog,
 				SessionFactory:     talos.NewSessionFactory(talosconfigs...),
 				KubernetesResolver: kubernetes.NewResolver(),
 			})
-			terminalModel, cleanup := tui.NewWithCleanup(ctx, applicationModel, runner)
+			terminalModel, cleanup := tui.NewWithCleanup(ctx, client, tui.LaunchOptions{
+				ContextName:       contextOverride,
+				NodeFocus:         node,
+				OpenContextPicker: openPicker,
+				WritesEnabled:     enableWrites || envEnabled,
+			})
 			program := tea.NewProgram(
 				terminalModel,
+				tea.WithContext(ctx),
 				tea.WithInput(input),
 				tea.WithOutput(output),
 				tea.WithWindowSize(120, 40),
 			)
 
 			_, programErr := program.Run()
-			cleanup()
+			_ = cleanup()
+			if ctx.Err() != nil {
+				return nil
+			}
 			return programErr
 		},
 	}

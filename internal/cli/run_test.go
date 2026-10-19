@@ -25,7 +25,7 @@ func TestRunConfiguresKlogBeforeStartingTUI(t *testing.T) {
 		klog.SetOutput(io.Discard)
 	})
 
-	stdout := newSignalWriter("load talosconfig")
+	stdout := newSignalWriter("Unable to discover contexts")
 	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
 	var stderr bytes.Buffer
 	exitCode := cli.Run(t.Context(), []string{"--talosconfig", "/path/that/does/not/exist/talosconfig"}, stdin, stdout, &stderr)
@@ -46,7 +46,7 @@ func TestRunReturnsTwoForUnknownFlag(t *testing.T) {
 }
 
 func TestRunRendersMissingTalosconfigAndQuitsNormally(t *testing.T) {
-	const failure = "load talosconfig"
+	const failure = "Unable to discover contexts"
 	stdout := newSignalWriter(failure)
 	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
 	var stderr bytes.Buffer
@@ -67,7 +67,7 @@ func TestRunRendersMissingTalosconfigAndQuitsNormally(t *testing.T) {
 }
 
 func TestRunCallerCancellationQuitsNormally(t *testing.T) {
-	const failure = "load talosconfig"
+	const failure = "Unable to discover contexts"
 	stdout := newSignalWriter(failure)
 	var stderr bytes.Buffer
 	ctx, cancel := context.WithCancel(t.Context())
@@ -144,7 +144,7 @@ func (r *signalReader) Read(destination []byte) (int, error) {
 }
 
 func TestRunAcceptsEnableWritesFlag(t *testing.T) {
-	const failure = "load talosconfig"
+	const failure = "Unable to discover contexts"
 	stdout := newSignalWriter(failure)
 	stdin := &signalReader{signal: stdout.matched, contents: []byte("q")}
 	var stderr bytes.Buffer
