@@ -56,6 +56,22 @@ contexts:
 	assert.NotContains(t, string(encoded), "fake-dev-key-credential")
 }
 
+func TestConfigCatalogListUsesContextNameWhenClusterIsMissing(t *testing.T) {
+	path := writeTalosconfig(t, `
+context: plt
+contexts:
+  plt:
+    endpoints:
+      - https://plt.example:50000
+`)
+
+	contexts, err := talos.NewConfigCatalog(path).List(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, contexts, 1)
+	assert.Equal(t, "plt", contexts[0].Cluster)
+}
+
 func TestConfigCatalogListMergesTALOSCONFIGSFiles(t *testing.T) {
 	mgmt := writeTalosconfig(t, `
 context: mgmt

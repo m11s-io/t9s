@@ -49,10 +49,14 @@ func (c *ConfigCatalog) List(context.Context) ([]domain.ClusterContext, error) {
 		if talosContext == nil {
 			return nil, fmt.Errorf("Talos context %q is missing", name)
 		}
+		cluster := talosContext.Cluster
+		if cluster == "" {
+			cluster = name
+		}
 
 		contexts = append(contexts, domain.ClusterContext{
 			Name:      name,
-			Cluster:   talosContext.Cluster,
+			Cluster:   cluster,
 			Endpoints: append([]string(nil), talosContext.Endpoints...),
 			Nodes:     append([]string(nil), talosContext.Nodes...),
 			Current:   name == config.Context,
