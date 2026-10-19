@@ -185,6 +185,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = message.Width, message.Height
+		m.time = m.time.clampOffset(m.timeViewportHeight())
 		m.resizeDirectResourceDetail()
 		m.syncDirectStreamViewports()
 		return m, nil
@@ -641,6 +642,11 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m directModel) timeViewportHeight() int {
+	layout := layoutShell(m.width, m.height)
+	return layoutResourceFrame(layout.Width, layout.ContentHeight, "").InnerHeight
 }
 
 func (m *directModel) startClusterObservations(session *application.Session, generation uint64) tea.Cmd {

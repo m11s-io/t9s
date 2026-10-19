@@ -195,13 +195,13 @@ func (m *directModel) applyDiagnosticResult(message tea.Msg) bool {
 			return true
 		}
 		m.requests.cancelSlot(directDiagnosticSlot(result.nodeID, "time"))
-		m.time = m.time.setReadResult(result.node, result.value, result.err)
+		m.time = m.time.setReadResult(result.node, result.value, result.err).clampOffset(m.timeViewportHeight())
 	case directTimeCheckLoaded:
 		if !m.requests.current(result.request) || result.request.generation != m.generation() || !m.directDiagnosticOpen(result.nodeID, viewTime, 0) {
 			return true
 		}
 		m.requests.cancelSlot(directDiagnosticSlot(result.nodeID, "time-check"))
-		m.time = m.time.setCheckResult(result.node, result.server, result.value, result.err)
+		m.time = m.time.setCheckResult(result.node, result.server, result.value, result.err).clampOffset(m.timeViewportHeight())
 	default:
 		return false
 	}
@@ -323,7 +323,7 @@ func (m *directModel) handleDiagnosticKey(message tea.KeyPressMsg) (tea.Cmd, boo
 		case viewCPU:
 			m.cpu = m.cpu.update(message)
 		case viewTime:
-			m.time = m.time.update(message)
+			m.time = m.time.update(message).clampOffset(m.timeViewportHeight())
 		}
 		return nil, true
 	default:
