@@ -3,15 +3,19 @@ package tui
 import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/m11s-io/t9s/internal/application"
 )
 
 // snapshotPromptModel is the text-input step of the :etcd Snapshot (s) flow:
 // prefilled with a safe timestamped default, editable, and submitted with
 // Enter into application.ConfirmEtcdSnapshotPrompt.
 type snapshotPromptModel struct {
-	node   string
-	member string
-	input  textinput.Model
+	node     string
+	member   string
+	memberID uint64
+	kind     application.EtcdActionKind
+	input    textinput.Model
+	err      string
 }
 
 func newSnapshotPromptModel(node, member, prefill string) snapshotPromptModel {
@@ -31,5 +35,8 @@ func (m snapshotPromptModel) update(message tea.Msg) (snapshotPromptModel, tea.C
 }
 
 func (m snapshotPromptModel) view() string {
-	return m.input.View()
+	if m.err == "" {
+		return m.input.View()
+	}
+	return m.input.View() + "\n" + m.err
 }

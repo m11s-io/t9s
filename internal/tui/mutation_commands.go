@@ -203,6 +203,8 @@ type directMutationPrompt struct {
 	generation    uint64
 	node          *application.PreparedNodeAction
 	service       *application.PreparedServiceAction
+	etcd          *application.PreparedEtcdAction
+	etcdKind      application.EtcdActionKind
 	assessment    application.Assessment
 	session       *application.Session
 	serviceKind   application.ServiceActionKind
@@ -224,14 +226,30 @@ type directMutationState struct {
 	busy      bool
 	operation uint64
 	results   []application.TargetResult
+	snapshot  *domain.EtcdSnapshotResult
 	total     int
 	notice    string
+}
+
+func cloneEtcdSnapshotResult(result *domain.EtcdSnapshotResult) *domain.EtcdSnapshotResult {
+	if result == nil {
+		return nil
+	}
+	copy := *result
+	return &copy
 }
 
 type directServicePrepared struct {
 	operation, generation uint64
 	plan                  *application.PreparedServiceAction
 	request               application.ServiceActionRequest
+	err                   error
+}
+
+type directEtcdPrepared struct {
+	operation, generation uint64
+	plan                  *application.PreparedEtcdAction
+	request               application.EtcdActionRequest
 	err                   error
 }
 
@@ -286,6 +304,16 @@ func directPrepareNodeCommand(session *application.Session, ctx context.Context,
 	}
 }
 
+func directPrepareEtcdCommand(session *application.Session, ctx context.Context, operation, generation uint64, request application.EtcdActionRequest) tea.Cmd {
+	return func() tea.Msg {
+		if ctx == nil || ctx.Err() != nil {
+			return nil
+		}
+		plan, err := session.PrepareEtcdAction(ctx, request)
+		return directEtcdPrepared{operation: operation, generation: generation, plan: plan, request: request, err: err}
+	}
+}
+
 func directMutationStartCommand(work directMutationWork) tea.Cmd {
 	return func() tea.Msg {
 		if work.ctx == nil || work.ctx.Err() != nil {
@@ -304,6 +332,8 @@ func directMutationStartCommand(work directMutationWork) tea.Cmd {
 				})
 			} else if plan.service != nil {
 				result, err = work.session.ExecuteServiceAction(work.ctx, plan.service, application.Confirmation{Approved: true})
+			} else if plan.etcd != nil {
+				result, err = work.session.ExecuteEtcdAction(work.ctx, plan.etcd, plan.confirm)
 			}
 			finished := directMutationFinished{operation: work.operation, generation: work.generation, result: result, err: err}
 			work.events <- directMutationWorkItem{finished: &finished}
@@ -351,6 +381,21 @@ func mutationErrorMessage(err error) string {
 func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 	if prompt == nil {
 		return ""
+	}
+	if prompt.etcd != nil {
+		verb, target := etcdActionLabel(prompt.etcdKind), strings.Join(prompt.assessment.Targets, ", ")
+		if prompt.assessment.SnapshotPath != "" {
+			verb += "; snapshot to " + sanitizeUntrustedText(prompt.assessment.SnapshotPath)
+		}
+		if prompt.etcdKind == application.EtcdActionSnapshot || prompt.etcdKind == application.EtcdActionRemoveMember || prompt.etcdKind == application.EtcdActionLeaveCluster {
+			if prompt.assessment.Blocked != "" {
+				return "!! " + truncateWarningTail(prompt.assessment.Blocked, pendingActionWarningBudget) + " — action refused (n to cancel)"
+			}
+		}
+		if prompt.assessment.Warning != "" {
+			return "!! " + truncateWarningTail(prompt.assessment.Warning, pendingActionWarningBudget) + " — " + verb + " " + target + "? (y/n)"
+		}
+		return verb + " " + target + "? (y/n)"
 	}
 	a := prompt.assessment
 	destructive := prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice
@@ -401,6 +446,25 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 		return "!! " + truncateWarningTail(a.Warning, pendingActionWarningBudget) + " — " + verb + " " + target + "? (y/n)"
 	}
 	return verb + " " + target + "? (y/n)"
+}
+
+func etcdActionLabel(kind application.EtcdActionKind) string {
+	switch kind {
+	case application.EtcdActionSnapshot:
+		return "Snapshot"
+	case application.EtcdActionDefragment:
+		return "Defragment"
+	case application.EtcdActionDisarmAlarms:
+		return "Disarm alarms"
+	case application.EtcdActionRemoveMember:
+		return "Remove member"
+	case application.EtcdActionLeaveCluster:
+		return "Leave cluster"
+	case application.EtcdActionForfeitLeadership:
+		return "Forfeit leadership"
+	default:
+		return "Etcd action"
+	}
 }
 
 func renderDirectMutationOverlay(prompt *directMutationPrompt, innerHeight int) string {
@@ -542,4 +606,33 @@ func renderMutationResults(results []application.TargetResult, total int) string
 		return fmt.Sprintf("0/%d results", total)
 	}
 	return strings.Join(parts, "; ") + " — " + strings.Join(details, ", ")
+}
+
+func renderEtcdMutationSummary(results []application.TargetResult, total int, snapshot *domain.EtcdSnapshotResult, failure string) string {
+	parts := make([]string, 0, 3)
+	if len(results) > 0 {
+		parts = append(parts, renderMutationResults(results, total))
+	}
+	if snapshot != nil {
+		path := sanitizeUntrustedText(snapshot.Path)
+		status := "completed"
+		for _, result := range results {
+			if result.Target == snapshot.Node && result.Outcome == domain.OperationUnconfirmed {
+				status = "unconfirmed; verify the snapshot file"
+				break
+			}
+		}
+		metadata := "snapshot " + status + ": " + path
+		if snapshot.Size > 0 {
+			metadata += " (" + formatBytes(snapshot.Size) + ")"
+		}
+		if snapshot.SHA256 != "" {
+			metadata += " · SHA256 " + sanitizeUntrustedText(snapshot.SHA256)
+		}
+		parts = append(parts, metadata)
+	}
+	if failure != "" {
+		parts = append(parts, failure)
+	}
+	return strings.Join(parts, "; ")
 }

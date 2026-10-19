@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/m11s-io/t9s/internal/application"
@@ -43,6 +44,7 @@ type directModel struct {
 	time                timeModel
 	cpu                 cpuModel
 	timePrompt          *timePromptModel
+	etcdPathPrompt      *snapshotPromptModel
 	resourceKinds       resourceKindsModel
 	resourceInstances   resourceInstancesModel
 	resourceDetail      resourceDetailModel
@@ -255,6 +257,21 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mutation.prompt = prompt
 		return m, nil
+	case directEtcdPrepared:
+		if message.generation != m.generation() || message.operation != m.mutation.operation {
+			return m, nil
+		}
+		m.mutation.busy = false
+		if message.err != nil || message.plan == nil {
+			m.view.notice = mutationErrorMessage(message.err)
+			return m, nil
+		}
+		m.mutation.prompt = &directMutationPrompt{
+			operation: message.operation, generation: message.generation, etcd: message.plan, etcdKind: message.request.Kind,
+			assessment: message.plan.Assessment(), session: m.session, confirm: application.Confirmation{Approved: true},
+			label: message.request.MemberHostname,
+		}
+		return m, nil
 	case directMutationProgress:
 		if message.generation != m.generation() || message.operation != m.mutation.operation || !m.mutation.busy {
 			return m, nil
@@ -269,14 +286,21 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.mutation.busy = false
 		m.mutation.prompt = nil
 		m.mutation.results = append([]application.TargetResult(nil), message.result.Targets...)
+		m.mutation.snapshot = cloneEtcdSnapshotResult(message.result.Snapshot)
 		if len(m.mutation.results) == 0 && message.err != nil {
-			m.view.notice = mutationErrorMessage(message.err)
-			m.mutation.notice = ""
-		} else {
-			m.mutation.notice = renderMutationResults(m.mutation.results, m.mutation.total)
-			if message.err != nil && len(m.mutation.results) == 0 {
-				m.mutation.notice = mutationErrorMessage(message.err)
+			if m.mutation.snapshot != nil {
+				m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.total, m.mutation.snapshot, mutationErrorMessage(message.err))
+				m.view.notice = ""
+			} else {
+				m.view.notice = mutationErrorMessage(message.err)
+				m.mutation.notice = ""
 			}
+		} else {
+			failure := ""
+			if message.err != nil {
+				failure = mutationErrorMessage(message.err)
+			}
+			m.mutation.notice = renderEtcdMutationSummary(m.mutation.results, m.mutation.total, m.mutation.snapshot, failure)
 		}
 		m.mutationWork = directMutationWork{}
 		return m, nil
@@ -579,6 +603,32 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.String() == "ctrl+c" {
 			return m, m.cleanup(tea.Quit())
 		}
+		if m.etcdPathPrompt != nil {
+			switch message.String() {
+			case "esc":
+				m.etcdPathPrompt = nil
+				m.view.notice = "Action canceled"
+				return m, nil
+			case "enter":
+				path := m.etcdPathPrompt.input.Value()
+				if err := application.ValidateEtcdSnapshotPath(path); err != nil {
+					m.etcdPathPrompt.err = "invalid snapshot path"
+					return m, nil
+				}
+				prompt := m.etcdPathPrompt
+				m.etcdPathPrompt = nil
+				kind := prompt.kind
+				if kind == "" {
+					kind = application.EtcdActionSnapshot
+				}
+				request := application.EtcdActionRequest{Kind: kind, Node: prompt.node, MemberHostname: prompt.member, SnapshotPath: path}
+				request.MemberID = prompt.memberID
+				return m, m.prepareDirectEtcdMutation(request)
+			}
+			var command tea.Cmd
+			*m.etcdPathPrompt, command = m.etcdPathPrompt.update(message)
+			return m, command
+		}
 		if m.mutation.prompt != nil {
 			prompt := m.mutation.prompt
 			if prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice {
@@ -597,6 +647,7 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.mutation.operation = prompt.operation
 				m.mutation.total = len(prompt.assessment.Targets)
 				m.mutation.results = nil
+				m.mutation.snapshot = nil
 				m.mutation.notice = "Mutation in progress…"
 				capacity := m.mutation.total
 				if capacity < 1 {
@@ -826,6 +877,40 @@ func (m directModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				request, _ := m.requests.beginWithContext("cluster-etcd", m.generation(), m.sessionCtx)
 				return m, directEtcdCommand(m.session, request)
 			}
+			if !m.etcd.filtering && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
+				if member, ok := m.etcd.selected(m.cluster.etcd.Value.Members); ok {
+					var kind application.EtcdActionKind
+					switch message.String() {
+					case "R":
+						kind = application.EtcdActionRemoveMember
+					case "L":
+						kind = application.EtcdActionLeaveCluster
+					case "d":
+						kind = application.EtcdActionDefragment
+					case "A":
+						kind = application.EtcdActionDisarmAlarms
+					case "F":
+						kind = application.EtcdActionForfeitLeadership
+					case "s":
+						kind = application.EtcdActionSnapshot
+					}
+					if kind != "" {
+						if kind == application.EtcdActionSnapshot || kind == application.EtcdActionRemoveMember || kind == application.EtcdActionLeaveCluster {
+							defaultPath := application.DefaultEtcdSnapshotPath(m.cluster.contextName, member.Hostname, time.Now().UTC())
+							pathPrompt := newSnapshotPromptModel(member.Hostname, member.Hostname, defaultPath)
+							pathPrompt.kind = kind
+							pathPrompt.memberID = member.MemberID
+							m.etcdPathPrompt = &pathPrompt
+							return m, nil
+						}
+						request := application.EtcdActionRequest{Kind: kind, Node: member.Hostname}
+						if kind == application.EtcdActionForfeitLeadership {
+							request.MemberID, request.MemberHostname = member.MemberID, member.Hostname
+						}
+						return m, m.prepareDirectEtcdMutation(request)
+					}
+				}
+			}
 			m.etcd = m.etcd.update(message, m.cluster.etcd.Value.Members)
 		} else if m.views.top().Kind == viewProblems {
 			diagnoses := application.EvaluateObservations(directHealthInput(m.cluster))
@@ -974,6 +1059,17 @@ func (m *directModel) prepareDirectServiceMutation(service domain.ServiceSnapsho
 	return directPrepareServiceCommand(m.session, m.sessionCtx, operation, m.generation(), application.ServiceActionRequest{Kind: kind, Node: service.Node, Service: service.Name})
 }
 
+func (m *directModel) prepareDirectEtcdMutation(request application.EtcdActionRequest) tea.Cmd {
+	operation := m.nextMutationOperation()
+	m.mutation.operation = operation
+	m.mutation.busy = true
+	m.mutation.notice = "Preparing mutation…"
+	m.mutation.results = nil
+	m.mutation.snapshot = nil
+	m.view.notice = ""
+	return directPrepareEtcdCommand(m.session, m.sessionCtx, operation, m.generation(), request)
+}
+
 func (m *directModel) nextMutationOperation() uint64 {
 	m.mutationSequence++
 	return m.mutationSequence
@@ -1053,6 +1149,7 @@ func (m directModel) View() tea.View {
 		}
 	}
 	writesAvailable := m.options.WritesEnabled && !m.mutation.busy && m.mutation.prompt == nil
+	writesAvailable = writesAvailable && m.etcdPathPrompt == nil
 	header := renderK9sHeader(layoutK9sHeader(layout.Width), metadata, directActionHints(headerKind, writesAvailable), m.styles.k9s)
 	breadcrumb := m.views.breadcrumb(m.cluster.contextName)
 	if m.contexts.active {
@@ -1061,6 +1158,8 @@ func (m directModel) View() tea.View {
 	prompt := ""
 	if m.mutation.prompt != nil {
 		prompt = renderDirectMutationPrompt(m.mutation.prompt)
+	} else if m.etcdPathPrompt != nil {
+		prompt = m.etcdPathPrompt.view()
 	} else if m.timePrompt != nil {
 		prompt = m.timePrompt.view()
 	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
@@ -1119,8 +1218,10 @@ func (m *directModel) beginSessionOpen(contextName string) tea.Cmd {
 	m.closeDirectHealth()
 	m.pendingResourceKind = ""
 	m.mutation.prompt = nil
+	m.etcdPathPrompt = nil
 	m.mutation.busy = false
 	m.mutation.results = nil
+	m.mutation.snapshot = nil
 	m.mutation.notice = ""
 	m.mutation.operation = m.nextMutationOperation()
 	m.mutationWork = directMutationWork{}
