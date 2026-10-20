@@ -21,6 +21,9 @@ func (m *model) runClusterCommand(value string) tea.Cmd {
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))
 	var command tea.Cmd
 	resolved := resolveCommand(value)
+	if previous.top().Kind == viewKubernetesUpgrade && resolved != commandKubernetesUpgrade {
+		m.kubernetesUpgrade.close(m.session)
+	}
 	if resolved != commandUnknown && resolved != commandContexts {
 		m.contexts.active = false
 	}
@@ -48,6 +51,22 @@ func (m *model) runClusterCommand(value string) tea.Cmd {
 			timeout = parsed
 		}
 		_, command = m.openDirectClusterHealth(timeout)
+	case commandConfiguration:
+		if !m.options.WritesEnabled || m.session == nil {
+			m.view.notice = "Configuration apply requires an open session with --enable-writes"
+			break
+		}
+		m.configuration.discard(m.session)
+		m.configuration = newConfigurationModel(m.nodes.actionTargets(m.cluster.nodes.Value.Nodes), m.cluster.nodes.Value.Nodes)
+		m.views = m.views.replaceRoot(viewFrame{Kind: viewConfiguration, Label: "configuration"})
+	case commandKubernetesUpgrade:
+		if m.session == nil {
+			m.view.notice = "Open a Talos context before preparing a Kubernetes upgrade"
+			break
+		}
+		m.kubernetesUpgrade.close(m.session)
+		m.kubernetesUpgrade = newKubernetesUpgradeModel()
+		m.views = m.views.replaceRoot(viewFrame{Kind: viewKubernetesUpgrade, Label: "upgrade-k8s"})
 	case commandContexts:
 		m.contexts = newContextsModel(m.cluster.contexts, m.cluster.contextName)
 	case commandHelp:

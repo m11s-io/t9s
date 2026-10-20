@@ -52,7 +52,7 @@ func (s *Session) admit(ctx context.Context, plan *preparedState, confirmation C
 	if !s.writesEnabled {
 		return nil, nil, ErrWritesDisabled
 	}
-	if plan == nil || plan.session != s || (plan.nodeRequest == nil && plan.serviceRequest == nil && plan.etcdRequest == nil) {
+	if plan == nil || plan.session != s || (plan.nodeRequest == nil && plan.serviceRequest == nil && plan.etcdRequest == nil && plan.configurationRequest == nil && plan.kubernetesUpgradeRequest == nil) {
 		return nil, nil, ErrInvalidPlan
 	}
 	if plan.consumed {
@@ -71,6 +71,10 @@ func (s *Session) admit(ctx context.Context, plan *preparedState, confirmation C
 	if s.mutationBusy {
 		return nil, nil, ErrMutationBusy
 	}
+	clusterRelease, err := processMutationRegistry.acquire(s.clusterUID)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	operationCtx, cancel := s.operationContextLocked(ctx, timeout)
 	plan.consumed = true
@@ -79,6 +83,7 @@ func (s *Session) admit(ctx context.Context, plan *preparedState, confirmation C
 	release := func() {
 		once.Do(func() {
 			cancel()
+			clusterRelease()
 			s.mu.Lock()
 			s.mutationBusy = false
 			s.mu.Unlock()

@@ -17,6 +17,20 @@ Control-plane actions that would drop etcd below quorum are refused outright —
 the confirmation prompt reports the refusal instead of accepting a `y` — not
 merely warned about.
 
+The `:config` workflow uses this same gate. It reads a local, nonempty regular
+machine-configuration file up to 4 MiB, previews it on every selected node,
+then requires an exact typed confirmation before applying. Only `AUTO`,
+`NO_REBOOT`, and `STAGED` are offered. The UI displays a short SHA-256 digest
+and normalized preview outcomes; Talos diff details, warning text, and raw
+validation errors are discarded because they can contain secrets. A successful
+RPC means Talos accepted the request; it does not prove the node converged.
+Multi-node apply runs sequentially without an atomic transaction or rollback.
+If a request fails or loses its connection after dispatch, that target is
+unconfirmed and later targets are not attempted. Cancellation before dispatch
+leaves the remaining targets not attempted; cancellation during a dispatched
+request leaves that target unconfirmed. Inspect cluster state and prepare a
+fresh preview before retrying.
+
 For a single-node reboot or shutdown, `f` in the ordinary confirmation opens
 force mode. The operator must type the exact node name and accept a second
 confirmation. Force can skip graceful shutdown or drain and interrupt
@@ -31,8 +45,10 @@ Other write prompts are disabled during that work; read-only navigation remains
 available. Leaving the context cancels local work, but does not undo a request
 already accepted by Talos. Rediscover remote state before retrying.
 
-Client deadlines are 30 seconds for ordinary control requests, 10 minutes for
-etcd snapshots and defragmentation, and 30 minutes for reset/device wipe. One
+Client deadlines are 30 seconds for ordinary control requests and each
+configuration preview/apply RPC, 10 minutes for etcd snapshots, defragmentation,
+and the overall configuration preview/apply operation, and 30 minutes for
+reset/device wipe. One
 bulk node execution shares a single deadline across its targets (30 seconds for
 ordinary actions or 30 minutes for reset/device wipe); the caller context or
 session lifetime can shorten it. Upgrade installation and subsequent maintenance
@@ -141,7 +157,38 @@ etcd state is unknown, is refused outright rather than warned about. Learners
 do not vote, so removing one is never quorum-blocked, but it still requires the
 snapshot. The refused prompt stays on screen until explicitly cancelled.
 
-Talos upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages. Progress and errors are normalized; credentials, talosconfig contents, kubeconfig contents, and registry tokens are not stored in model state or logs. Kubernetes control-plane upgrades are not part of this action.
+Talos OS upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages.
+
+Kubernetes upgrades use the separate `:upgrade-k8s` command and require
+`talosctl` v1.14.4 on `PATH`. The operator supplies an explicit stable target,
+reviews the prefilled local snapshot path and node-by-node plan, and confirms
+with `y` after checking the displayed cluster UID and target version. The preview does not run the upgrade
+command or mutate the cluster. Execution requires writes mode, a verified etcd
+snapshot, fresh identity and health checks, and the same confirmation-bound
+plan. The standard Talos CLI upgrades control-plane components and reconciles
+managed manifests first; t9s then pre-pulls and upgrades kubelets serially.
+Following Talos's Kubernetes upgrade behavior, each kubelet image is patched,
+the service restarts, and readiness and the reported version are verified.
+This workflow does not cordon, drain, evict Pods, or uncordon nodes. Existing
+scheduling state is preserved. Draining remains a separate maintenance operation.
+
+Cancellation or a later-stage failure can leave a partial cluster upgrade. A
+failed kubelet update requires inspection before retry. The child CLI is
+terminated and reaped before t9s releases its local
+mutation lease, but this cannot stop server-side work already accepted by
+Talos. t9s keeps the verified snapshot and requires a fresh inventory and plan
+before retry; it does not roll versions back or automatically replay an
+ambiguous stage. If t9s observed a successful CLI exit and verified the
+control-plane target, that evidence is retained only for the lifetime of the
+current t9s session so a fresh plan can continue the kubelet stage. If that
+session ends first, the next session reruns Talos's same-target reconciliation
+before continuing the kubelets. Completed kubelets are verified and skipped.
+Local mutation exclusion
+coordinates t9s sessions in this process only, not other t9s processes or
+external administrators. Disposable-cluster validation is still required
+before release. Progress and errors are normalized; credentials, talosconfig
+contents, kubeconfig contents, and registry tokens are not stored in model
+state or logs.
 
 The supplied Talos credentials can still be privileged. Protect every talosconfig as a sensitive secret and grant only the permissions an operator needs.
 

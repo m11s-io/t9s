@@ -34,7 +34,18 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	previousGeneration := m.generation()
 	m.palette.resize(m.width)
 	next, command := m.update(message)
-	updated := next.(model)
+	var updated model
+	switch next := next.(type) {
+	case model:
+		updated = next
+	case *model:
+		if next == nil {
+			panic("tui update returned a nil model")
+		}
+		updated = *next
+	default:
+		panic("tui update returned an unexpected model type")
+	}
 	updated.palette.resize(updated.width)
 	if updated.palette.active != m.palette.active {
 		updated.syncDirectStreamViewports()

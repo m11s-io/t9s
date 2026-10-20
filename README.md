@@ -9,7 +9,9 @@ information over those snapshots.
 
 ## Current status
 
-Phases 0–3 of the Talos v1.14 coverage roadmap are implemented. t9s discovers
+Phases 0–3 of the Talos v1.14 coverage roadmap are implemented. Phase 5 now has
+a cluster-scoped Kubernetes upgrade workflow; its disposable-cluster release
+validation remains pending. t9s discovers
 Talos contexts, opens a context-scoped session, and provides read-only views for
 nodes, services and logs, events, etcd, processes, disks, network links and
 routes, BGP peers (`:bgp`/`:bgps`), containers and images, memory, CPU, time,
@@ -39,7 +41,9 @@ or `sandboxd` service; it also did not expose a `SystemDisk` resource. Those
 hardware-backed cases remain unverified. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for the full manual checklist.
 Talos upgrades are node-level operations: t9s upgrades the Talos OS on the
-selected node; it does not perform a Kubernetes control-plane upgrade.
+selected node. Kubernetes upgrades use a separate `:upgrade-k8s` workflow and
+require `talosctl` v1.14.4; see [Security](#security) and the
+[command reference](docs/src/content/docs/reference/commands.md).
 
 ## Install
 

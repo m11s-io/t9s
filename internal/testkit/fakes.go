@@ -356,30 +356,32 @@ func (f *FakeKubernetesResolver) Resolve(ctx context.Context, talosContext strin
 }
 
 type FakeSession struct {
-	NodeReader             ports.NodeReader
-	NodeController         ports.NodeController
-	ServiceController      ports.ServiceController
-	ServiceReader          ports.ServiceReader
-	LogReader              ports.ServiceLogReader
-	EventReader            ports.EventReader
-	EtcdReader             ports.EtcdReader
-	EtcdOps                ports.EtcdOperations
-	ProcessReader          ports.ProcessReader
-	DiskReader             ports.DiskReader
-	NetworkReader          ports.NetworkReader
-	NodeStatusReader       ports.NodeStatusReader
-	DmesgReader            ports.DmesgReader
-	NetstatReader          ports.NetstatReader
-	MountReader            ports.MountReader
-	DiskUsageReader        ports.DiskUsageReader
-	ContainerReader        ports.ContainerReader
-	MemoryReader           ports.MemoryReader
-	TimeReader             ports.TimeReader
-	CPUReader              ports.CPUReader
-	ClusterHealthReader    ports.ClusterHealthReader
-	ResourceKindReader     ports.ResourceKindReader
-	ResourceInstanceReader ports.ResourceInstanceReader
-	CloseFunc              func() error
+	NodeReader               ports.NodeReader
+	NodeController           ports.NodeController
+	ConfigurationController  ports.ConfigurationController
+	KubernetesUpgradeBackend ports.KubernetesUpgradeBackend
+	ServiceController        ports.ServiceController
+	ServiceReader            ports.ServiceReader
+	LogReader                ports.ServiceLogReader
+	EventReader              ports.EventReader
+	EtcdReader               ports.EtcdReader
+	EtcdOps                  ports.EtcdOperations
+	ProcessReader            ports.ProcessReader
+	DiskReader               ports.DiskReader
+	NetworkReader            ports.NetworkReader
+	NodeStatusReader         ports.NodeStatusReader
+	DmesgReader              ports.DmesgReader
+	NetstatReader            ports.NetstatReader
+	MountReader              ports.MountReader
+	DiskUsageReader          ports.DiskUsageReader
+	ContainerReader          ports.ContainerReader
+	MemoryReader             ports.MemoryReader
+	TimeReader               ports.TimeReader
+	CPUReader                ports.CPUReader
+	ClusterHealthReader      ports.ClusterHealthReader
+	ResourceKindReader       ports.ResourceKindReader
+	ResourceInstanceReader   ports.ResourceInstanceReader
+	CloseFunc                func() error
 
 	mu         sync.Mutex
 	closeCount int
@@ -388,6 +390,14 @@ type FakeSession struct {
 func (f *FakeSession) Nodes() ports.NodeReader { return f.NodeReader }
 
 func (f *FakeSession) NodeActions() ports.NodeController { return f.NodeController }
+
+func (f *FakeSession) Configuration() ports.ConfigurationController {
+	return f.ConfigurationController
+}
+
+func (f *FakeSession) KubernetesUpgrade() ports.KubernetesUpgradeBackend {
+	return f.KubernetesUpgradeBackend
+}
 
 func (f *FakeSession) ServiceActions() ports.ServiceController { return f.ServiceController }
 
