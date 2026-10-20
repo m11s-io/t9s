@@ -68,8 +68,8 @@ func TestK9sHeaderActionColumnsStayCompact(t *testing.T) {
 
 	lines := renderHeaderActions(hints, 80, defaultK9sSkin())
 
-	assert.Equal(t, "<a> Alpha      <g> Alpha", ansi.Strip(lines[0]))
-	assert.Equal(t, "<b> Alpha      <h> Beta", strings.TrimRight(ansi.Strip(lines[1]), " "))
+	assert.Equal(t, "<a> Alpha   <g> Alpha", ansi.Strip(lines[0]))
+	assert.Equal(t, "<b> Alpha   <h> Beta", strings.TrimRight(ansi.Strip(lines[1]), " "))
 	assert.Empty(t, ansi.Strip(lines[6]))
 }
 

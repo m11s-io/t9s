@@ -83,7 +83,7 @@ func renderHeaderActions(hints []actionHint, width int, skin k9sSkin) []string {
 	if width <= 0 {
 		return lines
 	}
-	const columnGap = 6
+	const columnGap = 3
 	actionRows := 6
 	if width < 64 {
 		actionRows = k9sHeaderHeight
