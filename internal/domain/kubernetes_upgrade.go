@@ -272,20 +272,50 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 			return fail("control-plane component version skew is unsupported")
 		}
 	}
+	plan.SkipControlPlane = controlPlaneAtTarget(inventory, to.String()) && inventory.ManifestsConverged
+	proxyPending := proxyConvergencePending(inventory, to.String())
+	if from.String() == to.String() && !plan.SkipControlPlane && !proxyPending {
+		return fail("the control plane is already at target but manifest convergence is unverified")
+	}
+	kubeletSource := plan.SourceVersion
+	if from.String() == to.String() {
+		var ok bool
+		kubeletSource, ok = coherentKubeletSource(plan.Nodes, to.String())
+		if !ok {
+			return fail("kubelet versions contain unrelated source or target drift")
+		}
+	}
 	for _, node := range plan.Nodes {
 		version, _ := parseStableKubernetesVersion(node.SourceVersion)
-		if version.String() != plan.SourceVersion && version.String() != to.String() {
+		if version.GT(to) {
+			return fail("a kubelet version is newer than the target")
+		}
+		if version.String() != kubeletSource && version.String() != to.String() {
 			return fail("kubelet versions contain unrelated source or target drift")
 		}
 		if version.Minor > to.Minor || to.Minor-version.Minor > 3 {
 			return fail("a kubelet is more than three minor versions behind the target")
 		}
 	}
-	plan.SkipControlPlane = controlPlaneAtTarget(inventory, to.String()) && inventory.ManifestsConverged
-	if from.String() == to.String() && !plan.SkipControlPlane && !proxyConvergencePending(inventory, to.String()) {
-		return fail("the control plane is already at target but manifest convergence is unverified")
-	}
 	return plan, nil
+}
+
+func coherentKubeletSource(nodes []KubernetesUpgradeNodePlan, target string) (string, bool) {
+	source := target
+	for _, node := range nodes {
+		version, err := parseStableKubernetesVersion(node.SourceVersion)
+		if err != nil {
+			return "", false
+		}
+		if version.String() == target {
+			continue
+		}
+		if source != target && source != version.String() {
+			return "", false
+		}
+		source = version.String()
+	}
+	return source, true
 }
 
 func parseStableKubernetesVersion(value string) (semver.Version, error) {
