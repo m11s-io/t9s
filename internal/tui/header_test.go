@@ -68,8 +68,8 @@ func TestK9sHeaderActionColumnsStayCompact(t *testing.T) {
 
 	lines := renderHeaderActions(hints, 80, defaultK9sSkin())
 
-	assert.Equal(t, "<a>       Alpha   <g>       Alpha", ansi.Strip(lines[0]))
-	assert.Equal(t, "<b>       Alpha   <h>       Beta", strings.TrimRight(ansi.Strip(lines[1]), " "))
+	assert.Equal(t, "<a> Alpha   <g> Alpha", ansi.Strip(lines[0]))
+	assert.Equal(t, "<b> Alpha   <h> Beta", strings.TrimRight(ansi.Strip(lines[1]), " "))
 	assert.Empty(t, ansi.Strip(lines[6]))
 }
 
@@ -82,10 +82,10 @@ func TestK9sHeaderActionColumnsHaveReadableSeparation(t *testing.T) {
 	upgradeKey := strings.Index(upgradeLine, "<U>")
 	upgradeLabel := strings.Index(upgradeLine, "Upgrade")
 
-	assert.GreaterOrEqual(t, spaceKey, 32)
-	assert.GreaterOrEqual(t, upgradeKey, 50)
-	assert.Equal(t, 10, markLabel-spaceKey)
-	assert.Equal(t, 10, upgradeLabel-upgradeKey)
+	assert.GreaterOrEqual(t, spaceKey, 30)
+	assert.GreaterOrEqual(t, upgradeKey, 49)
+	assert.Equal(t, 8, markLabel-spaceKey)
+	assert.Equal(t, 4, upgradeLabel-upgradeKey)
 }
 
 func TestK9sHeaderUsesTerminalDefaultBackground(t *testing.T) {
