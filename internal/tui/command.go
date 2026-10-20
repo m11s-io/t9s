@@ -25,6 +25,7 @@ const (
 	commandProblems
 	commandResources
 	commandClusterHealth
+	commandConfiguration
 	commandHelp
 )
 
@@ -36,7 +37,7 @@ type commandModel struct {
 func newCommandModel() commandModel {
 	input := textinput.New()
 	input.Prompt = ">"
-	input.Placeholder = "nodes, services, contexts, bgp, or healthcheck"
+	input.Placeholder = "nodes, services, contexts, config, bgp, or healthcheck"
 	input.CharLimit = 64
 	return commandModel{input: input}
 }
@@ -63,6 +64,8 @@ func resolveCommand(value string) command {
 		return commandResources
 	case "healthcheck", "hc":
 		return commandClusterHealth
+	case "config":
+		return commandConfiguration
 	case "help", "?":
 		return commandHelp
 	default:

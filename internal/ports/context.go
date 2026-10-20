@@ -17,6 +17,7 @@ type SessionFactory interface {
 type Session interface {
 	Nodes() NodeReader
 	NodeActions() NodeController
+	Configuration() ConfigurationController
 	ServiceActions() ServiceController
 	Services() ServiceReader
 	ServiceLogs() ServiceLogReader

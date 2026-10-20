@@ -52,7 +52,7 @@ func (s *Session) admit(ctx context.Context, plan *preparedState, confirmation C
 	if !s.writesEnabled {
 		return nil, nil, ErrWritesDisabled
 	}
-	if plan == nil || plan.session != s || (plan.nodeRequest == nil && plan.serviceRequest == nil && plan.etcdRequest == nil) {
+	if plan == nil || plan.session != s || (plan.nodeRequest == nil && plan.serviceRequest == nil && plan.etcdRequest == nil && plan.configurationRequest == nil) {
 		return nil, nil, ErrInvalidPlan
 	}
 	if plan.consumed {

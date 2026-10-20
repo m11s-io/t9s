@@ -55,6 +55,7 @@ type model struct {
 	logs                logsModel
 	dmesg               logsModel
 	healthcheck         healthcheckModel
+	configuration       configurationModel
 	logStream           directLogStreamState
 	dmesgStream         directDmesgStreamState
 	eventFollow         directEventFollowState
@@ -264,6 +265,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startClusterObservations(message.session, message.request.generation)
 	case directCurrentInstallImage, directServicePrepared, directNodePrepared, directEtcdPrepared, directMutationProgress, directUpgradeProgress, directMutationCanceled, directMutationFinished:
 		return m.updateDirectMutationResult(message)
+	case directConfigurationPreviewLoaded, directConfigurationProgress, directConfigurationFinished:
+		return m.updateDirectConfigurationResult(message)
 	case directEventFollowOpened, directEventFollowBatch, directClusterHealthOpened, directClusterHealthBatch:
 		return m.updateDirectEventAndHealthResult(message)
 	case directNodeProgress, directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded, directNodeStatusesLoaded:
@@ -353,6 +356,9 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.contexts.active = false
 			}
 			return m, nil
+		}
+		if m.views.top().Kind == viewConfiguration {
+			return m.updateDirectConfigurationInput(message)
 		}
 		if message.String() == "?" && !m.directFilterEditing() {
 			m.views = m.views.push(viewFrame{Kind: viewHelp, Label: "help"})
@@ -838,6 +844,8 @@ func (m model) View() tea.View {
 				m.eventFollow.attempted, m.eventFollow.following, m.eventFollow.err)
 		} else if m.views.top().Kind == viewClusterHealth {
 			content = m.healthcheck.viewSized(innerSize)
+		} else if m.views.top().Kind == viewConfiguration {
+			content = renderConfigurationView(m.configuration, innerSize)
 		} else if m.views.top().Kind == viewEtcd {
 			content = m.etcd.viewSized(innerSize, m.cluster.etcd)
 		} else if m.views.top().Kind == viewBGPPeers {
@@ -1014,6 +1022,8 @@ func (m model) directFilterEditing() bool {
 }
 
 func (m *model) beginSessionOpen(contextName string) tea.Cmd {
+	m.configuration.discard(m.session)
+	m.configuration = configurationModel{}
 	m.requests.cancelSlot("upgrade-image")
 	m.requests.cancelSlot("upgrade-prepare")
 	m.closeDirectLogs(false)
@@ -1087,6 +1097,7 @@ func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
 }
 
 func (m model) fallbackCleanup() {
+	m.configuration.discard(m.session)
 	m.closeDirectLogs(false)
 	m.closeDirectLogs(true)
 	m.closeDirectEventFollow()

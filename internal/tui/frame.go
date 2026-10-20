@@ -100,6 +100,8 @@ func renderTitleCounter(counter string, skin k9sSkin) string {
 func directResourceTitle(model model, kind viewKind) string {
 	selected := model.views.top()
 	switch kind {
+	case viewConfiguration:
+		return "configuration"
 	case viewServices:
 		return fmt.Sprintf("services(all)[%d]", len(model.cluster.services.Value.Services))
 	case viewServiceLogs:

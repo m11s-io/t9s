@@ -43,6 +43,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		nodes:             newNodeReader(api, time.Now),
 		nodeServices:      newNodeServiceReader(api, time.Now),
 		nodeController:    newNodeController(machineryNodeControlClient{client: client}),
+		configuration:     newConfigurationController(machineryConfigurationClient{client: client}),
 		serviceController: newServiceController(machineryServiceControlClient{client: client}),
 		services:          newDetailedServiceReader(api, time.Now),
 		logs:              newServiceLogReader(machineryLogClient{client: client}),
@@ -72,6 +73,7 @@ type session struct {
 	nodes             ports.NodeReader
 	nodeServices      ports.NodeServiceReader
 	nodeController    ports.NodeController
+	configuration     ports.ConfigurationController
 	serviceController ports.ServiceController
 	services          ports.ServiceReader
 	logs              ports.ServiceLogReader
@@ -102,6 +104,8 @@ func (s *session) Nodes() ports.NodeReader { return s.nodes }
 func (s *session) NodeServices() ports.NodeServiceReader { return s.nodeServices }
 
 func (s *session) NodeActions() ports.NodeController { return s.nodeController }
+
+func (s *session) Configuration() ports.ConfigurationController { return s.configuration }
 
 func (s *session) ServiceActions() ports.ServiceController { return s.serviceController }
 

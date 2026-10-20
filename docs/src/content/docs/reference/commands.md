@@ -11,6 +11,7 @@ Press `Enter` to run the command or `Esc` to close the input.
 | `:nodes` | `:no` | Open the node explorer. |
 | `:services` | `:svc` | Open Talos services. |
 | `:contexts` | `:ctx` | Select another discovered context. |
+| `:config` | | Preview and apply a local Talos machine configuration to selected nodes. Requires `--enable-writes`; see [Security](/security/). |
 | `:events` | `:ev` | Open the machine event snapshot; `s` toggles live follow. |
 | `:etcd` | `:et` | Open etcd membership and status; with `--enable-writes`, snapshot/membership maintenance actions live here. See [Etcd operations](/guides/etcd-ops/). |
 | `:bgp` | `:bgps` | Show BGP peer sessions across nodes, including peer ASN, FSM state, BFD, and route counters. |
@@ -20,6 +21,16 @@ Press `Enter` to run the command or `Esc` to close the input.
 | `:resources` | `:res` | Generic Talos resource browser. `:resources <Kind>` (e.g. `:resources MachineStatus`) jumps straight to that kind's instances. See [Resource browser](/guides/resources/). |
 
 Unknown commands produce a notice and do not execute a shell command. The palette has no arbitrary execution path.
+
+`:config` reads a nonempty regular file from the local machine (maximum 4 MiB),
+then lets you select one or more nodes and explicitly choose `AUTO`,
+`NO_REBOOT`, or `STAGED`. It sends a server-side dry-run to every selected node
+and displays the file basename, a short SHA-256 digest, canonical targets,
+resolved modes, and normalized preview status. Talos diffs, warning text, and
+validation error text are hidden because they can contain configuration
+secrets. Apply is available only when every target preview succeeds and you
+type the displayed confirmation phrase. Nodes are applied sequentially; see
+[Security](/security/) for partial-result behavior and safe retry guidance.
 
 ## Node-scoped keys
 

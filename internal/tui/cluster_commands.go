@@ -48,6 +48,14 @@ func (m *model) runClusterCommand(value string) tea.Cmd {
 			timeout = parsed
 		}
 		_, command = m.openDirectClusterHealth(timeout)
+	case commandConfiguration:
+		if !m.options.WritesEnabled || m.session == nil {
+			m.view.notice = "Configuration apply requires an open session with --enable-writes"
+			break
+		}
+		m.configuration.discard(m.session)
+		m.configuration = newConfigurationModel(m.nodes.actionTargets(m.cluster.nodes.Value.Nodes), m.cluster.nodes.Value.Nodes)
+		m.views = m.views.replaceRoot(viewFrame{Kind: viewConfiguration, Label: "configuration"})
 	case commandContexts:
 		m.contexts = newContextsModel(m.cluster.contexts, m.cluster.contextName)
 	case commandHelp:

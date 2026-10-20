@@ -83,17 +83,21 @@ type EtcdActionRequest struct {
 type PreparedNodeAction struct{ state *preparedState }
 type PreparedServiceAction struct{ state *preparedState }
 type PreparedEtcdAction struct{ state *preparedState }
+type PreparedConfiguration struct{ state *preparedState }
 
 type preparedState struct {
-	session        *Session
-	consumed       bool // guarded by session.mu
-	assessment     Assessment
-	serviceFacts   *serviceActionFacts
-	nodeFacts      *nodeActionFacts
-	etcdFacts      *etcdActionFacts
-	nodeRequest    *NodeActionRequest
-	serviceRequest *ServiceActionRequest
-	etcdRequest    *EtcdActionRequest
+	session                 *Session
+	consumed                bool // guarded by session.mu
+	assessment              Assessment
+	serviceFacts            *serviceActionFacts
+	nodeFacts               *nodeActionFacts
+	etcdFacts               *etcdActionFacts
+	nodeRequest             *NodeActionRequest
+	serviceRequest          *ServiceActionRequest
+	etcdRequest             *EtcdActionRequest
+	configurationRequest    *ConfigurationApplyRequest
+	configurationFacts      *configurationFacts
+	configurationAssessment *ConfigurationAssessment
 }
 
 func newPreparedNodeAction(session *Session, request NodeActionRequest, assessment Assessment) PreparedNodeAction {
@@ -118,6 +122,9 @@ func newPreparedEtcdAction(session *Session, request EtcdActionRequest, assessme
 func (p PreparedNodeAction) Assessment() Assessment    { return assessmentOf(p.state) }
 func (p PreparedServiceAction) Assessment() Assessment { return assessmentOf(p.state) }
 func (p PreparedEtcdAction) Assessment() Assessment    { return assessmentOf(p.state) }
+func (p PreparedConfiguration) Assessment() ConfigurationAssessment {
+	return configurationAssessmentOf(p.state)
+}
 
 func assessmentOf(state *preparedState) Assessment {
 	if state == nil {

@@ -9,4 +9,6 @@ const (
 	OperationCompleted          OperationOutcome = "completed"
 	OperationUnconfirmed        OperationOutcome = "unconfirmed"
 	OperationRecoveryIncomplete OperationOutcome = "recovery-incomplete"
+	OperationStaged             OperationOutcome = "staged"
+	OperationNotAttempted       OperationOutcome = "not-attempted"
 )
