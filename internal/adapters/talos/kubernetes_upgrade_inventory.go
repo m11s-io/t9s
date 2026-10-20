@@ -103,12 +103,15 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" || !podReady(pod) {
 			continue
 		}
+		component := pod.Labels["k8s-app"]
+		if component == "" {
+			component = pod.Labels["component"]
+		}
+		if component != "kube-apiserver" && component != "kube-controller-manager" && component != "kube-scheduler" && component != "kube-proxy" {
+			continue
+		}
 		for _, container := range pod.Spec.Containers {
-			component := pod.Labels["component"]
-			if component == "" && pod.Labels["k8s-app"] == "kube-proxy" {
-				component = "kube-proxy"
-			}
-			if component == "kube-apiserver" || component == "kube-controller-manager" || component == "kube-scheduler" || component == "kube-proxy" {
+			if container.Name == component {
 				if controlPlane[pod.Spec.NodeName] == nil {
 					controlPlane[pod.Spec.NodeName] = map[string]string{}
 				}
