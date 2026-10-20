@@ -68,6 +68,18 @@ func TestEvaluateHealthNodeServicesDegradedRule(t *testing.T) {
 	assert.Contains(t, diagnoses[0].Evidence, "6/7 services healthy")
 }
 
+func TestEvaluateHealthDoesNotDegradeForUnknownServiceHealth(t *testing.T) {
+	model := application.HealthInput{
+		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{
+			{ID: "node-1", Name: "worker-1", Health: domain.HealthHealthy, Services: domain.ServiceSummary{Healthy: 9, Unknown: 3, Total: 12, Known: true}},
+		}},
+	}
+
+	diagnoses := application.EvaluateObservations(model)
+
+	assert.Empty(t, diagnoses)
+}
+
 func TestEvaluateHealthNodeServicesDegradedRuleAllUnhealthyIsCritical(t *testing.T) {
 	model := application.HealthInput{
 		NodesKnown: true, Nodes: domain.NodeSet{Nodes: []domain.NodeSnapshot{

@@ -65,12 +65,16 @@ func evaluateNodeReadiness(node domain.NodeSnapshot) []domain.Diagnosis {
 }
 
 func evaluateNodeServicesDegraded(node domain.NodeSnapshot) []domain.Diagnosis {
-	if !node.Services.Known || node.Services.Healthy >= node.Services.Total {
+	if !node.Services.Known {
+		return nil
+	}
+	unhealthy := node.Services.Total - node.Services.Healthy - node.Services.Unknown
+	if unhealthy <= 0 {
 		return nil
 	}
 
 	severity := domain.SeverityWarning
-	if node.Services.Healthy == 0 {
+	if unhealthy == node.Services.Total {
 		severity = domain.SeverityCritical
 	}
 
@@ -78,7 +82,10 @@ func evaluateNodeServicesDegraded(node domain.NodeSnapshot) []domain.Diagnosis {
 		RuleID:       "node-services-degraded",
 		Severity:     severity,
 		Summary:      "services degraded",
-		Evidence:     []string{fmt.Sprintf("%d/%d services healthy", node.Services.Healthy, node.Services.Total)},
+		Evidence: []string{
+			fmt.Sprintf("%d/%d services healthy", node.Services.Healthy, node.Services.Total),
+			fmt.Sprintf("%d unhealthy, %d unknown", unhealthy, node.Services.Unknown),
+		},
 		ResourceKind: "node",
 		ResourceID:   node.ID,
 		ResourceName: node.DisplayName(),

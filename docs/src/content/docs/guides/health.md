@@ -7,6 +7,8 @@ description: Explainable cluster health with :overview and :problems.
 
 Diagnoses are deterministic and cite evidence: each one has a severity, a short summary, the resource it's about, and a stable rule identity, so "unhealthy" is always traceable back to why.
 
+Service health summaries distinguish explicitly unhealthy services from services whose health is unknown. Unknown service health remains visible in the node service counters but does not by itself mark the cluster degraded; only an explicit unhealthy service contributes a `node-services-degraded` diagnosis. If the service list or node observations cannot be loaded, the existing unavailable/unknown data handling still applies.
+
 Active etcd alarms (`NOSPACE`, `CORRUPT`, and future alarm types) are treated as critical `etcd-member-alarmed` diagnoses — a `NOSPACE` alarm makes the cluster read-only until it is cleared — and are also shown in the `:etcd` view's `ALARMS` column. From `:etcd`, `A` disarms the selected member's alarms behind `--enable-writes`; disarming lifts the read-only restriction but does not reclaim disk, so free space first or the alarm returns. A `CORRUPT` alarm still requires restoring from a snapshot — disarming does not repair corruption. See [Etcd operations](/guides/etcd-ops/).
 
 ## `:overview`
