@@ -152,8 +152,14 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		clear(configBytes)
 		components := controlPlane[node.Name]
 		if role == domain.NodeRoleControl {
-			if components["kube-apiserver"] == "" || components["kube-controller-manager"] == "" || components["kube-scheduler"] == "" || components["kube-proxy"] == "" {
-				return inventory, errors.New("control-plane component versions are incomplete")
+			var missing []string
+			for _, component := range []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "kube-proxy"} {
+				if components[component] == "" {
+					missing = append(missing, component)
+				}
+			}
+			if len(missing) > 0 {
+				return inventory, fmt.Errorf("control-plane component versions are incomplete on node %q (missing: %s)", node.Name, strings.Join(missing, ", "))
 			}
 			if gateway == "" {
 				gateway = talosNode.Target()
