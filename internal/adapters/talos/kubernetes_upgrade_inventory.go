@@ -293,7 +293,7 @@ func (b *boundedVersionOutput) Write(data []byte) (int, error) {
 func clientVersionMatches(output, expected string) bool {
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
-		if len(fields) == 2 && strings.TrimSuffix(fields[0], ":") == "Client" {
+		if len(fields) == 2 && (strings.TrimSuffix(fields[0], ":") == "Tag" || strings.TrimSuffix(fields[0], ":") == "Client") {
 			return fields[1] == expected
 		}
 	}
