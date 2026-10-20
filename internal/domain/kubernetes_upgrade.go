@@ -273,10 +273,8 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 		}
 	}
 	plan.SkipControlPlane = controlPlaneAtTarget(inventory, to.String()) && inventory.ManifestsConverged
-	proxyPending := proxyConvergencePending(inventory, to.String())
-	if from.String() == to.String() && !plan.SkipControlPlane && !proxyPending {
-		return fail("the control plane is already at target but manifest convergence is unverified")
-	}
+	// A fresh session must reconcile managed manifests through Talos again when
+	// it has no evidence of the earlier CLI stage, even if components are at target.
 	kubeletSource := plan.SourceVersion
 	if from.String() == to.String() {
 		var ok bool
@@ -351,15 +349,6 @@ func controlPlaneAtTarget(inventory KubernetesUpgradeInventory, target string) b
 		return false
 	}
 	return true
-}
-
-func proxyConvergencePending(inventory KubernetesUpgradeInventory, target string) bool {
-	for _, node := range inventory.Nodes {
-		if node.Role == NodeRoleControl && (node.ProxyConfigImage != inventory.TargetProxyImage || !inventory.ProxyRolloutComplete && inventory.ProxyEnabled) {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeKubernetesVersion(value string) string {
