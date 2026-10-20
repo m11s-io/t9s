@@ -11,6 +11,9 @@ import (
 
 var ErrKubernetesUpgradeAssessment = errors.New("Kubernetes upgrade assessment failed")
 
+// ErrKubernetesUpgradeNotReady marks an observation that may settle after a restart.
+var ErrKubernetesUpgradeNotReady = errors.New("cluster readiness has not settled")
+
 type TalosCLIIdentity struct {
 	Path    string
 	Version string
@@ -120,10 +123,11 @@ type KubernetesUpgradeEvent struct {
 }
 
 type KubernetesUpgradeNodeResult struct {
-	NodeUID      string
-	Outcome      OperationOutcome
-	LeftCordoned bool
-	Message      string
+	NodeUID           string
+	Outcome           OperationOutcome
+	LeftCordoned      bool
+	Message           string
+	ConfigFingerprint string
 }
 
 type KubernetesUpgradeResult struct {

@@ -26,6 +26,7 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 	result := domain.KubernetesUpgradeNodeResult{NodeUID: plan.UID}
 	if plan.Skip {
 		result.Outcome = domain.OperationCompleted
+		result.ConfigFingerprint = plan.ConfigFingerprint
 		return result, nil
 	}
 	emit := func(stage domain.KubernetesUpgradeStage) {
@@ -133,6 +134,13 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 		result.Outcome = domain.OperationUnconfirmed
 		return result, errors.New("Kubernetes kubelet did not converge; node remains cordoned")
 	}
+	expectedConfig := sha256.Sum256(configBytes)
+	_, appliedFingerprint, err := b.readActiveConfig(ctx, plan.TalosAddress)
+	if err != nil || appliedFingerprint != hex.EncodeToString(expectedConfig[:]) {
+		result.Outcome = domain.OperationUnconfirmed
+		return result, errors.New("active node configuration does not match the kubelet update; node remains cordoned")
+	}
+	result.ConfigFingerprint = appliedFingerprint
 	if changedScheduling {
 		emit(domain.KubernetesUpgradeUncordon)
 		if err := access.Uncordon(ctx, plan.Name, plan.UID); err != nil {

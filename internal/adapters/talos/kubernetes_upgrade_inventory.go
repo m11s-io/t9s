@@ -122,7 +122,7 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 				continue
 			}
 			if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" || !podReady(pod) {
-				return inventory, errors.New("a kube-proxy pod is not ready")
+				return inventory, fmt.Errorf("%w: a kube-proxy pod is not ready", domain.ErrKubernetesUpgradeNotReady)
 			}
 			if _, exists := proxyPodNodes[pod.Spec.NodeName]; exists {
 				return inventory, errors.New("multiple ready kube-proxy pods are scheduled on a node")
@@ -171,8 +171,11 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 			role = domain.NodeRoleControl
 		}
 		talosNode, ok := matchTalosNode(talosNodes.Nodes, node)
-		if !ok || talosNode.Health != domain.HealthHealthy {
+		if !ok {
 			return inventory, errors.New("Kubernetes node does not map uniquely to a Talos node")
+		}
+		if talosNode.Health != domain.HealthHealthy {
+			return inventory, fmt.Errorf("%w: Talos node %s is not healthy", domain.ErrKubernetesUpgradeNotReady, node.Name)
 		}
 		nodeCtx := talosclient.WithNode(ctx, talosNode.Target())
 		versionResponse, versionErr := b.talos.Version(nodeCtx)
@@ -216,7 +219,7 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 				}
 			}
 			if len(missing) > 0 {
-				return inventory, fmt.Errorf("control-plane component versions are incomplete on node %q (missing: %s)", node.Name, strings.Join(missing, ", "))
+				return inventory, fmt.Errorf("%w: control-plane components are not ready on node %q (missing: %s)", domain.ErrKubernetesUpgradeNotReady, node.Name, strings.Join(missing, ", "))
 			}
 			if gateway == "" {
 				gateway = talosNode.Target()
@@ -264,7 +267,7 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		}
 		inventory.ProxyRolloutComplete = proxyDaemonSet.Status.ObservedGeneration >= proxyDaemonSet.Generation && proxyDaemonSet.Status.UpdatedNumberScheduled == proxyDaemonSet.Status.DesiredNumberScheduled && proxyDaemonSet.Status.NumberReady == proxyDaemonSet.Status.DesiredNumberScheduled && proxyDaemonSet.Status.NumberUnavailable == 0
 		if len(proxyPodNodes) != len(nodeList.Items) {
-			return inventory, errors.New("kube-proxy is enabled but a ready pod is missing from one or more nodes")
+			return inventory, fmt.Errorf("%w: a ready kube-proxy pod is missing", domain.ErrKubernetesUpgradeNotReady)
 		}
 		for _, pod := range proxyPods {
 			owner := metav1.GetControllerOf(&pod)
@@ -274,7 +277,7 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		}
 		for _, node := range nodeList.Items {
 			if _, ok := proxyPodNodes[node.Name]; !ok {
-				return inventory, errors.New("kube-proxy is enabled but a ready pod is missing from one or more nodes")
+				return inventory, fmt.Errorf("%w: a ready kube-proxy pod is missing", domain.ErrKubernetesUpgradeNotReady)
 			}
 			version := proxyPodVersions[node.Name]
 			if version == "" {
@@ -359,7 +362,7 @@ func validateKubeProxyDaemonSet(daemonSet *appsv1.DaemonSet, nodeCount int32) (s
 	}
 	desired := daemonSet.Status.DesiredNumberScheduled
 	if nodeCount <= 0 || desired != nodeCount || daemonSet.Status.ObservedGeneration < daemonSet.Generation || daemonSet.Status.UpdatedNumberScheduled > desired || daemonSet.Status.NumberReady != desired || daemonSet.Status.NumberUnavailable != 0 {
-		return "", errors.New("kube-proxy DaemonSet is not ready on every node")
+		return "", fmt.Errorf("%w: kube-proxy DaemonSet is not ready on every node", domain.ErrKubernetesUpgradeNotReady)
 	}
 	for _, container := range daemonSet.Spec.Template.Spec.Containers {
 		if container.Name == "kube-proxy" {

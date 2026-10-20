@@ -212,14 +212,14 @@ func (s *Session) runKubernetesUpgrade(ctx context.Context, plan domain.Kubernet
 		default:
 		}
 	}
-	inspect := func() (domain.KubernetesUpgradeInventory, error) {
-		inventory, err := backend.Inspect(ctx, plan.TargetVersion)
+	inspect := func(readCtx context.Context) (domain.KubernetesUpgradeInventory, error) {
+		inventory, err := backend.Inspect(readCtx, plan.TargetVersion)
 		if err == nil {
 			s.applyKubernetesUpgradeManifestEvidence(&inventory, plan.TargetVersion)
 		}
 		return inventory, err
 	}
-	current, err := inspect()
+	current, err := inspect(ctx)
 	if err != nil {
 		return result, safeKubernetesUpgradeError(err)
 	}
@@ -238,7 +238,7 @@ func (s *Session) runKubernetesUpgrade(ctx context.Context, plan domain.Kubernet
 		return result, errors.New("verified etcd snapshot failed; upgrade was not started")
 	}
 	emit(domain.KubernetesUpgradeEvent{Stage: domain.KubernetesUpgradeSnapshot, Status: "verified"})
-	current, err = inspect()
+	current, err = inspect(ctx)
 	if err != nil {
 		return result, safeKubernetesUpgradeError(err)
 	}
@@ -253,7 +253,7 @@ func (s *Session) runKubernetesUpgrade(ctx context.Context, plan domain.Kubernet
 		}
 	}
 	emit(domain.KubernetesUpgradeEvent{Stage: domain.KubernetesUpgradeVerify, Status: "checking-control-plane"})
-	afterCLI, err := inspect()
+	afterCLI, err := inspect(ctx)
 	if err != nil || !controlPlaneReachedTarget(afterCLI, plan) {
 		result.Outcome = domain.OperationUnconfirmed
 		return result, errors.New("control-plane or manifest convergence could not be verified")
@@ -266,17 +266,18 @@ func (s *Session) runKubernetesUpgrade(ctx context.Context, plan domain.Kubernet
 		s.kubernetesUpgradeManifests[kubernetesUpgradeStageKey(plan.ClusterUID, plan.TargetVersion)] = true
 		s.mu.Unlock()
 	}
-	for _, original := range plan.Nodes {
+	for index, original := range plan.Nodes {
 		if err := ctx.Err(); err != nil {
 			result.Outcome = domain.OperationUnconfirmed
 			appendNotAttempted(&result, plan.Nodes, len(result.Nodes))
 			return result, err
 		}
-		liveInventory, inspectErr := inspect()
-		if inspectErr != nil || !controlPlaneReachedTarget(liveInventory, plan) {
+		liveInventory, inspectErr := waitForUpgradeInventory(ctx, inspect, plan, afterCLI, index, emit)
+		if inspectErr != nil {
 			result.Outcome = domain.OperationUnconfirmed
 			appendNotAttempted(&result, plan.Nodes, len(result.Nodes))
-			return result, ErrAssessmentChanged
+			result.Nodes[index].Message = fmt.Sprintf("Readiness check before %s stopped: %s", original.Name, inspectErr)
+			return result, inspectErr
 		}
 		baseline := findUpgradeNode(afterCLI.Nodes, original.UID)
 		fresh := findUpgradeNode(liveInventory.Nodes, original.UID)
@@ -311,20 +312,86 @@ func (s *Session) runKubernetesUpgrade(ctx context.Context, plan domain.Kubernet
 		nodePlan.ConfigFingerprint = fresh.ConfigFingerprint
 		nodePlan.OriginallyCordoned = fresh.Unschedulable
 		nodeResult, updateErr := backend.UpgradeKubelet(ctx, nodePlan, emit)
+		if updateErr == nil && (nodeResult.Outcome != domain.OperationCompleted || nodeResult.ConfigFingerprint == "") {
+			nodeResult.Outcome = domain.OperationUnconfirmed
+			updateErr = errors.New("completed kubelet configuration could not be verified")
+		}
+		if updateErr != nil {
+			nodeResult.Message = updateErr.Error()
+		}
 		result.Nodes = append(result.Nodes, nodeResult)
 		if updateErr != nil {
 			result.Outcome = domain.OperationUnconfirmed
 			appendNotAttempted(&result, plan.Nodes, len(result.Nodes))
 			return result, errors.New("kubelet rollout stopped; review the node outcomes before retry")
 		}
+		baseline.ConfigFingerprint = nodeResult.ConfigFingerprint
+		baseline.KubeletVersion = plan.TargetVersion
+		baseline.KubeletImage = fresh.TargetKubeletImage
 	}
-	final, err := inspect()
+	final, err := waitForUpgradeInventory(ctx, inspect, plan, afterCLI, len(plan.Nodes), emit)
 	if err != nil || !allKubeletsReachedTarget(final, plan) {
 		result.Outcome = domain.OperationUnconfirmed
 		return result, errors.New("final Kubernetes version and readiness check failed")
 	}
 	result.Outcome = domain.OperationCompleted
 	return result, nil
+}
+
+// Read-only stabilization never retries a node mutation. Every successful
+// observation must retain cluster/node identity, scheduling state, and pending
+// node configuration before readiness can permit the next mutation.
+func waitForUpgradeInventory(ctx context.Context, inspect func(context.Context) (domain.KubernetesUpgradeInventory, error), plan domain.KubernetesUpgradePlan, baseline domain.KubernetesUpgradeInventory, next int, emit func(domain.KubernetesUpgradeEvent)) (domain.KubernetesUpgradeInventory, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var lastErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			return domain.KubernetesUpgradeInventory{}, err
+		}
+		inventory, err := inspect(waitCtx)
+		if err == nil {
+			if inventory.ClusterUID != plan.ClusterUID || inventory.TalosClusterID != plan.TalosClusterID || len(inventory.Nodes) != len(plan.Nodes) {
+				return inventory, fmt.Errorf("%w: cluster identity or node membership changed", ErrAssessmentChanged)
+			}
+			for index, planned := range plan.Nodes {
+				node := findUpgradeNode(inventory.Nodes, planned.UID)
+				if node == nil || node.Name != planned.Name || node.TalosID != planned.TalosID || node.TalosAddress != planned.TalosAddress || node.Role != planned.Role || node.TalosVersion != planned.TalosVersion || node.Unschedulable != planned.OriginallyCordoned {
+					return inventory, fmt.Errorf("%w: identity or scheduling state changed for %s", ErrAssessmentChanged, planned.Name)
+				}
+				if index < next && (node.KubeletVersion != plan.TargetVersion || node.KubeletImage != node.TargetKubeletImage) {
+					return inventory, fmt.Errorf("%w: completed kubelet changed for %s", ErrAssessmentChanged, planned.Name)
+				}
+				before := findUpgradeNode(baseline.Nodes, planned.UID)
+				if before == nil || node.KubeletVersion != before.KubeletVersion || node.KubeletImage != before.KubeletImage || node.ConfigFingerprint != before.ConfigFingerprint {
+					return inventory, fmt.Errorf("%w: kubelet configuration changed for %s", ErrAssessmentChanged, planned.Name)
+				}
+			}
+			ready := inventory
+			ready.Nodes = append([]domain.KubernetesUpgradeNode(nil), inventory.Nodes...)
+			ready.Healthy, ready.ProxyRolloutComplete = true, true
+			for index := range ready.Nodes {
+				ready.Nodes[index].Ready = true
+			}
+			if !controlPlaneReachedTarget(ready, plan) {
+				return inventory, fmt.Errorf("%w: control-plane version or configuration changed", ErrAssessmentChanged)
+			}
+			if controlPlaneReachedTarget(inventory, plan) {
+				return inventory, nil
+			}
+			err = domain.ErrKubernetesUpgradeNotReady
+		}
+		if !errors.Is(err, domain.ErrKubernetesUpgradeNotReady) {
+			return inventory, err
+		}
+		lastErr = err
+		emit(domain.KubernetesUpgradeEvent{Stage: domain.KubernetesUpgradeVerify, Status: lastErr.Error()})
+		select {
+		case <-waitCtx.Done():
+			return inventory, fmt.Errorf("cluster readiness did not settle: %w", lastErr)
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 func controlPlaneReachedTarget(inventory domain.KubernetesUpgradeInventory, plan domain.KubernetesUpgradePlan) bool {

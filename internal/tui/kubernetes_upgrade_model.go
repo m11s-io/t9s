@@ -138,6 +138,11 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 		body = append(body, plan)
 		if m.result != nil {
 			body = append(body, "Outcome: "+string(m.result.Outcome))
+			for _, node := range m.result.Nodes {
+				if node.Message != "" {
+					body = append(body, "Reason: "+sanitizeUntrustedText(node.Message))
+				}
+			}
 			if m.result.Snapshot != nil {
 				body = append(body, "Snapshot: "+m.result.Snapshot.Path+" · "+m.result.Snapshot.SHA256)
 			}
