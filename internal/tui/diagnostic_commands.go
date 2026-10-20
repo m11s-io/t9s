@@ -619,7 +619,8 @@ func (m model) directDiagnosticContent(size contentSize) (string, bool) {
 		return renderDetail([]detailField{{label: "PROCESS", value: "unavailable"}}), true
 	case viewDiskDetail:
 		if value, ok := findDiskByName(m.disks.values.Disks, frame.DeviceName); ok {
-			return renderDiskDetail(value), true
+			status, known := findNodeStatus(m.cluster.nodeStatus.Value, frame.NodeTarget)
+			return renderDiskDetailWithStatus(value, status, known), true
 		}
 		return renderDetail([]detailField{{label: "DISK", value: "unavailable"}}), true
 	case viewLinkDetail:

@@ -155,6 +155,8 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 		)
 	case viewOverview:
 		return append(global, actionHint{Key: "r", Label: "Refresh"})
+	case viewBGPPeers:
+		return append(global, actionHint{Key: "r", Label: "Refresh"}, actionHint{Key: "q/Esc", Label: "Back"})
 	case viewProblems:
 		return append(global,
 			actionHint{Key: "/", Label: "Filter"},

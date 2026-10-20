@@ -33,6 +33,8 @@ func (m *model) runClusterCommand(value string) tea.Cmd {
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 	case commandEtcd:
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewEtcd, Label: "etcd"})
+	case commandBGPPeers:
+		m.views = m.views.push(viewFrame{Kind: viewBGPPeers, Label: "bgp peers"})
 	case commandOverview:
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewOverview, Label: "overview"})
 	case commandProblems:
@@ -128,6 +130,11 @@ func (m model) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.options.NodeFocus = ""
 		}
+		if len(state.Value.Nodes) > 0 && m.session != nil && m.session.SupportsNodeStatus() {
+			m.cluster.nodeStatus = directNodeStatusState{Status: directLoading, Value: m.cluster.nodeStatus.Value}
+			statusRequest, _ := m.requests.beginWithContext("cluster-node-status", m.generation(), m.sessionCtx)
+			return m, directNodeStatusesCommand(m.session, statusRequest, state.Value.Nodes)
+		}
 		return m, nil
 	case directEventsLoaded:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
@@ -183,6 +190,25 @@ func (m model) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.cluster.kubernetes = state
 		m.cluster.nodes.Value = application.EnrichNodes(m.cluster.nodes.Value, state.Nodes)
 		m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
+		return m, nil
+	case directNodeStatusesLoaded:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() {
+			return m, nil
+		}
+		m.requests.cancelSlot("cluster-node-status")
+		state := directNodeStatusState{Status: directReady, Value: message.values}
+		if len(message.values.Problems) > 0 {
+			state.Status = directPartial
+			state.Err = "Some Talos status resources are unavailable"
+		}
+		if message.err != nil && len(message.values.Statuses) == 0 {
+			state.Status = directFailed
+			state.Err = "Talos status resources are unavailable"
+		} else if message.err != nil {
+			state.Status = directPartial
+			state.Err = "Some Talos status resources are unavailable"
+		}
+		m.cluster.nodeStatus = state
 		return m, nil
 	}
 	return m, nil

@@ -133,7 +133,9 @@ func (m model) activeRefreshPending() bool {
 	case viewNodes, viewServices:
 		slots = []string{"cluster-nodes-services", "cluster-kubernetes"}
 	case viewOverview, viewProblems:
-		slots = []string{"cluster-nodes-services", "cluster-kubernetes", "cluster-events", "cluster-etcd"}
+		slots = []string{"cluster-nodes-services", "cluster-kubernetes", "cluster-events", "cluster-etcd", "cluster-node-status"}
+	case viewBGPPeers:
+		slots = []string{"cluster-nodes-services", "cluster-node-status"}
 	case viewEvents:
 		slots = []string{"cluster-events"}
 	case viewEtcd:

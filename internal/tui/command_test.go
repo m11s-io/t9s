@@ -17,6 +17,7 @@ func TestCommandResolutionIsClosedOverKnownNamesAndArguments(t *testing.T) {
 		{"help", commandHelp}, {"?", commandHelp},
 		{"resources", commandResources}, {"res", commandResources},
 		{"resources MachineStatus", commandResources},
+		{"bgp", commandBGPPeers}, {"bgps", commandBGPPeers},
 		{" resources MachineStatus", commandUnknown},
 		{"healthcheck", commandClusterHealth}, {"hc", commandClusterHealth},
 		{"healthcheck 5m", commandClusterHealth},

@@ -129,6 +129,8 @@ func directResourceTitle(model model, kind viewKind) string {
 		return titleWithScope("disk", selected.DeviceName)
 	case viewNetwork:
 		return fmt.Sprintf("network(%s)[%d]", model.network.node, len(model.network.values.Links))
+	case viewBGPPeers:
+		return fmt.Sprintf("bgp(all)[%d]", countBGPPeers(model.cluster.nodeStatus.Value))
 	case viewLinkDetail:
 		return titleWithScope("link", selected.LinkName)
 	case viewDmesg:

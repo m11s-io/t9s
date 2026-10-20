@@ -218,6 +218,14 @@ type FakeNetworkReader struct {
 	ListFunc func(context.Context, string) (domain.NetworkSet, error)
 }
 
+type FakeNodeStatusReader struct {
+	ListFunc func(context.Context, string) (domain.NodeStatusSnapshot, error)
+}
+
+func (f *FakeNodeStatusReader) List(ctx context.Context, node string) (domain.NodeStatusSnapshot, error) {
+	return f.ListFunc(ctx, node)
+}
+
 func (f *FakeNetworkReader) List(ctx context.Context, node string) (domain.NetworkSet, error) {
 	return f.ListFunc(ctx, node)
 }
@@ -359,6 +367,7 @@ type FakeSession struct {
 	ProcessReader          ports.ProcessReader
 	DiskReader             ports.DiskReader
 	NetworkReader          ports.NetworkReader
+	NodeStatusReader       ports.NodeStatusReader
 	DmesgReader            ports.DmesgReader
 	NetstatReader          ports.NetstatReader
 	MountReader            ports.MountReader
@@ -397,6 +406,8 @@ func (f *FakeSession) Processes() ports.ProcessReader { return f.ProcessReader }
 func (f *FakeSession) Disks() ports.DiskReader { return f.DiskReader }
 
 func (f *FakeSession) Network() ports.NetworkReader { return f.NetworkReader }
+
+func (f *FakeSession) NodeStatus() ports.NodeStatusReader { return f.NodeStatusReader }
 
 func (f *FakeSession) Dmesg() ports.DmesgReader { return f.DmesgReader }
 

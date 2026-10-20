@@ -195,7 +195,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case nodeAutoRefreshTickMsg:
 		if !m.directFilterEditing() && m.session != nil && !m.activeRefreshPending() && !m.palette.active && !m.contexts.active && m.mutation.prompt == nil && !m.mutation.busy && m.upgradePrompt == nil && m.timePrompt == nil && m.etcdPathPrompt == nil {
 			switch m.views.top().Kind {
-			case viewNodes, viewServices, viewEvents, viewEtcd, viewOverview, viewProblems, viewProcesses, viewDisks, viewNetwork, viewNetstat, viewMounts, viewMemory, viewTime, viewResourceKinds, viewResourceInstances:
+			case viewNodes, viewServices, viewEvents, viewEtcd, viewOverview, viewProblems, viewProcesses, viewDisks, viewNetwork, viewBGPPeers, viewNetstat, viewMounts, viewMemory, viewTime, viewResourceKinds, viewResourceInstances:
 				updated, command := m.update(tea.KeyPressMsg{Code: 'r'})
 				return updated, tea.Batch(command, nodeAutoRefreshTick())
 			}
@@ -266,7 +266,7 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDirectMutationResult(message)
 	case directEventFollowOpened, directEventFollowBatch, directClusterHealthOpened, directClusterHealthBatch:
 		return m.updateDirectEventAndHealthResult(message)
-	case directNodeProgress, directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded:
+	case directNodeProgress, directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded, directNodeStatusesLoaded:
 		return m.updateDirectClusterResult(message)
 	case directDiskUsageOpened, directDiskUsageBatch:
 		return m, m.applyDirectDiskUsageResult(message)
@@ -366,6 +366,16 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if (m.views.top().Kind == viewOverview || m.views.top().Kind == viewProblems) && message.String() == "r" && !m.directFilterEditing() && m.session != nil {
 			return m, m.refreshDirectSummary()
+		}
+		if m.views.top().Kind == viewBGPPeers {
+			if message.String() == "q" || message.String() == "esc" {
+				m.popDirectView()
+				return m, nil
+			}
+			if message.String() == "r" && m.session != nil {
+				return m, m.refreshDirectNodes()
+			}
+			return m, nil
 		}
 		if command, handled := m.handleDiagnosticKey(message); handled {
 			return m, command
@@ -801,7 +811,9 @@ func (m model) View() tea.View {
 		} else if resourceContent, handled := m.directResourceContent(innerSize); handled {
 			content = resourceContent
 		} else if m.views.top().Kind == viewNodeDetail {
-			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
+			node := m.nodes.selectedValue(m.cluster.nodes.Value.Nodes)
+			status, known := findNodeStatus(m.cluster.nodeStatus.Value, node.Target())
+			content = renderNodeDetailWithStatus(node, status, known, sandboxdServiceState(m.cluster.services.Value, node))
 		} else if m.views.top().Kind == viewServiceDetail {
 			if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
 				if m.serviceDetail.summary.Name == "" {
@@ -828,6 +840,8 @@ func (m model) View() tea.View {
 			content = m.healthcheck.viewSized(innerSize)
 		} else if m.views.top().Kind == viewEtcd {
 			content = m.etcd.viewSized(innerSize, m.cluster.etcd)
+		} else if m.views.top().Kind == viewBGPPeers {
+			content = renderBGPPeers(m.cluster.nodeStatus)
 		} else if m.views.top().Kind == viewOverview {
 			content = withHealthNotices(renderOverview(directHealthInput(m.cluster)), directHealthNotices(m.cluster))
 		} else if m.views.top().Kind == viewProblems {

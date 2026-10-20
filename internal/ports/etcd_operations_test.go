@@ -58,6 +58,7 @@ func (sessionStub) Etcd() EtcdReader                   { return nil }
 func (sessionStub) Processes() ProcessReader           { return nil }
 func (sessionStub) Disks() DiskReader                  { return nil }
 func (sessionStub) Network() NetworkReader             { return nil }
+func (sessionStub) NodeStatus() NodeStatusReader       { return nil }
 func (sessionStub) Dmesg() DmesgReader                 { return nil }
 func (sessionStub) Netstat() NetstatReader             { return nil }
 func (sessionStub) Mounts() MountReader                { return nil }

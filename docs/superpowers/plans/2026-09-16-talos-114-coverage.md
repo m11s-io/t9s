@@ -1,10 +1,10 @@
 # Talos 1.14 coverage plan for t9s
 
-Status: Phases 0, 1, and 2 implemented; Phases 3 and 4 pending; Phase 5 Kubernetes upgrades newly planned.
+Status: Phases 0–3 implemented in the working tree; Phase 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
-Last reconciled with source: 2026-10-20 (Phase 2 commit `6e1fceb`, pushed to `origin/main`)
+Last reconciled with source: 2026-10-20 (Phase 3 implementation, disposable smoke, and hosted CI/Docs validation recorded below)
 Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
-Live v1.14.4 cluster smoke testing is pending; implemented below means present in source, not released or live-verified.
+The Phase 3 Docker smoke used Talos v1.14.4 on two nodes. BGP, LVM/MD, trim/scrub, `sandboxd`, and SystemDisk resources were absent from that cluster; hardware-backed coverage remains pending. Implemented below means present in source, not released.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.
 Their original v1.14.1 findings are background; this document records current status.
 Kubernetes upgrades were added to planned scope at user request on 2026-10-17.
@@ -26,8 +26,15 @@ Kubernetes upgrades were added to planned scope at user request on 2026-10-17.
   Time / TimeCheck, bounded directory disk usage, namespace-aware containers and
   images with resource stats, service event history, and explicit force
   reboot/shutdown controls. Disposable-cluster smoke checks remain pending.
-- **Phases 3 and 4 pending:** curated Talos networking/storage/system views and
-  health rules, configuration editing, disaster recovery, and convenience exports.
+- **Phase 3 implemented in the working tree:** BGP peer status, LVM/MD RAID,
+  volume trim and XFS scrub status, workload isolation and `sandboxd` visibility,
+  conservative health rules and overview rollups, and dedicated system-volume
+  details. The disposable smoke verified node/service discovery, BGP and health
+  views, system-volume/isolation details, and resource/disk views; configured
+  BGP/storage maintenance evidence was not present. Hosted Go CI and Docs
+  validation passed for the Phase 3 PR.
+- **Phase 4 pending:** configuration editing, disaster recovery, kubeconfig export,
+  and curated etcd resource details.
 - **New planned scope:** cluster-wide Kubernetes upgrades through Talos, separate
   from node-level Talos OS upgrades. Requires its own design and implementation
   plan; no Kubernetes upgrade action exists in t9s yet.
@@ -65,9 +72,9 @@ any resource kind) and the streaming upgrade lifecycle.
 
 | Area | Exposed |
 | --- | --- |
-| Read | nodes + detail, services/detail + streaming logs, snapshot/live events, etcd membership/status/alarms, processes, disks, network links/addresses/multipath routes, streaming dmesg, netstat, mounts/filesystem usage, memory, sampled CPU, Time / TimeCheck, generic COSI browser, health overview/problems, explicit streaming `:healthcheck` |
+| Read | nodes + detail, services/detail + streaming logs, snapshot/live events, etcd membership/status/alarms, processes, disks with LVM/MD and volume details, network links/addresses/multipath routes, BGP peers, streaming dmesg, netstat, mounts/filesystem usage, memory, sampled CPU, Time / TimeCheck, containers/images/stats, generic COSI browser, health overview/problems, explicit streaming `:healthcheck` |
 | Write (`--enable-writes`) | node reboot/shutdown/rollback/reset/upgrade; disk wipe; service start/stop/restart; etcd snapshot/remove/leave/defragment/disarm/forfeit leadership; Kubernetes cordon/drain/uncordon during upgrade |
-| Health rules | `node-readiness`, `node-services-degraded`, `etcd-member-unhealthy`, `etcd-member-alarmed` |
+| Health rules | `node-readiness`, `node-services-degraded`, `etcd-member-unhealthy`, `etcd-member-alarmed`, `bgp-peer-not-established`, `lvm-volume-missing`, `lvm-volume-group-partial`, `md-array-unhealthy`, `volume-failed`, `volume-trim-overdue`, `filesystem-scrub-failed`, `sandboxd-service-unhealthy` |
 
 ## 2. Remaining gap inventory
 
@@ -78,18 +85,16 @@ Kubernetes upgrade workflow added on 2026-10-17.
 
 | Area | Remaining work | Priority |
 | --- | --- | --- |
-| Diagnostics | Directory `DiskUsage`; richer `ServiceInfo` | P1 |
-| Containers | Namespace-aware containers, image list and stats; `taloscontainers` selection | P1 / P2 |
-| Networking | BGP peer view and health rules | P1 |
-| Storage | LVM / MD RAID status, volume lifecycle, trim / XFS scrub views and health rules | P1 |
-| System | Workload isolation / `sandboxd` / security profile visibility | P1 |
-| Health | Rules and overview rollup for the new network/storage/system evidence | P1 |
+| Networking | BGP peer view and health rules | Implemented Phase 3 |
+| Storage | LVM / MD RAID status, volume lifecycle, trim / XFS scrub views and health rules | Implemented Phase 3 |
+| System | Workload isolation / `sandboxd` / security profile visibility | Implemented Phase 3 |
+| Health | Rules and overview rollup for the new network/storage/system evidence | Implemented Phase 3 |
 | Kubernetes upgrades | Cluster version inventory, compatibility checks, dry-run preview, backup, confirmed upgrade and progress | User-requested; Phase 5 |
 | Configuration | ApplyConfiguration with server-side dry-run preview and explicit confirmation | P1 |
 | Recovery | Bootstrap / EtcdRecover workflow with mode-specific existing-cluster guards | P1 |
 | Convenience | Kubeconfig export; curated etcd Spec/Config/PKI detail | P1 |
 | Safety follow-ups | Typed member confirmation; expose force reboot/shutdown; revisit broad lifecycle version gate `<2.0.0` | Follow-up / P2 |
-| Operational context | Dedicated system-volume note in node detail; document etcd port 2383 | P2 |
+| Operational context | Dedicated system-volume details in node detail; document etcd port 2383 | System volumes implemented Phase 3; etcd port docs pending |
 | Optional diagnostics | KubeSpan and curated hardware/security/performance views; file Read/LS | P2 / defer; generic resources remain available |
 
 Time / TimeCheck distinguishes ordinary status from explicit server checks.
@@ -135,11 +140,10 @@ finish every feature in one phase before addressing another. Use this order:
    [the current audit](../reviews/2026-10-18-operation-lifecycle.md), add typed
    member confirmation, and record disposable-cluster compatibility checks.
    Confirm hosted CI and reconcile the user-facing feature inventory before release.
-2. Finish directory disk usage, then namespace-aware containers/images/stats and
-   richer service detail. Force reboot/shutdown remains lower priority.
-3. Select Phase 3 views by operational need. Add a health rule only when evidence
-   can distinguish healthy, unhealthy, unknown, and unsupported states. Keep
-   occasional inspection in the generic resource browser.
+2. Phase 2 diagnostics, containers/images/stats, service detail, and force
+   reboot/shutdown are implemented; disposable smoke checks remain pending.
+3. Phase 3 networking/storage/system health views are implemented in the current
+   working tree. Keep occasional inspection in the generic resource browser.
 4. Complete the Phase 5 upstream integration study before implementing cluster
    upgrades. Establish supported versions and operation ownership first.
 5. Design configuration apply and disaster recovery separately. Bootstrap and
@@ -201,14 +205,14 @@ whole application model, a feature registry, or a general screen framework.
   confirm-time quorum checks, and Talos `FORCE` mapping. No force action bypasses
   a blocker. Disposable-cluster prompt smoke checks remain pending.
 
-### Phase 3 — Talos 1.14 surface and health: pending
+### Phase 3 — Talos 1.14 surface and health: implemented in working tree; Docker smoke run
 
-- [ ] **15. BGP peer status** view and health rule.
-- [ ] **16. LVM / MD RAID status** in disk detail and health rules.
-- [ ] **17. Filesystem trim / XFS scrub status** and health rules.
-- [ ] **18. Workload isolation / sandboxd** visibility in node detail.
-- [ ] **19. Health rules and overview rollup** for the new resource classes.
-- [ ] **20. Dedicated system volumes** note in node detail.
+- [x] **15. BGP peer status** cluster view and non-established-session health rule.
+- [x] **16. LVM / MD RAID status** in disk detail, with missing/partial/array health rules.
+- [x] **17. Filesystem trim / XFS scrub status** in volume details and health rules.
+- [x] **18. Workload isolation / sandboxd** visibility in node detail, with explicit unhealthy `sandboxd` diagnosis.
+- [x] **19. Health rules and overview rollup** for BGP, storage, volumes, and system status. Unsupported groups remain unknown.
+- [x] **20. Dedicated system volumes** from Talos system-volume labels in node detail.
 
 ### Phase 4 — config, recovery, convenience: pending
 
@@ -290,15 +294,21 @@ and [Kubernetes version skew policy](https://kubernetes.io/releases/version-skew
 
 ## 6. Remaining delivery and verification work
 
-- [ ] Run and record a disposable Talos v1.14.4 live smoke test: nodes, services
-  and logs, events, etcd, resource browsing, and the diagnostics views. Exercise
-  destructive flows only on disposable infrastructure with explicit authorization.
-- [ ] Confirm hosted CI for the v1.14.4 dependency, checksum, docs, docs-test,
-  and live-event updates after pushing the reviewed changes. Local tests/race tests,
-  vet, Go build, docs tests/typecheck/build, and module tidiness passed during
-  this update; that does not establish hosted CI or live-cluster compatibility.
-- [ ] Align the README's feature inventory with the implemented reset/wipe,
-  membership operations, healthcheck, and diagnostic views.
+- [x] Run and record a disposable Talos v1.14.4 Docker smoke: two nodes reported
+  healthy at v1.14.4; t9s loaded services and etcd overview data; `:bgp`,
+  `:overview`, `:problems`, node detail/system volumes/isolation, `:resources`,
+  and `:disks` rendered. The overview showed the two `META` volumes waiting.
+  No BGP peers, LVM/MD arrays, trim/scrub schedules, `sandboxd` service, or
+  `SystemDisk` resource existed in this Docker cluster; hardware-backed cases
+  still need a suitable Talos setup.
+- [ ] Complete the broader read-only smoke matrix for service logs, events,
+  etcd detail, and diagnostic subviews. Exercise destructive flows only on
+  disposable infrastructure.
+- [x] Confirm hosted CI for the Phase 3 PR: [branch Go CI](https://github.com/m11s-io/t9s/actions/runs/39442950193), [PR Go CI](https://github.com/m11s-io/t9s/actions/runs/39443001625), and [Docs validation](https://github.com/m11s-io/t9s/actions/runs/39443001644) passed. The draft PR Docs deploy job was skipped.
+- [x] Local tests/race tests, vet, Go build, docs tests/typecheck/build, and
+  module tidiness passed. Hardware-backed resource coverage remains pending.
+- [x] Align the README's feature inventory with implemented Phase 0–3 read and
+  write coverage.
 - [ ] Release the verified changes; implement signed artifacts (checksums already
   exist). Neither publishing nor signing is implied by SDK integration passing.
 
@@ -309,10 +319,8 @@ These are remaining candidates, not newly approved implementation work:
 1. Operation ownership/deadlines/outcomes follow-ups from the lifecycle audit,
    followed by disposable-cluster validation. CPU and time are already implemented.
 2. `feat(etcd): require typed member confirmation`
-3. `feat(diagnostics): add bounded directory disk usage`
-4. `feat(containers): add namespace-aware containers, images, and stats`
-5. Selected network/storage health evidence based on operator need.
-6. Kubernetes upgrade design/integration study (Phase 5 items 25–30; separate
+3. Document etcd port 2383 and close remaining Phase 4 convenience gaps.
+4. Kubernetes upgrade design/integration study (Phase 5 items 25–30; separate
    reviewed spec and implementation plan before feature development).
 
 ## Appendix — source reports

@@ -40,6 +40,10 @@ func renderOverview(observations application.HealthInput) string {
 		totalNodes-nodeProblematic, totalNodes, nodeWarning, nodeCritical))
 	view.WriteString(fmt.Sprintf("ETCD      %d/%d healthy, %d warning, %d critical\n",
 		totalEtcd-etcdProblematic, totalEtcd, etcdWarning, etcdCritical))
+	view.WriteString(statusRollupLine(observations, diagnoses, "BGP", "bgp-peer", statusGroupBGP))
+	view.WriteString(statusRollupLine(observations, diagnoses, "STORAGE", "lvm-physical-volume", statusGroupStorage, "lvm-volume-group", "lvm-logical-volume", "md-array"))
+	view.WriteString(statusRollupLine(observations, diagnoses, "VOLUMES", "volume", statusGroupVolumes, "volume-trim", "filesystem-scrub"))
+	view.WriteString(systemStatusRollupLine(observations, diagnoses))
 
 	criticalCount := 0
 	for _, diagnosis := range diagnoses {
@@ -61,10 +65,14 @@ func renderOverview(observations application.HealthInput) string {
 
 func directHealthInput(cluster directClusterState) application.HealthInput {
 	return application.HealthInput{
-		Nodes:      cluster.nodes.Value,
-		NodesKnown: cluster.nodes.Status == directReady || cluster.nodes.Status == directPartial,
-		Etcd:       cluster.etcd.Value,
-		EtcdKnown:  cluster.etcd.Status == directReady || cluster.etcd.Status == directPartial,
+		Nodes:             cluster.nodes.Value,
+		NodesKnown:        cluster.nodes.Status == directReady || cluster.nodes.Status == directPartial,
+		Etcd:              cluster.etcd.Value,
+		EtcdKnown:         cluster.etcd.Status == directReady || cluster.etcd.Status == directPartial,
+		NodeStatuses:      cluster.nodeStatus.Value,
+		NodeStatusesKnown: cluster.nodeStatus.Status == directReady || cluster.nodeStatus.Status == directPartial,
+		Services:          cluster.services.Value,
+		ServicesKnown:     cluster.services.Status == directReady || cluster.services.Status == directPartial,
 	}
 }
 
@@ -81,6 +89,12 @@ func directHealthNotices(cluster directClusterState) []string {
 		notices = append(notices, "ETCD PARTIAL: "+fallback(cluster.etcd.Err))
 	case directFailed:
 		notices = append(notices, "ETCD UNAVAILABLE: "+fallback(cluster.etcd.Err))
+	}
+	switch cluster.nodeStatus.Status {
+	case directPartial:
+		notices = append(notices, "TALOS STATUS PARTIAL: "+fallback(cluster.nodeStatus.Err))
+	case directFailed:
+		notices = append(notices, "TALOS STATUS UNAVAILABLE: "+fallback(cluster.nodeStatus.Err))
 	}
 	return notices
 }

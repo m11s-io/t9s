@@ -85,6 +85,40 @@ func TestClientOpensIndependentSessions(t *testing.T) {
 	}
 }
 
+func TestSessionNodeStatusesPreservesPerNodeResultsAndFailures(t *testing.T) {
+	adapter := &testkit.FakeSession{NodeStatusReader: &testkit.FakeNodeStatusReader{
+		ListFunc: func(ctx context.Context, target string) (domain.NodeStatusSnapshot, error) {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Error("NodeStatus read did not receive an operation deadline")
+			}
+			if target == "worker-2" {
+				return domain.NodeStatusSnapshot{Node: target, MDKnown: true}, errors.New("BGP resource unsupported")
+			}
+			return domain.NodeStatusSnapshot{Node: target, BGPKnown: true, BGPPeers: []domain.BGPPeerSnapshot{{Peer: "192.0.2.1", State: "ESTABLISHED"}}}, nil
+		},
+	}}
+	client := newLifecycleClient(func(context.Context, string) (ports.Session, error) { return adapter, nil }, nil)
+	session, err := client.Open(context.Background(), "alpha", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	got, err := session.NodeStatuses(context.Background(), []domain.NodeSnapshot{
+		{Name: "worker-1"}, {Name: "worker-2"},
+	})
+
+	if err == nil {
+		t.Fatal("NodeStatuses error = nil, want partial read error")
+	}
+	if len(got.Statuses) != 2 || got.Statuses[0].Node != "worker-1" || got.Statuses[1].Node != "worker-2" {
+		t.Fatalf("NodeStatuses = %#v, want input-order results", got.Statuses)
+	}
+	if !got.Statuses[0].BGPKnown || !got.Statuses[1].MDKnown || len(got.Problems) != 1 || got.Problems[0].Node != "worker-2" {
+		t.Fatalf("NodeStatuses partial evidence = %#v, want successful worker-1 and a worker-2 problem", got)
+	}
+}
+
 func TestSessionCloseCancelsInflightAndRejectsNewWork(t *testing.T) {
 	parent, parentCancel := context.WithCancel(context.Background())
 	defer parentCancel()

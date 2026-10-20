@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/m11s-io/t9s/internal/application"
 	"github.com/m11s-io/t9s/internal/domain"
@@ -19,6 +20,89 @@ func TestEvaluateHealthEmitsNothingForAHealthyNode(t *testing.T) {
 	diagnoses := application.EvaluateObservations(model)
 
 	assert.Empty(t, diagnoses)
+}
+
+func TestEvaluateHealthReportsBGPAndStorageFailures(t *testing.T) {
+	unhealthy := false
+	model := application.HealthInput{
+		ServicesKnown:     true,
+		Services:          domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "worker-1", Name: "sandboxd", State: "Failed", Healthy: &unhealthy}}},
+		NodeStatusesKnown: true,
+		NodeStatuses: domain.NodeStatusSet{Statuses: []domain.NodeStatusSnapshot{{
+			Node:                    "worker-1",
+			BGPKnown:                true,
+			BGPPeers:                []domain.BGPPeerSnapshot{{ID: "peer-a", Peer: "192.0.2.1", State: "ACTIVE"}},
+			LVMPhysicalVolumesKnown: true,
+			LVMPhysicalVolumes:      []domain.LVMPhysicalVolumeSnapshot{{Device: "/dev/sdb", Missing: "missing"}},
+			MDKnown:                 true,
+			MDArrays:                []domain.MDArraySnapshot{{ID: "md0", Device: "/dev/md0", Status: "error", Error: "member missing"}},
+			VolumesKnown:            true,
+			Volumes:                 []domain.VolumeSnapshot{{ID: "EPHEMERAL", Phase: "failed", Error: "mount failed"}},
+			ScrubKnown:              true,
+			FSScrubs:                []domain.FSScrubSnapshot{{ID: "var", Mountpoint: "/var", Status: "xfs scrub failed"}},
+		}}},
+	}
+
+	diagnoses := application.EvaluateObservations(model)
+
+	got := map[string]domain.Severity{}
+	for _, diagnosis := range diagnoses {
+		got[diagnosis.RuleID] = diagnosis.Severity
+	}
+	assert.Equal(t, domain.SeverityWarning, got["bgp-peer-not-established"])
+	assert.Equal(t, domain.SeverityCritical, got["lvm-volume-missing"])
+	assert.Equal(t, domain.SeverityCritical, got["md-array-unhealthy"])
+	assert.Equal(t, domain.SeverityCritical, got["volume-failed"])
+	assert.Equal(t, domain.SeverityCritical, got["filesystem-scrub-failed"])
+	assert.Equal(t, domain.SeverityCritical, got["sandboxd-service-unhealthy"])
+}
+
+func TestEvaluateHealthReportsOverdueTrimAndIgnoresUnknownGroups(t *testing.T) {
+	model := application.HealthInput{
+		NodeStatusesKnown: true,
+		NodeStatuses: domain.NodeStatusSet{Statuses: []domain.NodeStatusSnapshot{{
+			Node:          "worker-2",
+			TrimKnown:     true,
+			TrimSchedules: []domain.TrimScheduleSnapshot{{ID: "var", Filesystem: "xfs", NextTrim: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)}},
+			BGPKnown:      false,
+			MDKnown:       false,
+		}}},
+	}
+
+	diagnoses := application.EvaluateObservations(model)
+
+	require.Len(t, diagnoses, 1)
+	assert.Equal(t, "volume-trim-overdue", diagnoses[0].RuleID)
+	assert.Equal(t, domain.SeverityWarning, diagnoses[0].Severity)
+}
+
+func TestEvaluateHealthKeepsUnrecognizedStoragePhasesUnknown(t *testing.T) {
+	model := application.HealthInput{
+		NodeStatusesKnown: true,
+		NodeStatuses: domain.NodeStatusSet{Statuses: []domain.NodeStatusSnapshot{{
+			Node:         "worker-3",
+			MDKnown:      true,
+			MDArrays:     []domain.MDArraySnapshot{{ID: "md-future", Status: "paused"}},
+			VolumesKnown: true,
+			Volumes: []domain.VolumeSnapshot{
+				{ID: "ready", Phase: "ready"},
+				{ID: "prepared", Phase: "prepared"},
+				{ID: "closed", Phase: "closed"},
+				{ID: "future", Phase: "future-phase"},
+			},
+		}}},
+	}
+
+	diagnoses := application.EvaluateObservations(model)
+	got := map[string]domain.Severity{}
+	for _, diagnosis := range diagnoses {
+		got[diagnosis.ResourceID] = diagnosis.Severity
+	}
+	assert.NotContains(t, got, "ready")
+	assert.Equal(t, domain.SeverityWarning, got["prepared"])
+	assert.Equal(t, domain.SeverityUnknown, got["closed"])
+	assert.Equal(t, domain.SeverityUnknown, got["future"])
+	assert.Equal(t, domain.SeverityUnknown, got["md-future"])
 }
 
 func TestEvaluateHealthNodeReadinessRule(t *testing.T) {
