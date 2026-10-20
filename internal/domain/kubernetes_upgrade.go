@@ -24,10 +24,12 @@ type KubernetesUpgradeNode struct {
 	TalosAddress             string
 	Role                     NodeRole
 	TalosVersion             string
+	ProxyEnabled             bool
+	ProxyConfigKnown         bool
+	ProxyConfigImage         string
 	APIServerVersion         string
 	ControllerManagerVersion string
 	SchedulerVersion         string
-	ProxyVersion             string
 	KubeletVersion           string
 	KubeletImage             string
 	TargetKubeletImage       string
@@ -37,16 +39,29 @@ type KubernetesUpgradeNode struct {
 }
 
 type KubernetesUpgradeInventory struct {
-	ClusterUID         string
-	TalosClusterID     string
-	Gateway            string
-	CLI                TalosCLIIdentity
-	Nodes              []KubernetesUpgradeNode
+	ClusterUID           string
+	TalosClusterID       string
+	Gateway              string
+	CLI                  TalosCLIIdentity
+	Nodes                []KubernetesUpgradeNode
+	ProxyEnabled         bool
+	ProxyConfigKnown     bool
+	TargetProxyImage     string
+	ProxyRolloutComplete bool
+	// ProxyVersions are keyed by node identity so the assessment detects per-node drift.
+	ProxyVersions      []KubernetesProxyNodeVersion
 	Manifests          []string
 	ManifestsConverged bool
 	Permissions        map[string]bool
 	Healthy            bool
 	ObservedAt         time.Time
+}
+
+// KubernetesProxyNodeVersion records an observed kube-proxy pod by Kubernetes node.
+type KubernetesProxyNodeVersion struct {
+	NodeUID string
+	Name    string
+	Version string
 }
 
 type KubernetesUpgradeNodePlan struct {
@@ -73,6 +88,10 @@ type KubernetesUpgradePlan struct {
 	CLI              TalosCLIIdentity
 	SourceVersion    string
 	TargetVersion    string
+	ProxyEnabled     bool
+	TargetProxyImage string
+	// ProxyVersions is ordered by node UID to keep the plan fingerprint stable.
+	ProxyVersions    []KubernetesProxyNodeVersion
 	Nodes            []KubernetesUpgradeNodePlan
 	Manifests        []string
 	SkipControlPlane bool
@@ -132,8 +151,17 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 	plan := KubernetesUpgradePlan{
 		ClusterUID: inventory.ClusterUID, TalosClusterID: inventory.TalosClusterID,
 		Gateway: inventory.Gateway, CLI: inventory.CLI, TargetVersion: to.String(),
-		Manifests: append([]string(nil), inventory.Manifests...),
-		Nodes:     make([]KubernetesUpgradeNodePlan, 0, len(inventory.Nodes)),
+		ProxyEnabled: inventory.ProxyEnabled, TargetProxyImage: inventory.TargetProxyImage,
+		ProxyVersions: append([]KubernetesProxyNodeVersion(nil), inventory.ProxyVersions...),
+		Manifests:     append([]string(nil), inventory.Manifests...),
+		Nodes:         make([]KubernetesUpgradeNodePlan, 0, len(inventory.Nodes)),
+	}
+	sort.Slice(plan.ProxyVersions, func(i, j int) bool { return plan.ProxyVersions[i].NodeUID < plan.ProxyVersions[j].NodeUID })
+	if !inventory.ProxyConfigKnown {
+		return fail("Talos kube-proxy configuration is unknown")
+	}
+	if inventory.TargetProxyImage == "" {
+		return fail("target Talos kube-proxy image is unknown")
 	}
 	seenUID, seenName := map[string]struct{}{}, map[string]struct{}{}
 	for _, node := range inventory.Nodes {
@@ -176,13 +204,51 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 		if component.Role != NodeRoleControl {
 			continue
 		}
-		for _, version := range []string{component.APIServerVersion, component.ControllerManagerVersion, component.SchedulerVersion, component.ProxyVersion} {
+		if !component.ProxyConfigKnown || component.ProxyEnabled != inventory.ProxyEnabled {
+			return fail("Talos nodes disagree about whether kube-proxy is enabled")
+		}
+		if inventory.ProxyEnabled && component.ProxyConfigImage == "" {
+			return fail("Talos kube-proxy image configuration is unknown")
+		}
+		for _, version := range []string{component.APIServerVersion, component.ControllerManagerVersion, component.SchedulerVersion} {
 			parsed, err := parseStableKubernetesVersion(version)
 			if err != nil {
-				return fail("a control-plane or proxy version is unknown")
+				return fail("a control-plane component version is unknown")
 			}
 			controlVersions = append(controlVersions, parsed)
 		}
+	}
+	if inventory.ProxyEnabled {
+		if len(inventory.ProxyVersions) == 0 {
+			return fail("kube-proxy is enabled but no ready proxy versions were found")
+		}
+		seenProxyNodes := make(map[string]struct{}, len(inventory.ProxyVersions))
+		knownNodes := make(map[string]string, len(inventory.Nodes))
+		for _, node := range inventory.Nodes {
+			knownNodes[node.UID] = node.Name
+		}
+		if len(inventory.ProxyVersions) != len(inventory.Nodes) {
+			return fail("kube-proxy is enabled but proxy inventory does not cover every node")
+		}
+		for _, proxy := range inventory.ProxyVersions {
+			if proxy.NodeUID == "" || proxy.Name == "" {
+				return fail("a kube-proxy node identity is unknown")
+			}
+			if knownNodes[proxy.NodeUID] != proxy.Name {
+				return fail("a kube-proxy pod is attached to an unknown node")
+			}
+			if _, ok := seenProxyNodes[proxy.NodeUID]; ok {
+				return fail("multiple kube-proxy pods are attached to one node")
+			}
+			seenProxyNodes[proxy.NodeUID] = struct{}{}
+			parsed, err := parseStableKubernetesVersion(proxy.Version)
+			if err != nil {
+				return fail("a kube-proxy version is unknown")
+			}
+			controlVersions = append(controlVersions, parsed)
+		}
+	} else if len(inventory.ProxyVersions) != 0 {
+		return fail("kube-proxy pods exist while Talos proxy configuration is disabled")
 	}
 	if len(controlVersions) == 0 {
 		return fail("control-plane version inventory is empty")
@@ -215,8 +281,8 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 			return fail("a kubelet is more than three minor versions behind the target")
 		}
 	}
-	plan.SkipControlPlane = controlPlaneAtTarget(inventory.Nodes, to.String()) && inventory.ManifestsConverged
-	if from.String() == to.String() && !plan.SkipControlPlane {
+	plan.SkipControlPlane = controlPlaneAtTarget(inventory, to.String()) && inventory.ManifestsConverged
+	if from.String() == to.String() && !plan.SkipControlPlane && !proxyConvergencePending(inventory, to.String()) {
 		return fail("the control plane is already at target but manifest convergence is unverified")
 	}
 	return plan, nil
@@ -230,13 +296,40 @@ func parseStableKubernetesVersion(value string) (semver.Version, error) {
 	return version, nil
 }
 
-func controlPlaneAtTarget(nodes []KubernetesUpgradeNode, target string) bool {
-	for _, node := range nodes {
-		if node.Role == NodeRoleControl && (normalizeKubernetesVersion(node.APIServerVersion) != target || normalizeKubernetesVersion(node.ControllerManagerVersion) != target || normalizeKubernetesVersion(node.SchedulerVersion) != target || normalizeKubernetesVersion(node.ProxyVersion) != target) {
+func controlPlaneAtTarget(inventory KubernetesUpgradeInventory, target string) bool {
+	for _, node := range inventory.Nodes {
+		if node.Role == NodeRoleControl && (normalizeKubernetesVersion(node.APIServerVersion) != target || normalizeKubernetesVersion(node.ControllerManagerVersion) != target || normalizeKubernetesVersion(node.SchedulerVersion) != target || node.ProxyConfigImage != inventory.TargetProxyImage) {
 			return false
 		}
 	}
+	if inventory.ProxyEnabled {
+		if !inventory.ProxyRolloutComplete {
+			return false
+		}
+		if len(inventory.ProxyVersions) == 0 {
+			return false
+		}
+		if len(inventory.ProxyVersions) != len(inventory.Nodes) {
+			return false
+		}
+		for _, proxy := range inventory.ProxyVersions {
+			if normalizeKubernetesVersion(proxy.Version) != target {
+				return false
+			}
+		}
+	} else if len(inventory.ProxyVersions) != 0 {
+		return false
+	}
 	return true
+}
+
+func proxyConvergencePending(inventory KubernetesUpgradeInventory, target string) bool {
+	for _, node := range inventory.Nodes {
+		if node.Role == NodeRoleControl && (node.ProxyConfigImage != inventory.TargetProxyImage || !inventory.ProxyRolloutComplete && inventory.ProxyEnabled) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeKubernetesVersion(value string) string {

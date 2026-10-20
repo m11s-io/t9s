@@ -89,9 +89,14 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 		lines = append(lines,
 			"  API server: registry.k8s.io/kube-apiserver:v"+summary.TargetVersion,
 			"  Controller manager: registry.k8s.io/kube-controller-manager:v"+summary.TargetVersion,
-			"  Scheduler: registry.k8s.io/kube-scheduler:v"+summary.TargetVersion,
-			"  kube-proxy: registry.k8s.io/kube-proxy:v"+summary.TargetVersion)
-		lines = append(lines, "Order: control plane, kube-proxy, managed manifests, then kubelets")
+			"  Scheduler: registry.k8s.io/kube-scheduler:v"+summary.TargetVersion)
+		if summary.ProxyEnabled {
+			lines = append(lines, "  kube-proxy: "+summary.TargetProxyImage)
+			lines = append(lines, "Order: control plane, kube-proxy, managed manifests, then kubelets")
+		} else {
+			lines = append(lines, "  kube-proxy: remains disabled; Talos image config -> "+summary.TargetProxyImage)
+			lines = append(lines, "Order: control plane, managed manifests, then kubelets")
+		}
 		lines = append(lines, "Kubelets: one node at a time; drain with eviction and restore its prior cordon state")
 		lines = append(lines, "Manifest preview: anticipated Talos managed-resource reconciliation; exact diff is execution-time")
 		for _, node := range summary.Nodes {

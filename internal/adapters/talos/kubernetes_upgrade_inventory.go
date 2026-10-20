@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,9 +27,12 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	configresource "github.com/siderolabs/talos/pkg/machinery/resources/config"
 	k8sresource "github.com/siderolabs/talos/pkg/machinery/resources/k8s"
+	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	appsclient "k8s.io/client-go/kubernetes/typed/apps/v1"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
@@ -81,6 +85,10 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 	if err != nil {
 		return inventory, errors.New("unable to connect to Kubernetes authorization")
 	}
+	apps, err := appsclient.NewForConfig(restConfig)
+	if err != nil {
+		return inventory, errors.New("unable to connect to Kubernetes apps API")
+	}
 
 	ctxInfo, err := core.Namespaces().Get(ctx, "kube-system", metav1.GetOptions{})
 	if err != nil || ctxInfo.UID == "" {
@@ -99,15 +107,48 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		return inventory, errors.New("unable to inspect Kubernetes system components")
 	}
 	controlPlane := map[string]map[string]string{}
+	proxyPodNodes := map[string]struct{}{}
+	proxyPodVersions := make(map[string]string)
+	proxyPods := make([]corev1.Pod, 0)
+	proxyPodsFound := false
 	for _, pod := range pods.Items {
-		if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" || !podReady(pod) {
-			continue
-		}
 		component := pod.Labels["k8s-app"]
 		if component == "" {
 			component = pod.Labels["component"]
 		}
-		if component != "kube-apiserver" && component != "kube-controller-manager" && component != "kube-scheduler" && component != "kube-proxy" {
+		if component == "kube-proxy" {
+			proxyPodsFound = true
+			if pod.DeletionTimestamp != nil {
+				continue
+			}
+			if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" || !podReady(pod) {
+				return inventory, errors.New("a kube-proxy pod is not ready")
+			}
+			if _, exists := proxyPodNodes[pod.Spec.NodeName]; exists {
+				return inventory, errors.New("multiple ready kube-proxy pods are scheduled on a node")
+			}
+			foundContainer := false
+			for _, container := range pod.Spec.Containers {
+				if container.Name == component {
+					version := imageVersion(container.Image)
+					if version == "" {
+						return inventory, errors.New("a kube-proxy image version is unknown")
+					}
+					proxyPodVersions[pod.Spec.NodeName] = version
+					foundContainer = true
+				}
+			}
+			if !foundContainer {
+				return inventory, errors.New("a kube-proxy container version is unavailable")
+			}
+			proxyPodNodes[pod.Spec.NodeName] = struct{}{}
+			proxyPods = append(proxyPods, *pod.DeepCopy())
+			continue
+		}
+		if component != "kube-apiserver" && component != "kube-controller-manager" && component != "kube-scheduler" {
+			continue
+		}
+		if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" || !podReady(pod) {
 			continue
 		}
 		for _, container := range pod.Spec.Containers {
@@ -120,6 +161,8 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		}
 	}
 	var gateway string
+	var proxyEnabled, proxyConfigKnown bool
+	inventory.TargetProxyImage = fmt.Sprintf("%s:v%s", constants.KubeProxyImage, strings.TrimPrefix(target, "v"))
 	for _, node := range nodeList.Items {
 		role := domain.NodeRoleWorker
 		if _, ok := node.Labels["node-role.kubernetes.io/control-plane"]; ok {
@@ -150,10 +193,24 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		}
 		configHash := sha256.Sum256(configBytes)
 		clear(configBytes)
+		nodeProxyEnabled, nodeProxyConfigKnown := false, false
+		nodeProxyImage := ""
+		if role == domain.NodeRoleControl {
+			proxyConfig := activeConfig.Provider().K8sProxyConfig()
+			if proxyConfig == nil {
+				return inventory, errors.New("Talos kube-proxy configuration is unavailable")
+			}
+			nodeProxyEnabled, nodeProxyConfigKnown = proxyConfig.Enabled(), true
+			nodeProxyImage = proxyConfig.Image()
+			if proxyConfigKnown && proxyEnabled != nodeProxyEnabled {
+				return inventory, errors.New("Talos control-plane nodes disagree about kube-proxy configuration")
+			}
+			proxyEnabled, proxyConfigKnown = nodeProxyEnabled, true
+		}
 		components := controlPlane[node.Name]
 		if role == domain.NodeRoleControl {
 			var missing []string
-			for _, component := range []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler", "kube-proxy"} {
+			for _, component := range []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler"} {
 				if components[component] == "" {
 					missing = append(missing, component)
 				}
@@ -180,6 +237,7 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 		}
 		nodePlan := domain.KubernetesUpgradeNode{
 			Name: node.Name, UID: string(node.UID), TalosID: talosNode.ID, TalosAddress: talosNode.Target(), Role: role,
+			ProxyEnabled: nodeProxyEnabled, ProxyConfigKnown: nodeProxyConfigKnown, ProxyConfigImage: nodeProxyImage,
 			TalosVersion: talosVersion.String(), KubeletVersion: strings.TrimPrefix(node.Status.NodeInfo.KubeletVersion, "v"),
 			KubeletImage: kubeletImage, TargetKubeletImage: targetImage,
 			ConfigFingerprint: hex.EncodeToString(configHash[:]), Ready: nodeReady(node), Unschedulable: node.Spec.Unschedulable,
@@ -188,10 +246,67 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 			nodePlan.APIServerVersion = components["kube-apiserver"]
 			nodePlan.ControllerManagerVersion = components["kube-controller-manager"]
 			nodePlan.SchedulerVersion = components["kube-scheduler"]
-			nodePlan.ProxyVersion = components["kube-proxy"]
 		}
 		inventory.Nodes = append(inventory.Nodes, nodePlan)
 	}
+	if !proxyConfigKnown {
+		return inventory, errors.New("Talos kube-proxy configuration is unknown")
+	}
+	proxyDaemonSet, proxyDaemonSetErr := apps.DaemonSets("kube-system").Get(ctx, "kube-proxy", metav1.GetOptions{})
+	var proxyVersions []domain.KubernetesProxyNodeVersion
+	if proxyEnabled {
+		if proxyDaemonSetErr != nil {
+			return inventory, errors.New("Talos kube-proxy is enabled but its DaemonSet is unavailable")
+		}
+		daemonSetVersion, daemonSetErr := validateKubeProxyDaemonSet(proxyDaemonSet, int32(len(nodeList.Items)))
+		if daemonSetErr != nil {
+			return inventory, daemonSetErr
+		}
+		inventory.ProxyRolloutComplete = proxyDaemonSet.Status.ObservedGeneration >= proxyDaemonSet.Generation && proxyDaemonSet.Status.UpdatedNumberScheduled == proxyDaemonSet.Status.DesiredNumberScheduled && proxyDaemonSet.Status.NumberReady == proxyDaemonSet.Status.DesiredNumberScheduled && proxyDaemonSet.Status.NumberUnavailable == 0
+		if len(proxyPodNodes) != len(nodeList.Items) {
+			return inventory, errors.New("kube-proxy is enabled but a ready pod is missing from one or more nodes")
+		}
+		for _, pod := range proxyPods {
+			owner := metav1.GetControllerOf(&pod)
+			if owner == nil || owner.Kind != "DaemonSet" || owner.Name != proxyDaemonSet.Name || owner.UID != proxyDaemonSet.UID {
+				return inventory, errors.New("a kube-proxy pod is not owned by the Talos kube-proxy DaemonSet")
+			}
+		}
+		for _, node := range nodeList.Items {
+			if _, ok := proxyPodNodes[node.Name]; !ok {
+				return inventory, errors.New("kube-proxy is enabled but a ready pod is missing from one or more nodes")
+			}
+			version := proxyPodVersions[node.Name]
+			if version == "" {
+				return inventory, errors.New("a kube-proxy pod version is unknown")
+			}
+			proxyVersions = append(proxyVersions, domain.KubernetesProxyNodeVersion{NodeUID: string(node.UID), Name: node.Name, Version: version})
+		}
+		if daemonSetVersion != strings.TrimPrefix(target, "v") {
+			foundTemplateVersion := false
+			for _, proxy := range proxyVersions {
+				if proxy.Version == daemonSetVersion {
+					foundTemplateVersion = true
+					break
+				}
+			}
+			if !foundTemplateVersion {
+				return inventory, errors.New("kube-proxy DaemonSet template does not match the source or target rollout")
+			}
+		}
+	} else {
+		if proxyDaemonSetErr == nil || !apierrors.IsNotFound(proxyDaemonSetErr) {
+			return inventory, errors.New("Talos kube-proxy is disabled but its DaemonSet could not be ruled out")
+		}
+		if proxyPodsFound {
+			return inventory, errors.New("kube-proxy pods exist while Talos proxy configuration is disabled")
+		}
+		inventory.ProxyRolloutComplete = true
+	}
+	sort.Slice(proxyVersions, func(i, j int) bool { return proxyVersions[i].NodeUID < proxyVersions[j].NodeUID })
+	inventory.ProxyEnabled = proxyEnabled
+	inventory.ProxyConfigKnown = true
+	inventory.ProxyVersions = proxyVersions
 	if gateway == "" {
 		return inventory, errors.New("cluster has no control-plane gateway")
 	}
@@ -233,6 +348,28 @@ func (b *kubernetesUpgradeBackend) Inspect(ctx context.Context, target string) (
 	}
 	inventory.ObservedAt = time.Now()
 	return inventory, nil
+}
+
+func validateKubeProxyDaemonSet(daemonSet *appsv1.DaemonSet, nodeCount int32) (string, error) {
+	if daemonSet == nil || daemonSet.UID == "" || daemonSet.Name != "kube-proxy" || daemonSet.Namespace != "kube-system" || daemonSet.Spec.Selector == nil {
+		return "", errors.New("kube-proxy DaemonSet identity is incomplete")
+	}
+	if len(daemonSet.Spec.Selector.MatchLabels) != 2 || len(daemonSet.Spec.Selector.MatchExpressions) != 0 || daemonSet.Spec.Selector.MatchLabels["k8s-app"] != "kube-proxy" || daemonSet.Spec.Selector.MatchLabels["tier"] != "node" || daemonSet.Spec.Template.Labels["k8s-app"] != "kube-proxy" || daemonSet.Spec.Template.Labels["tier"] != "node" {
+		return "", errors.New("kube-proxy DaemonSet selector does not match Talos component labels")
+	}
+	desired := daemonSet.Status.DesiredNumberScheduled
+	if nodeCount <= 0 || desired != nodeCount || daemonSet.Status.ObservedGeneration < daemonSet.Generation || daemonSet.Status.UpdatedNumberScheduled > desired || daemonSet.Status.NumberReady != desired || daemonSet.Status.NumberUnavailable != 0 {
+		return "", errors.New("kube-proxy DaemonSet is not ready on every node")
+	}
+	for _, container := range daemonSet.Spec.Template.Spec.Containers {
+		if container.Name == "kube-proxy" {
+			version := imageVersion(container.Image)
+			if version != "" {
+				return version, nil
+			}
+		}
+	}
+	return "", errors.New("kube-proxy DaemonSet image version is unknown")
 }
 
 func validateTalosKubeconfig(data []byte) error {
@@ -380,15 +517,16 @@ func targetKubeletImage(target, current string) (string, error) {
 }
 
 func inspectKubernetesPermissions(ctx context.Context, core coreclient.CoreV1Interface, authorization authorizationclient.AuthorizationV1Interface) (map[string]bool, error) {
-	checks := []struct{ verb, resource, subresource, namespace string }{
-		{"get", "namespaces", "", ""}, {"list", "nodes", "", ""}, {"get", "nodes", "", ""},
-		{"update", "nodes", "", ""}, {"list", "pods", "", ""}, {"create", "pods", "eviction", ""},
+	checks := []struct{ verb, resource, subresource, namespace, group string }{
+		{"get", "namespaces", "", "", ""}, {"list", "nodes", "", "", ""}, {"get", "nodes", "", "", ""},
+		{"update", "nodes", "", "", ""}, {"list", "pods", "", "", ""}, {"create", "pods", "eviction", "", ""},
+		{"get", "daemonsets", "", "kube-system", "apps"},
 	}
 	result := make(map[string]bool, len(checks))
 	for _, check := range checks {
 		request := &authorizationv1.SelfSubjectAccessReview{
 			Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Verb: check.verb, Resource: check.resource, Subresource: check.subresource, Namespace: check.namespace,
+				Verb: check.verb, Resource: check.resource, Subresource: check.subresource, Namespace: check.namespace, Group: check.group,
 			}},
 		}
 		response, err := authorization.SelfSubjectAccessReviews().Create(ctx, request, metav1.CreateOptions{})

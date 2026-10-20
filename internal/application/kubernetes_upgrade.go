@@ -109,6 +109,7 @@ func kubernetesUpgradeStageKey(clusterUID, target string) string { return cluste
 
 func cloneKubernetesUpgradePlan(plan domain.KubernetesUpgradePlan) domain.KubernetesUpgradePlan {
 	plan.Nodes = append([]domain.KubernetesUpgradeNodePlan(nil), plan.Nodes...)
+	plan.ProxyVersions = append([]domain.KubernetesProxyNodeVersion(nil), plan.ProxyVersions...)
 	plan.Manifests = append([]string(nil), plan.Manifests...)
 	return plan
 }
@@ -327,16 +328,43 @@ func (s *Session) runKubernetesUpgrade(ctx context.Context, plan domain.Kubernet
 }
 
 func controlPlaneReachedTarget(inventory domain.KubernetesUpgradeInventory, plan domain.KubernetesUpgradePlan) bool {
-	if inventory.ClusterUID != plan.ClusterUID || inventory.TalosClusterID != plan.TalosClusterID || len(inventory.Nodes) != len(plan.Nodes) {
+	if inventory.ClusterUID != plan.ClusterUID || inventory.TalosClusterID != plan.TalosClusterID || len(inventory.Nodes) != len(plan.Nodes) || !inventory.ProxyConfigKnown || inventory.ProxyEnabled != plan.ProxyEnabled {
 		return false
 	}
 	for _, node := range inventory.Nodes {
-		if node.Role == domain.NodeRoleControl && (node.APIServerVersion != plan.TargetVersion || node.ControllerManagerVersion != plan.TargetVersion || node.SchedulerVersion != plan.TargetVersion || node.ProxyVersion != plan.TargetVersion) {
+		if node.Role == domain.NodeRoleControl && (!node.ProxyConfigKnown || node.ProxyEnabled != plan.ProxyEnabled || node.ProxyConfigImage != plan.TargetProxyImage || node.APIServerVersion != plan.TargetVersion || node.ControllerManagerVersion != plan.TargetVersion || node.SchedulerVersion != plan.TargetVersion) {
 			return false
 		}
 		if !node.Ready {
 			return false
 		}
+	}
+	if plan.ProxyEnabled {
+		if !inventory.ProxyRolloutComplete {
+			return false
+		}
+		if len(inventory.ProxyVersions) != len(plan.Nodes) {
+			return false
+		}
+		plannedNodes := make(map[string]string, len(plan.Nodes))
+		for _, node := range plan.Nodes {
+			plannedNodes[node.UID] = node.Name
+		}
+		seenProxyNodes := make(map[string]struct{}, len(inventory.ProxyVersions))
+		for _, proxy := range inventory.ProxyVersions {
+			if proxy.Version != plan.TargetVersion || plannedNodes[proxy.NodeUID] != proxy.Name {
+				return false
+			}
+			if _, exists := seenProxyNodes[proxy.NodeUID]; exists {
+				return false
+			}
+			seenProxyNodes[proxy.NodeUID] = struct{}{}
+		}
+		if len(seenProxyNodes) != len(plan.Nodes) {
+			return false
+		}
+	} else if len(inventory.ProxyVersions) != 0 {
+		return false
 	}
 	for _, planned := range plan.Nodes {
 		if findUpgradeNode(inventory.Nodes, planned.UID) == nil {
