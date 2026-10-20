@@ -55,6 +55,8 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		dmesg:             newDmesgReader(machineryDmesgClient{client: client}),
 		netstat:           newNetstatReader(machineryNetstatClient{client: client}),
 		mounts:            newMountReader(machineryMountClient{client: client}),
+		diskUsage:         newDiskUsageReader(machineryDiskUsageClient{client: client}),
+		containers:        newContainerReader(machineryContainerClient{client: client}, machineryImageClient{client: client}),
 		memory:            newMemoryReader(machineryMemoryClient{client: client}),
 		time:              newTimeReader(machineryTimeClient{client: client}),
 		cpu:               newCPUReader(machineryCPUClient{client: client}, waitCPUSample, time.Now),
@@ -81,6 +83,8 @@ type session struct {
 	dmesg             ports.DmesgReader
 	netstat           ports.NetstatReader
 	mounts            ports.MountReader
+	diskUsage         ports.DiskUsageReader
+	containers        ports.ContainerReader
 	memory            ports.MemoryReader
 	time              ports.TimeReader
 	cpu               ports.CPUReader
@@ -120,6 +124,10 @@ func (s *session) Dmesg() ports.DmesgReader { return s.dmesg }
 func (s *session) Netstat() ports.NetstatReader { return s.netstat }
 
 func (s *session) Mounts() ports.MountReader { return s.mounts }
+
+func (s *session) DiskUsage() ports.DiskUsageReader { return s.diskUsage }
+
+func (s *session) Containers() ports.ContainerReader { return s.containers }
 
 func (s *session) Memory() ports.MemoryReader { return s.memory }
 

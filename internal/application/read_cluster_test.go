@@ -145,3 +145,26 @@ func TestClusterHealthRequestPreservesNodeIPSelection(t *testing.T) {
 	assert.Equal(t, []string{"10.0.0.7"}, request.WorkerNodes)
 	assert.Equal(t, 2*time.Minute, request.WaitTimeout)
 }
+
+type progressiveReadFunc struct{ combinedReadFunc }
+
+func (f progressiveReadFunc) ListProgress(ctx context.Context, publish func(domain.NodeSet)) (domain.NodeSet, domain.ServiceSet, error) {
+	publish(domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "a", Name: "worker", Stage: "Loading"}}})
+	return f.List(ctx)
+}
+
+func TestNodeServicesProgressPublishesBeforeFinalResult(t *testing.T) {
+	published := false
+	session := openReadTestSession(t, combinedReadSession{FakeSession: &testkit.FakeSession{}, reader: progressiveReadFunc{combinedReadFunc(func(context.Context) (domain.NodeSet, domain.ServiceSet, error) {
+		assert.True(t, published)
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "a", Stage: "running"}}}, domain.ServiceSet{}, nil
+	})}})
+	nodes, _, err := session.NodeServicesProgress(context.Background(), func(nodes domain.NodeSet) {
+		require.Len(t, nodes.Nodes, 1)
+		assert.Equal(t, "Loading", nodes.Nodes[0].Stage)
+		published = true
+	})
+	require.NoError(t, err)
+	assert.True(t, published)
+	assert.Equal(t, "running", nodes.Nodes[0].Stage)
+}

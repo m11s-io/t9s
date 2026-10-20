@@ -2,7 +2,9 @@ package tui
 
 import (
 	"strings"
+	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/m11s-io/t9s/internal/domain"
 )
@@ -34,7 +36,7 @@ func nodeRoleDisplayValue(node domain.NodeSnapshot) string {
 	return fallback(string(node.Role))
 }
 
-func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int, marked map[string]struct{}) string {
+func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int, marked map[string]struct{}, changes ...map[string]time.Time) string {
 	widths := nodeColumnWidths(width, nodes)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -51,7 +53,13 @@ func renderNodeTable(width int, nodes []domain.NodeSnapshot, selectedIndex int, 
 			row.WriteString(" ")
 		}
 		writeTableCells(&row, nodeRowValues(node), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		skin := defaultK9sSkin()
+		if len(changes) > 0 {
+			if _, changed := changes[0][node.ID]; changed {
+				skin.tableRow = skin.tableRow.Foreground(lipgloss.Color("#FFA500"))
+			}
+		}
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, skin))
 	}
 
 	return output.String()

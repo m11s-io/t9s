@@ -9,6 +9,7 @@ import (
 )
 
 type problemsModel struct {
+	changes     tableChanges
 	filter      string
 	filtering   bool
 	selectedKey string
@@ -134,7 +135,7 @@ func (m problemsModel) visibleDiagnoses(all []domain.Diagnosis) []domain.Diagnos
 
 func (m problemsModel) view(width int, all []domain.Diagnosis) string {
 	m = m.normalizeSelection(m.control.Cursor(), all)
-	contents := renderProblemTable(width, m.visibleDiagnoses(all), m.control.Cursor())
+	contents := renderProblemTable(width, m.visibleDiagnoses(all), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -149,7 +150,7 @@ func (m problemsModel) viewSized(size contentSize, all []domain.Diagnosis) strin
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(diagnoses), m.control.Cursor(), rowCapacity)
-	return renderProblemTable(size.Width, diagnoses[start:end], m.control.Cursor()-start)
+	return renderProblemTable(size.Width, diagnoses[start:end], m.control.Cursor()-start, m.changes)
 }
 
 const defaultProblemsWidth = 120
@@ -161,7 +162,7 @@ var problemColumns = []tableColumn[domain.Diagnosis]{
 	{header: "SUMMARY", minWidth: 20, grow: true, value: func(d domain.Diagnosis) string { return fallback(d.Summary) }},
 }
 
-func renderProblemTable(width int, diagnoses []domain.Diagnosis, selectedIndex int) string {
+func renderProblemTable(width int, diagnoses []domain.Diagnosis, selectedIndex int, changes ...tableChanges) string {
 	widths := problemColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -174,7 +175,7 @@ func renderProblemTable(width int, diagnoses []domain.Diagnosis, selectedIndex i
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, problemRowValues(diagnosis), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(diagnosisKey(diagnosis), changes)))
 	}
 
 	return output.String()

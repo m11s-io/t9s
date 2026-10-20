@@ -26,3 +26,8 @@ Press `n` on a selected node to open its network interface list: `LINK`, `TYPE`,
 ## Refreshing
 
 `r` re-fetches the node the view was opened for — not whatever is currently selected back in `:nodes` — so refreshing after navigating elsewhere still targets the node you're actually looking at.
+
+The active list also refreshes automatically every 2 seconds, except while
+editing filters or prompts. Changed and new rows flash orange for two seconds;
+the selected row keeps its selection color. The same behavior applies to sockets,
+mounts, memory, services, etcd members, and resource lists.

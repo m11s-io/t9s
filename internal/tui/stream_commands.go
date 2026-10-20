@@ -79,7 +79,7 @@ func (m *model) reconnectDirectClusterHealth() tea.Cmd {
 }
 
 func (m *model) syncDirectStreamViewports() {
-	layout := layoutShell(m.width, m.height)
+	layout := m.shellLayout()
 	frame := layoutResourceFrame(layout.Width, layout.ContentHeight, directResourceTitle(*m, m.views.top().Kind))
 	size := contentSize{Width: frame.InnerWidth, Height: frame.InnerHeight}
 	if m.views.top().Kind == viewServiceLogs {

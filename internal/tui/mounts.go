@@ -10,6 +10,7 @@ import (
 )
 
 type mountsModel struct {
+	changes   tableChanges
 	status    directLoadStatus
 	values    domain.MountSet
 	node      string
@@ -94,6 +95,15 @@ func (m mountsModel) visibleMounts() []domain.MountSnapshot {
 	return filtered
 }
 
+func (m mountsModel) selectedMount() (domain.MountSnapshot, bool) {
+	mounts := m.visibleMounts()
+	index := m.control.Cursor()
+	if index < 0 || index >= len(mounts) {
+		return domain.MountSnapshot{}, false
+	}
+	return mounts[index], true
+}
+
 func mountMatches(mount domain.MountSnapshot, query string) bool {
 	for _, value := range []string{mount.Filesystem, mount.MountedOn} {
 		if strings.Contains(strings.ToLower(value), query) {
@@ -104,7 +114,7 @@ func mountMatches(mount domain.MountSnapshot, query string) bool {
 }
 
 func (m mountsModel) view(width int) string {
-	contents := renderMountsTable(width, m.visibleMounts(), m.control.Cursor())
+	contents := renderMountsTable(width, m.visibleMounts(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -131,7 +141,7 @@ func (m mountsModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(mounts), m.control.Cursor(), rowCapacity)
-	content := renderMountsTable(size.Width, mounts[start:end], m.control.Cursor()-start)
+	content := renderMountsTable(size.Width, mounts[start:end], m.control.Cursor()-start, m.changes)
 	if warningRows > 0 {
 		content = "MOUNTS PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -149,7 +159,7 @@ var mountColumns = []tableColumn[domain.MountSnapshot]{
 	{header: "MOUNTED", minWidth: 20, grow: true, value: func(m domain.MountSnapshot) string { return fallback(m.MountedOn) }},
 }
 
-func renderMountsTable(width int, mounts []domain.MountSnapshot, selectedIndex int) string {
+func renderMountsTable(width int, mounts []domain.MountSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := mountsColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -162,7 +172,7 @@ func renderMountsTable(width int, mounts []domain.MountSnapshot, selectedIndex i
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, mountsRowValues(mount), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(mount.MountedOn, changes)))
 	}
 
 	return output.String()

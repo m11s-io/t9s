@@ -194,7 +194,7 @@ func appendActionBlock(existing, next string) string {
 
 func dispatchPreparedNodeAction(ctx context.Context, controller ports.NodeController, request NodeActionRequest, diskFacts *destructiveDiskFacts, target string) TargetResult {
 	if request.Kind != ActionReset && request.Kind != ActionWipeDevice {
-		return dispatchNodeAction(ctx, controller, request.Kind, target)
+		return dispatchNodeAction(ctx, controller, request.Kind, target, request.Force)
 	}
 	result := TargetResult{Target: target}
 	if err := ctx.Err(); err != nil {

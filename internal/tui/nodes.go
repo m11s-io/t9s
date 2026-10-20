@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,12 +11,14 @@ import (
 )
 
 type nodesModel struct {
-	filter     string
-	filtering  bool
-	selectedID string
-	marked     map[string]struct{}
-	control    listControl
-	notice     string
+	rowValues   map[string][]string
+	changedRows map[string]time.Time
+	filter      string
+	filtering   bool
+	selectedID  string
+	marked      map[string]struct{}
+	control     listControl
+	notice      string
 }
 
 func newNodesModel() nodesModel { return nodesModel{} }
@@ -198,7 +201,7 @@ func (m nodesModel) visibleNodes(snapshot []domain.NodeSnapshot) []domain.NodeSn
 }
 
 func (m nodesModel) view(width int, snapshot []domain.NodeSnapshot) string {
-	contents := renderNodeTable(width, m.visibleNodes(snapshot), m.control.Cursor(), m.marked)
+	contents := renderNodeTable(width, m.visibleNodes(snapshot), m.control.Cursor(), m.marked, m.changedRows)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -221,7 +224,7 @@ func (m nodesModel) viewSized(size contentSize, state directNodeState) string {
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(nodes), m.control.Cursor(), rowCapacity)
-	return renderNodeTable(size.Width, nodes[start:end], m.control.Cursor()-start, m.marked)
+	return renderNodeTable(size.Width, nodes[start:end], m.control.Cursor()-start, m.marked, m.changedRows)
 }
 
 func renderNodes(width int, state directNodeState) string {

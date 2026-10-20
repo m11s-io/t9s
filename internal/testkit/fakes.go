@@ -115,11 +115,19 @@ func (f *FakeServiceController) Restart(ctx context.Context, node, service strin
 }
 
 type FakeServiceReader struct {
-	ListFunc func(context.Context) (domain.ServiceSet, error)
+	ListFunc   func(context.Context) (domain.ServiceSet, error)
+	DetailFunc func(context.Context, string, string) (domain.ServiceDetail, error)
 }
 
 func (f *FakeServiceReader) List(ctx context.Context) (domain.ServiceSet, error) {
 	return f.ListFunc(ctx)
+}
+
+func (f *FakeServiceReader) Detail(ctx context.Context, node, service string) (domain.ServiceDetail, error) {
+	if f.DetailFunc == nil {
+		return domain.ServiceDetail{}, nil
+	}
+	return f.DetailFunc(ctx, node, service)
 }
 
 type FakeEventReader struct {
@@ -354,6 +362,8 @@ type FakeSession struct {
 	DmesgReader            ports.DmesgReader
 	NetstatReader          ports.NetstatReader
 	MountReader            ports.MountReader
+	DiskUsageReader        ports.DiskUsageReader
+	ContainerReader        ports.ContainerReader
 	MemoryReader           ports.MemoryReader
 	TimeReader             ports.TimeReader
 	CPUReader              ports.CPUReader
@@ -393,6 +403,10 @@ func (f *FakeSession) Dmesg() ports.DmesgReader { return f.DmesgReader }
 func (f *FakeSession) Netstat() ports.NetstatReader { return f.NetstatReader }
 
 func (f *FakeSession) Mounts() ports.MountReader { return f.MountReader }
+
+func (f *FakeSession) DiskUsage() ports.DiskUsageReader { return f.DiskUsageReader }
+
+func (f *FakeSession) Containers() ports.ContainerReader { return f.ContainerReader }
 
 func (f *FakeSession) Memory() ports.MemoryReader { return f.MemoryReader }
 

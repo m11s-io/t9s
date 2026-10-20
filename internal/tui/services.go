@@ -17,6 +17,7 @@ const (
 )
 
 type servicesModel struct {
+	changes     tableChanges
 	filter      string
 	filtering   bool
 	selectedKey string
@@ -161,7 +162,7 @@ func capServices(services []domain.ServiceSnapshot) []domain.ServiceSnapshot {
 }
 
 func (m servicesModel) view(width int, all []domain.ServiceSnapshot) string {
-	contents := renderServiceTable(width, m.visibleServices(all), m.control.Cursor())
+	contents := renderServiceTable(width, m.visibleServices(all), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -187,7 +188,7 @@ func (m servicesModel) viewSized(size contentSize, services domain.ServiceSet, l
 	if len(problems) > remaining {
 		problems = problems[:remaining]
 	}
-	return renderServiceTableWithProblems(size.Width, visible, problems, m.control.Cursor()-start)
+	return renderServiceTableWithProblems(size.Width, visible, problems, m.control.Cursor()-start, m.changes)
 }
 
 func (m servicesModel) visibleProblems(services domain.ServiceSet) []domain.ServiceProblem {
@@ -212,7 +213,7 @@ var serviceColumns = []tableColumn[domain.ServiceSnapshot]{
 	{header: "LAST EVENT", minWidth: 12, grow: true, value: func(service domain.ServiceSnapshot) string { return serviceEventText(service.LastMessage) }},
 }
 
-func renderServiceTable(width int, services []domain.ServiceSnapshot, selectedIndex int) string {
+func renderServiceTable(width int, services []domain.ServiceSnapshot, selectedIndex int, changes ...tableChanges) string {
 	services = capServices(services)
 	widths := serviceColumnWidths(width)
 	var output strings.Builder
@@ -225,7 +226,7 @@ func renderServiceTable(width int, services []domain.ServiceSnapshot, selectedIn
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, serviceRowValues(service), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(serviceKey(service), changes)))
 	}
 	if len(services) == 0 {
 		output.WriteString("\nNo services")
@@ -233,7 +234,7 @@ func renderServiceTable(width int, services []domain.ServiceSnapshot, selectedIn
 	return output.String()
 }
 
-func renderServiceTableWithProblems(width int, services []domain.ServiceSnapshot, problems []domain.ServiceProblem, selectedIndex int) string {
+func renderServiceTableWithProblems(width int, services []domain.ServiceSnapshot, problems []domain.ServiceProblem, selectedIndex int, changes ...tableChanges) string {
 	widths := serviceColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -245,7 +246,7 @@ func renderServiceTableWithProblems(width int, services []domain.ServiceSnapshot
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, serviceRowValues(service), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(serviceKey(service), changes)))
 	}
 	for _, problem := range problems {
 		output.WriteString("\n! ")

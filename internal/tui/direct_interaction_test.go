@@ -105,7 +105,7 @@ func TestDirectRootUsesOnlyActiveViewFilterForPalettePrecedence(t *testing.T) {
 	assert.Equal(t, "qrvC:", root.nodes.filter, "active filters treat command and action keys as query text")
 }
 
-func TestDirectCommandPaletteRendersPromptAndTypedTextInFooter(t *testing.T) {
+func TestDirectCommandPaletteRendersPromptAndTypedText(t *testing.T) {
 	root := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "node-1", Name: "worker-1"}})
 	const typed = "zxq-palette-probe-8472"
 	assert.NotContains(t, ansi.Strip(root.View().Content), typed, "the unique query is absent from the underlying view")
@@ -114,7 +114,7 @@ func TestDirectCommandPaletteRendersPromptAndTypedTextInFooter(t *testing.T) {
 		root, _ = updateDirect(root, keyPress(key))
 	}
 	content := ansi.Strip(root.View().Content)
-	assert.Contains(t, content, "COMMAND :")
+	assert.Contains(t, content, ">zxq-palette-probe-8472")
 	assert.Contains(t, content, typed)
 }
 
@@ -143,7 +143,7 @@ func TestDirectMutationPreparedClosesPaletteOpenedDuringPreparation(t *testing.T
 	assert.False(t, model.palette.active, "a prepared action must dismiss a palette that would take precedence over its confirmation")
 	require.NotNil(t, model.mutation.prompt)
 	assert.Contains(t, content, "Reboot cp-1?")
-	assert.NotContains(t, content, "COMMAND :")
+	assert.Empty(t, model.palette.viewBar(model.width, model.styles.k9s))
 }
 
 func TestDirectRootHandlesKittyShiftedKeys(t *testing.T) {

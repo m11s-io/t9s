@@ -17,6 +17,13 @@ Control-plane actions that would drop etcd below quorum are refused outright —
 the confirmation prompt reports the refusal instead of accepting a `y` — not
 merely warned about.
 
+For a single-node reboot or shutdown, `f` in the ordinary confirmation opens
+force mode. The operator must type the exact node name and accept a second
+confirmation. Force can skip graceful shutdown or drain and interrupt
+workloads; it still requires `--enable-writes`, is unavailable for bulk actions,
+and never overrides quorum or other action blocks. The backend also rejects
+force on rollback, reset, upgrade, and device wipe.
+
 After confirmation, t9s keeps one mutation active until its terminal result
 arrives. A bulk node action waits for every target, and an etcd membership
 change stays active through both its required snapshot and membership RPC.
@@ -96,10 +103,10 @@ still in use. `FAST` is the only method exposed in this version; `ZEROES` is
 not offered.
 
 The node-scoped diagnostics views — the kernel log (`e`/dmesg), network
-sockets (`s`/netstat), filesystem mounts (`m`), memory (`f`), time (`t`), and
-CPU (`u`) — are read-only
-and inert with respect to writes: they never require `--enable-writes`, and
-enabling writes adds no mutation to them.
+sockets (`s`/netstat), filesystem mounts (`m`), memory (`f`), time (`t`), CPU
+(`u`), containers and images (`c`), directory usage (`u` from mounts), and
+service event history — are read-only and inert with respect to writes: they
+never require `--enable-writes`, and enabling writes adds no mutation to them.
 The explicit time server check (`c` in the time view) also works without writes
 mode. Talos enforces its RPC permissions; a denied check does not trigger a
 fallback server check or alter synchronization status.

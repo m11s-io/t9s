@@ -10,6 +10,7 @@ import (
 )
 
 type netstatModel struct {
+	changes   tableChanges
 	status    directLoadStatus
 	values    domain.SocketSet
 	node      string
@@ -104,7 +105,7 @@ func socketMatches(socket domain.SocketSnapshot, query string) bool {
 }
 
 func (m netstatModel) view(width int) string {
-	contents := renderNetstatTable(width, m.visibleSockets(), m.control.Cursor())
+	contents := renderNetstatTable(width, m.visibleSockets(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -131,7 +132,7 @@ func (m netstatModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(sockets), m.control.Cursor(), rowCapacity)
-	content := renderNetstatRows(size.Width, sockets[start:end], sockets, m.control.Cursor()-start)
+	content := renderNetstatRows(size.Width, sockets[start:end], sockets, m.control.Cursor()-start, m.changes)
 	if warningRows > 0 {
 		content = "SOCKETS PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -156,11 +157,11 @@ var socketColumns = []tableColumn[domain.SocketSnapshot]{
 	{header: "PROCESS", minWidth: 7, value: socketProcessLabel},
 }
 
-func renderNetstatTable(width int, sockets []domain.SocketSnapshot, selectedIndex int) string {
-	return renderNetstatRows(width, sockets, sockets, selectedIndex)
+func renderNetstatTable(width int, sockets []domain.SocketSnapshot, selectedIndex int, changes ...tableChanges) string {
+	return renderNetstatRows(width, sockets, sockets, selectedIndex, changes...)
 }
 
-func renderNetstatRows(width int, rows, widthValues []domain.SocketSnapshot, selectedIndex int) string {
+func renderNetstatRows(width int, rows, widthValues []domain.SocketSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := netstatColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -173,7 +174,7 @@ func renderNetstatRows(width int, rows, widthValues []domain.SocketSnapshot, sel
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, netstatRowValues(socket), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(socketChangeKey(socket), changes)))
 	}
 
 	return output.String()

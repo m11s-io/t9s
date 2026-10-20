@@ -42,7 +42,7 @@ func TestDirectNodeActionConfirmationCallsControllerAndKeepsTargetInResult(t *te
 	require.NotNil(t, command)
 	model, _ = applyDirectCommand(t, model, command)
 	require.NotNil(t, model.mutation.prompt)
-	assert.Contains(t, ansi.Strip(model.View().Content), "Reboot cp-1? (y/n)")
+	assert.Contains(t, ansi.Strip(model.View().Content), "Reboot cp-1? (y/n; f force)")
 	model, command = updateDirect(model, keyPress('y'))
 	require.NotNil(t, command)
 	for model.mutation.busy {

@@ -49,6 +49,17 @@ func runStreamCommand(t *testing.T, model model, command tea.Cmd) (model, tea.Cm
 	t.Helper()
 	require.NotNil(t, command)
 	message := command()
+	if batch, ok := message.(tea.BatchMsg); ok {
+		// Bubble Tea executes sibling commands too (for example a stream receive
+		// alongside highlight expiry); drive each result through Update.
+		var pending []tea.Cmd
+		for _, sibling := range batch {
+			var next tea.Cmd
+			model, next = runStreamCommand(t, model, sibling)
+			pending = append(pending, next)
+		}
+		return model, tea.Batch(pending...)
+	}
 	return updateDirect(model, message)
 }
 

@@ -85,6 +85,9 @@ func (s *Session) PrepareNodeAction(ctx context.Context, request NodeActionReque
 		return nil, err
 	}
 	assessment := Assessment{Targets: append([]string(nil), canonical...), Warning: facts.Warning, Blocked: facts.Blocked}
+	if request.Force {
+		assessment.RequiredToken = canonical[0]
+	}
 	if request.Kind == ActionReset || request.Kind == ActionWipeDevice {
 		diskFacts, err := s.readDestructiveDiskFacts(readCtx, resolved, request)
 		if err != nil {
@@ -210,6 +213,12 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 }
 
 func validateNodeActionRequest(request NodeActionRequest) error {
+	if request.Force && request.Kind != ActionReboot && request.Kind != ActionShutdown {
+		return errors.New("force mode is only valid for reboot or shutdown")
+	}
+	if request.Force && len(request.Targets) != 1 {
+		return errors.New("force mode requires exactly one target")
+	}
 	switch request.Kind {
 	case ActionReboot, ActionShutdown, ActionRollback:
 		if request.Reset != nil || request.DeviceWipe != nil {
@@ -380,7 +389,7 @@ func sameNodeActionFacts(prepared, current nodeActionFacts) bool {
 	return sameDestructiveDiskFacts(prepared.Disks, current.Disks)
 }
 
-func dispatchNodeAction(ctx context.Context, controller ports.NodeController, kind ActionKind, target string) TargetResult {
+func dispatchNodeAction(ctx context.Context, controller ports.NodeController, kind ActionKind, target string, force bool) TargetResult {
 	result := TargetResult{Target: target}
 	var err error
 	switch kind {
@@ -389,13 +398,17 @@ func dispatchNodeAction(ctx context.Context, controller ports.NodeController, ki
 			result.Err = err
 			return result
 		}
-		err = controller.Reboot(ctx, target, ports.RebootDefault)
+		mode := ports.RebootDefault
+		if force {
+			mode = ports.RebootForce
+		}
+		err = controller.Reboot(ctx, target, mode)
 	case ActionShutdown:
 		if err := ctx.Err(); err != nil {
 			result.Err = err
 			return result
 		}
-		err = controller.Shutdown(ctx, target, false)
+		err = controller.Shutdown(ctx, target, force)
 	case ActionRollback:
 		if err := ctx.Err(); err != nil {
 			result.Err = err

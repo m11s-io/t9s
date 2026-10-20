@@ -10,6 +10,7 @@ import (
 )
 
 type networkModel struct {
+	changes   tableChanges
 	status    directLoadStatus
 	values    domain.NetworkSet
 	node      string
@@ -130,7 +131,7 @@ func (m networkModel) visibleLinks() []domain.LinkSnapshot {
 }
 
 func (m networkModel) view(width int) string {
-	contents := renderLinkTable(width, m.visibleLinks(), m.control.Cursor())
+	contents := renderLinkTable(width, m.visibleLinks(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -157,7 +158,7 @@ func (m networkModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(links), m.control.Cursor(), rowCapacity)
-	content := renderLinkTable(size.Width, links[start:end], m.control.Cursor()-start)
+	content := renderLinkTable(size.Width, links[start:end], m.control.Cursor()-start, m.changes)
 	if warningRows > 0 {
 		content = "NETWORK PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -182,7 +183,7 @@ var linkColumns = []tableColumn[domain.LinkSnapshot]{
 	{header: "ADDRESSES", minWidth: 20, grow: true, value: joinLinkAddresses},
 }
 
-func renderLinkTable(width int, links []domain.LinkSnapshot, selectedIndex int) string {
+func renderLinkTable(width int, links []domain.LinkSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := linkColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -195,7 +196,7 @@ func renderLinkTable(width int, links []domain.LinkSnapshot, selectedIndex int) 
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, linkRowValues(link), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(link.Name, changes)))
 	}
 
 	return output.String()

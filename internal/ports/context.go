@@ -29,6 +29,8 @@ type Session interface {
 	Dmesg() DmesgReader
 	Netstat() NetstatReader
 	Mounts() MountReader
+	DiskUsage() DiskUsageReader
+	Containers() ContainerReader
 	Memory() MemoryReader
 	Time() TimeReader
 	CPU() CPUReader

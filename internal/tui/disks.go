@@ -9,6 +9,7 @@ import (
 )
 
 type disksModel struct {
+	changes   tableChanges
 	status    directLoadStatus
 	values    domain.DiskSet
 	node      string
@@ -133,7 +134,7 @@ func (m disksModel) visibleDisks() []domain.DiskSnapshot {
 }
 
 func (m disksModel) view(width int) string {
-	contents := renderDiskTable(width, m.visibleDisks(), m.control.Cursor())
+	contents := renderDiskTable(width, m.visibleDisks(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -160,7 +161,7 @@ func (m disksModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(disks), m.control.Cursor(), rowCapacity)
-	content := renderDiskRows(size.Width, disks[start:end], disks, m.control.Cursor()-start)
+	content := renderDiskRows(size.Width, disks[start:end], disks, m.control.Cursor()-start, m.changes)
 	if warningRows > 0 {
 		content = "DISKS PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -184,11 +185,11 @@ var diskColumns = []tableColumn[domain.DiskSnapshot]{
 	{header: "SYSTEM", minWidth: 6, value: func(d domain.DiskSnapshot) string { return diskSystemSymbol(d.SystemDisk) }},
 }
 
-func renderDiskTable(width int, disks []domain.DiskSnapshot, selectedIndex int) string {
-	return renderDiskRows(width, disks, disks, selectedIndex)
+func renderDiskTable(width int, disks []domain.DiskSnapshot, selectedIndex int, changes ...tableChanges) string {
+	return renderDiskRows(width, disks, disks, selectedIndex, changes...)
 }
 
-func renderDiskRows(width int, disks, widthValues []domain.DiskSnapshot, selectedIndex int) string {
+func renderDiskRows(width int, disks, widthValues []domain.DiskSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := diskColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -201,7 +202,7 @@ func renderDiskRows(width int, disks, widthValues []domain.DiskSnapshot, selecte
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, diskRowValues(disk), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(disk.DeviceName, changes)))
 	}
 
 	return output.String()

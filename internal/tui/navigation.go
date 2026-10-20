@@ -2,6 +2,8 @@ package tui
 
 import (
 	"strings"
+
+	"github.com/m11s-io/t9s/internal/domain"
 )
 
 type viewKind uint8
@@ -28,6 +30,9 @@ const (
 	viewMemory
 	viewTime
 	viewCPU
+	viewDiskUsage
+	viewContainers
+	viewContainerDetail
 	viewOverview
 	viewProblems
 	viewResourceKinds
@@ -37,17 +42,26 @@ const (
 )
 
 type viewFrame struct {
-	Kind              viewKind
-	Label             string
-	ServiceKey        string
-	NodeID            string
-	NodeTarget        string
-	ProcessPID        int32
-	DeviceName        string
-	LinkName          string
-	ResourceKind      string
-	ResourceID        string
-	ResourceNamespace string
+	Kind                      viewKind
+	Label                     string
+	ServiceKey                string
+	ServiceName               string
+	NodeID                    string
+	NodeTarget                string
+	ProcessPID                int32
+	DeviceName                string
+	LinkName                  string
+	ResourceKind              string
+	ResourceID                string
+	ResourceNamespace         string
+	MountPath                 string
+	ContainerNamespace        domain.ContainerNamespace
+	ContainerRuntimeNamespace string
+	ContainerID               string
+	ImageReference            string
+	ImageDigest               string
+	ImageSizeBytes            uint64
+	ImageMode                 bool
 }
 
 type viewStack []viewFrame

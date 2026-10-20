@@ -11,6 +11,12 @@ import (
 )
 
 func (s *Session) NodeServices(ctx context.Context) (domain.NodeSet, domain.ServiceSet, error) {
+	return s.NodeServicesProgress(ctx, nil)
+}
+
+// NodeServicesProgress preserves the normal read deadline and shared observation
+// while allowing capable adapters to publish usable node rows sooner.
+func (s *Session) NodeServicesProgress(ctx context.Context, publish func(domain.NodeSet)) (domain.NodeSet, domain.ServiceSet, error) {
 	operationCtx, cancel, err := s.operationContext(ctx, unaryReadTimeout)
 	if err != nil {
 		return domain.NodeSet{}, domain.ServiceSet{}, err
@@ -21,6 +27,9 @@ func (s *Session) NodeServices(ctx context.Context) (domain.NodeSet, domain.Serv
 	}
 	if combined, ok := s.sdkSession.(ports.NodeServiceSession); ok {
 		if reader := combined.NodeServices(); reader != nil {
+			if progressive, ok := reader.(ports.ProgressiveNodeServiceReader); ok && publish != nil {
+				return progressive.ListProgress(operationCtx, publish)
+			}
 			return reader.List(operationCtx)
 		}
 	}

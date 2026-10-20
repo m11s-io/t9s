@@ -3,7 +3,8 @@ title: Commands
 description: Commands available from the t9s command palette.
 ---
 
-Press `:` to open the command palette.
+Press `:` to open the command input below the header, above the main content.
+Press `Enter` to run the command or `Esc` to close the input.
 
 | Command | Alias | Result |
 | --- | --- | --- |
@@ -35,9 +36,10 @@ These open from a selected row in `:nodes` rather than through the command palet
 | `f` | Open the node's memory usage. See [Node diagnostics](/guides/diagnostics/). |
 | `u` | Sample aggregate/per-core CPU utilization and running/blocked process counts. `r` takes a new sample; `/` filters; there is no background polling. See [CPU utilization](/guides/diagnostics/#cpu-utilization-and-process-counts). |
 | `t` | Open time synchronization status and UTC samples. In the view, `r` refreshes normal status, `/` filters, and `c` opens an explicit server check (`Enter` submits, `Esc` cancels). Checks work without writes mode and keep a separate result panel. See [Time](/guides/diagnostics/#time). |
+| `c` | Inspect containers in the `system` namespace. Inside the view, `n` cycles namespaces and `i` switches between containers and images. See [Containers and images](/guides/diagnostics/#containers-and-images). |
 | `space` | Mark/unmark the selected node for a bulk action. Requires `--enable-writes`. |
-| `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
-| `X` | Shut down the marked node(s) (or the selected node if none are marked), behind a confirm prompt. Requires `--enable-writes`. |
+| `R` | Reboot the marked node(s) (or the selected node if none are marked), behind a confirm prompt. For one target, press `f` to choose force mode, type the exact node name, then confirm again; force may interrupt workloads and cannot bypass a quorum block. Requires `--enable-writes`. |
+| `X` | Shut down the marked node(s) (or the selected node if none are marked), behind a confirm prompt. For one target, press `f` to choose force mode, type the exact node name, then confirm again; force may interrupt workloads and cannot bypass a quorum block. Requires `--enable-writes`. |
 | `B` | Roll back the marked node(s) (or the selected node if none are marked) to the previous Talos OS install, behind a confirm prompt. Requires `--enable-writes`. |
 | `U` | Upgrade the selected node to a specified Talos OS image, behind a prompt prefilled from the running node's schematic/current version and a confirm step. Shows lifecycle progress when supported; requires `--enable-writes`. |
 | `W` | Reset/wipe the marked node(s) (or the selected node if none are marked), behind a preview overlay, a typed confirmation token, and a confirm step. Requires `--enable-writes`. See [Nodes](/guides/nodes/). |

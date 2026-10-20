@@ -15,6 +15,7 @@ type memoryMetric struct {
 }
 
 type memoryModel struct {
+	changes   tableChanges
 	status    directLoadStatus
 	values    domain.MemorySnapshot
 	node      string
@@ -101,7 +102,7 @@ func (m memoryModel) visibleMetrics() []memoryMetric {
 }
 
 func (m memoryModel) view(width int) string {
-	contents := renderMemoryTable(width, m.visibleMetrics(), m.control.Cursor())
+	contents := renderMemoryTable(width, m.visibleMetrics(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -134,7 +135,7 @@ func (m memoryModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(metrics), m.control.Cursor(), rowCapacity)
-	content := renderMemoryTable(size.Width, metrics[start:end], m.control.Cursor()-start)
+	content := renderMemoryTable(size.Width, metrics[start:end], m.control.Cursor()-start, m.changes)
 	if warningRows > 0 {
 		content = "MEMORY PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -167,7 +168,7 @@ var memoryColumns = []tableColumn[memoryMetric]{
 	{header: "VALUE", grow: true, value: func(m memoryMetric) string { return fallback(m.Value) }},
 }
 
-func renderMemoryTable(width int, metrics []memoryMetric, selectedIndex int) string {
+func renderMemoryTable(width int, metrics []memoryMetric, selectedIndex int, changes ...tableChanges) string {
 	widths := memoryColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -180,7 +181,7 @@ func renderMemoryTable(width int, metrics []memoryMetric, selectedIndex int) str
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, memoryRowValues(metric), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(metric.Label, changes)))
 	}
 
 	return output.String()

@@ -10,6 +10,7 @@ import (
 )
 
 type processesModel struct {
+	changes   tableChanges
 	status    directLoadStatus
 	values    domain.ProcessSet
 	node      string
@@ -135,7 +136,7 @@ func (m processesModel) visibleProcesses() []domain.ProcessSnapshot {
 }
 
 func (m processesModel) view(width int) string {
-	contents := renderProcessTable(width, m.visibleProcesses(), m.control.Cursor())
+	contents := renderProcessTable(width, m.visibleProcesses(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -165,7 +166,7 @@ func (m processesModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1-warningRows)
 	start, end := resourceWindow(len(processes), m.control.Cursor(), rowCapacity)
-	content := renderProcessTable(size.Width, processes[start:end], m.control.Cursor()-start)
+	content := renderProcessTable(size.Width, processes[start:end], m.control.Cursor()-start, m.changes)
 	if warningRows > 0 {
 		content = "PROCESSES PARTIAL: " + fallback(m.err) + "\n" + content
 	}
@@ -182,7 +183,7 @@ var processColumns = []tableColumn[domain.ProcessSnapshot]{
 	{header: "COMMAND", minWidth: 20, grow: true, value: func(p domain.ProcessSnapshot) string { return fallback(p.Command) }},
 }
 
-func renderProcessTable(width int, processes []domain.ProcessSnapshot, selectedIndex int) string {
+func renderProcessTable(width int, processes []domain.ProcessSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := processColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -195,7 +196,7 @@ func renderProcessTable(width int, processes []domain.ProcessSnapshot, selectedI
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, processRowValues(process), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(processChangeKey(process), changes)))
 	}
 
 	return output.String()

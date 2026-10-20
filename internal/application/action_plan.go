@@ -59,6 +59,7 @@ type Assessment struct {
 type NodeActionRequest struct {
 	Kind       ActionKind
 	Targets    []string
+	Force      bool
 	Image      string
 	Reset      *ports.ResetOptions
 	DeviceWipe *ports.DeviceWipeOptions

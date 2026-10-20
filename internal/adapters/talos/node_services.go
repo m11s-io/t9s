@@ -65,3 +65,15 @@ func (o *serviceObservation) Services(ctx context.Context, target string) ([]ser
 	entry.once.Do(func() { entry.records, entry.err = o.talosAPI.Services(ctx, target) })
 	return entry.records, entry.err
 }
+
+func (r *nodeServiceReader) ListProgress(ctx context.Context, publish func(domain.NodeSet)) (domain.NodeSet, domain.ServiceSet, error) {
+	observation := &serviceObservation{talosAPI: r.api, services: make(map[string]*observedServices)}
+	observedAt := r.now()
+	now := func() time.Time { return observedAt }
+	nodes, err := newNodeReader(observation, now).listProgress(ctx, publish)
+	if err != nil {
+		return nodes, domain.ServiceSet{}, err
+	}
+	services, err := newDetailedServiceReader(observation, now).List(ctx)
+	return nodes, services, err
+}

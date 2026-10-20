@@ -43,6 +43,25 @@ func TestDirectCPUKeySamplesAndRefreshesThroughSession(t *testing.T) {
 	assert.Contains(t, model.View().Content, "20.0% busy")
 }
 
+func TestDirectCPUDoesNotSampleOnHeartbeat(t *testing.T) {
+	client := application.NewClient(application.Dependencies{SessionFactory: &testkit.FakeSessionFactory{OpenFunc: func(context.Context, string) (ports.Session, error) {
+		return &testkit.FakeSession{CPUReader: &testkit.FakeCPUReader{}}, nil
+	}}})
+	session, err := client.Open(context.Background(), "prod", application.Options{})
+	require.NoError(t, err)
+	defer session.Close()
+
+	model := newDirectNodesModel(t, LaunchOptions{}, []domain.NodeSnapshot{{ID: "node-id", Name: "worker-1"}})
+	model.session, model.sessionCtx = session, context.Background()
+	model.views = model.views.push(viewFrame{Kind: viewCPU, NodeID: "node-id", NodeTarget: "worker-1"})
+	model.cpu = model.cpu.setResult("worker-1", domain.CPUSnapshot{Aggregate: domain.CPUUtilization{Known: true, BusyPercent: 42}}, nil)
+
+	model, command := updateDirect(model, nodeAutoRefreshTickMsg{})
+
+	require.NotNil(t, command, "heartbeat continues scheduling its next tick")
+	assert.Equal(t, directReady, model.cpu.status, "CPU stays on demand until the operator presses r")
+}
+
 func TestDirectCPUFailureAndCancellationUseSafePresentation(t *testing.T) {
 	model := newModel(context.Background(), nil, LaunchOptions{})
 	model.splash = false

@@ -2,12 +2,25 @@ package application
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"path"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
 )
 
 const unaryReadTimeout = 15 * time.Second
+
+const (
+	diskUsageTimeout = 30 * time.Second
+	maxDiskUsageRows = 5000
+	imageListTimeout = 30 * time.Second
+	maxImageRows     = 5000
+)
 
 func (s *Session) Processes(ctx context.Context, node string) (domain.ProcessSet, error) {
 	ctx, cancel, err := s.operationContext(ctx, unaryReadTimeout)
@@ -67,6 +80,155 @@ func (s *Session) Mounts(ctx context.Context, node string) (domain.MountSet, err
 		return domain.MountSet{}, ErrCapabilityUnavailable
 	}
 	return s.sdkSession.Mounts().List(ctx, node)
+}
+
+func (s *Session) OpenDiskUsage(ctx context.Context, request domain.DiskUsageRequest) (ports.DiskUsageStream, error) {
+	if request.Node == "" || !path.IsAbs(request.Path) || strings.ContainsFunc(request.Path, unicode.IsControl) {
+		return nil, fmt.Errorf("disk usage requires a node and an absolute path")
+	}
+	request.Path = path.Clean(request.Path)
+	operationCtx, cancel, err := s.operationContext(ctx, diskUsageTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if s.sdkSession == nil || s.sdkSession.DiskUsage() == nil {
+		cancel()
+		return nil, ErrCapabilityUnavailable
+	}
+	reader := s.sdkSession.DiskUsage()
+	stream, err := openLifecycleStream(s, operationCtx,
+		func(ctx context.Context) (ports.DiskUsageStream, error) { return reader.Open(ctx, request) },
+		func(stream ports.DiskUsageStream) func(context.Context) (domain.DiskUsageBatch, error) {
+			return stream.Next
+		},
+		func(stream ports.DiskUsageStream) error { return stream.Close() },
+		func(batch domain.DiskUsageBatch, err error) bool { return err != nil || batch.EOF || batch.Err != "" },
+	)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return &boundedDiskUsageStream{stream: stream, ctx: operationCtx, cancel: cancel}, nil
+}
+
+func (s *Session) Containers(ctx context.Context, request domain.ContainerRequest) (domain.ContainerSet, error) {
+	ctx, cancel, err := s.operationContext(ctx, unaryReadTimeout)
+	if err != nil {
+		return domain.ContainerSet{}, err
+	}
+	defer cancel()
+	if s.sdkSession == nil || s.sdkSession.Containers() == nil {
+		return domain.ContainerSet{}, ErrCapabilityUnavailable
+	}
+	return s.sdkSession.Containers().List(ctx, request)
+}
+
+func (s *Session) OpenImages(ctx context.Context, request domain.ImageRequest) (ports.ImageStream, error) {
+	if request.Node == "" {
+		return nil, fmt.Errorf("images require a node")
+	}
+	operationCtx, cancel, err := s.operationContext(ctx, imageListTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if s.sdkSession == nil || s.sdkSession.Containers() == nil {
+		cancel()
+		return nil, ErrCapabilityUnavailable
+	}
+	reader := s.sdkSession.Containers()
+	stream, err := openLifecycleStream(s, operationCtx,
+		func(ctx context.Context) (ports.ImageStream, error) { return reader.OpenImages(ctx, request) },
+		func(stream ports.ImageStream) func(context.Context) (domain.ImageBatch, error) { return stream.Next },
+		func(stream ports.ImageStream) error { return stream.Close() },
+		func(batch domain.ImageBatch, err error) bool { return err != nil || batch.EOF },
+	)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return &boundedImageStream{stream: stream, ctx: operationCtx, cancel: cancel}, nil
+}
+
+type boundedDiskUsageStream struct {
+	stream ports.DiskUsageStream
+	ctx    context.Context
+	cancel context.CancelFunc
+	rows   int
+}
+
+func (s *boundedDiskUsageStream) Next(ctx context.Context) (domain.DiskUsageBatch, error) {
+	batch, err := s.stream.Next(ctx)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && s.ctx.Err() == context.DeadlineExceeded && (ctx == nil || ctx.Err() == nil) {
+		batch.EOF = true
+		batch.Truncated = true
+		batch.Err = "directory scan reached the 30 second limit"
+		return batch, nil
+	}
+	if err != nil {
+		return batch, err
+	}
+	remaining := maxDiskUsageRows - s.rows
+	if len(batch.Rows) > remaining {
+		batch.Rows = batch.Rows[:remaining]
+		batch.Truncated = true
+	}
+	s.rows += len(batch.Rows)
+	if s.rows >= maxDiskUsageRows && !batch.EOF {
+		batch.EOF = true
+		batch.Truncated = true
+		if batch.Err == "" {
+			batch.Err = "showing the first 5,000 entries"
+		}
+		_ = s.Close()
+	}
+	return batch, nil
+}
+
+func (s *boundedDiskUsageStream) Close() error {
+	err := s.stream.Close()
+	s.cancel()
+	return err
+}
+
+type boundedImageStream struct {
+	stream ports.ImageStream
+	ctx    context.Context
+	cancel context.CancelFunc
+	rows   int
+}
+
+func (s *boundedImageStream) Next(ctx context.Context) (domain.ImageBatch, error) {
+	batch, err := s.stream.Next(ctx)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && s.ctx.Err() == context.DeadlineExceeded && (ctx == nil || ctx.Err() == nil) {
+		batch.EOF = true
+		batch.Truncated = true
+		batch.Err = "image list reached the 30 second limit"
+		return batch, nil
+	}
+	if err != nil {
+		return batch, err
+	}
+	remaining := maxImageRows - s.rows
+	if len(batch.Images) > remaining {
+		batch.Images = batch.Images[:remaining]
+		batch.Truncated = true
+	}
+	s.rows += len(batch.Images)
+	if s.rows >= maxImageRows && !batch.EOF {
+		batch.EOF = true
+		batch.Truncated = true
+		if batch.Err == "" {
+			batch.Err = "showing the first 5,000 images"
+		}
+		_ = s.Close()
+	}
+	return batch, nil
+}
+
+func (s *boundedImageStream) Close() error {
+	err := s.stream.Close()
+	s.cancel()
+	return err
 }
 
 func (s *Session) Memory(ctx context.Context, node string) (domain.MemorySnapshot, error) {

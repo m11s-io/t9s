@@ -2,6 +2,7 @@ package talos
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 	"unicode/utf8"
@@ -15,6 +16,7 @@ const (
 	maxDetailedServices  = 1000
 	maxServiceProblems   = 100
 	maxServiceEventRunes = 512
+	maxServiceHistory    = 50
 )
 
 type detailedServiceAPI interface {
@@ -22,15 +24,63 @@ type detailedServiceAPI interface {
 	Services(context.Context, string) ([]serviceRecord, error)
 }
 
+type serviceDetailAPI interface {
+	ServiceInfo(context.Context, string, string) (serviceDetailRecord, error)
+}
+
 type detailedServiceReader struct {
-	api detailedServiceAPI
-	now func() time.Time
+	api       detailedServiceAPI
+	detailAPI serviceDetailAPI
+	now       func() time.Time
 }
 
 var _ ports.ServiceReader = (*detailedServiceReader)(nil)
 
 func newDetailedServiceReader(api detailedServiceAPI, now func() time.Time) *detailedServiceReader {
-	return &detailedServiceReader{api: api, now: now}
+	detailAPI, _ := api.(serviceDetailAPI)
+	return &detailedServiceReader{api: api, detailAPI: detailAPI, now: now}
+}
+
+func (r *detailedServiceReader) Detail(ctx context.Context, node, name string) (domain.ServiceDetail, error) {
+	detail := domain.ServiceDetail{Node: node, Service: name, Events: make([]domain.ServiceEventSnapshot, 0)}
+	if node == "" || name == "" {
+		return detail, fmt.Errorf("service detail requires a node and service")
+	}
+	if r.detailAPI == nil {
+		return detail, fmt.Errorf("service detail is unavailable")
+	}
+	record, err := r.detailAPI.ServiceInfo(ctx, node, name)
+	if record.ID == "" {
+		if err != nil {
+			return detail, err
+		}
+		return detail, fmt.Errorf("service %q is unavailable on node %q", name, node)
+	}
+	detail.State, detail.Healthy = record.State, record.Healthy
+	if record.MetadataProblem != "" {
+		detail.Problems = append(detail.Problems, record.MetadataProblem)
+	}
+	detail.Events = append(detail.Events, record.Events...)
+	sort.SliceStable(detail.Events, func(i, j int) bool {
+		if detail.Events[i].TimeKnown != detail.Events[j].TimeKnown {
+			return detail.Events[i].TimeKnown
+		}
+		if !detail.Events[i].TimeKnown {
+			return false
+		}
+		return detail.Events[i].Time.Before(detail.Events[j].Time)
+	})
+	if len(detail.Events) > maxServiceHistory {
+		detail.Events = append([]domain.ServiceEventSnapshot(nil), detail.Events[len(detail.Events)-maxServiceHistory:]...)
+	}
+	for index := range detail.Events {
+		detail.Events[index].Message = boundRunes(detail.Events[index].Message, maxServiceEventRunes)
+	}
+	if err != nil {
+		detail.Problems = append(detail.Problems, "service detail is partially unavailable")
+		return detail, err
+	}
+	return detail, nil
 }
 
 func (r *detailedServiceReader) List(ctx context.Context) (domain.ServiceSet, error) {

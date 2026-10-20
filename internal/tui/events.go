@@ -11,6 +11,7 @@ import (
 )
 
 type eventsModel struct {
+	changes     tableChanges
 	filter      string
 	filtering   bool
 	selectedKey string
@@ -171,7 +172,7 @@ func (m eventsModel) visibleEventIndexes(events []domain.EventSnapshot) []int {
 }
 
 func (m eventsModel) view(width int, all []domain.EventSnapshot) string {
-	contents := renderEventTable(width, m.visibleEvents(all), m.control.Cursor())
+	contents := renderEventTable(width, m.visibleEvents(all), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -241,7 +242,7 @@ func (m eventsModel) tableViewSized(size contentSize, eventSet domain.EventSet, 
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(events), m.control.Cursor(), rowCapacity)
-	return renderEventRows(size.Width, events[start:end], events, m.control.Cursor()-start)
+	return renderEventRows(size.Width, events[start:end], events, m.control.Cursor()-start, m.changes)
 }
 
 const defaultEventsWidth = 120
@@ -253,11 +254,23 @@ var eventColumns = []tableColumn[domain.EventSnapshot]{
 	{header: "OBSERVED", minWidth: 20, value: func(event domain.EventSnapshot) string { return formatServiceChange(event.ObservedAt) }},
 }
 
-func renderEventTable(width int, events []domain.EventSnapshot, selectedIndex int) string {
-	return renderEventRows(width, events, events, selectedIndex)
+func renderEventTable(width int, events []domain.EventSnapshot, selectedIndex int, changes ...tableChanges) string {
+	return renderEventRows(width, events, events, selectedIndex, changes...)
 }
 
-func renderEventRows(width int, events, widthValues []domain.EventSnapshot, selectedIndex int) string {
+func renderEventRows(width int, events, widthValues []domain.EventSnapshot, selectedIndex int, changes ...tableChanges) string {
+	keys := eventKeys(widthValues)
+	// A viewport is a slice of the filtered rows. Preserve occurrence numbers
+	// across scrolling rather than restarting duplicate keys at zero.
+	offset := 0
+	if len(events) > 0 {
+		for i := range widthValues {
+			if &widthValues[i] == &events[0] {
+				offset = i
+				break
+			}
+		}
+	}
 	widths := eventColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -270,7 +283,7 @@ func renderEventRows(width int, events, widthValues []domain.EventSnapshot, sele
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, eventRowValues(event), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(keys[offset+index], changes)))
 	}
 
 	return output.String()

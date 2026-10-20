@@ -9,7 +9,17 @@ The node explorer is the initial t9s view. Return to it with `:nodes` or `:no`.
 - Press `Enter` or `d` to open read-only node details.
 - Press `r` to refresh the resource snapshot.
 - Press `Esc` or `q` to return from details.
-- Press `e` for the node's kernel log (dmesg), `s` for its network sockets (netstat), `m` for its filesystem mounts, or `f` for its memory usage; see [Node diagnostics](/guides/diagnostics/).
+- Press `e` for the node's kernel log (dmesg), `s` for its network sockets (netstat), `m` for its filesystem mounts, `f` for memory, or `c` for containers and images; see [Node diagnostics](/guides/diagnostics/).
+
+At startup, discovered node names and roles appear first. Details fill in as each
+node inspection finishes; a slow node does not hold back completed rows.
+
+The node inventory and selected diagnostics that poll automatically refresh
+every 2 seconds. Container/image lists and directory scans refresh on demand;
+press `r` for an immediate refresh. Automatic reads pause while editing filters
+or prompts.
+Changed and newly added table rows flash orange for two seconds; the first load
+sets the baseline, and the selected row keeps its selection color.
 
 ## Filter nodes
 
@@ -41,6 +51,15 @@ clear the warning. Switching Talos context or starting another upgrade replaces
 the notice.
 
 A parseable target tag more than one minor ahead receives an advisory warning that intermediate Talos minor releases are skipped. Talos remains the authority for compatibility checks. This action upgrades Talos only; Kubernetes control-plane upgrades are separate.
+
+## Force reboot or shutdown
+
+Start t9s with `--enable-writes` (or `T9S_ENABLE_WRITES`). In the ordinary
+confirmation for a single node, press `f`, type the exact node name, and press
+`Enter` to prepare force mode. Review the new risk assessment and confirm with
+`y` to dispatch, or `n`/`Esc` to cancel. Force can skip graceful shutdown or
+drain and interrupt workloads. It is unavailable for bulk actions and cannot
+bypass an etcd-quorum or other action block.
 
 ## Reset/wipe a Talos node
 

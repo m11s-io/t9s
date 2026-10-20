@@ -11,6 +11,7 @@ import (
 )
 
 type etcdModel struct {
+	changes     tableChanges
 	filter      string
 	filtering   bool
 	selectedKey string
@@ -127,7 +128,7 @@ func (m etcdModel) visibleMembers(members []domain.EtcdMemberSnapshot) []domain.
 }
 
 func (m etcdModel) view(width int, members []domain.EtcdMemberSnapshot) string {
-	contents := renderEtcdTable(width, m.visibleMembers(members), m.control.Cursor())
+	contents := renderEtcdTable(width, m.visibleMembers(members), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -164,7 +165,7 @@ func (m etcdModel) viewSized(size contentSize, state directEtcdState) string {
 		rowCapacity = max(0, rowCapacity-1)
 	}
 	start, end := resourceWindow(len(members), m.control.Cursor(), rowCapacity)
-	contents := renderEtcdRows(size.Width, members[start:end], members, m.control.Cursor()-start)
+	contents := renderEtcdRows(size.Width, members[start:end], members, m.control.Cursor()-start, m.changes)
 	if state.Status == directPartial {
 		partialMessage := state.Err
 		if partialMessage == "" {
@@ -251,11 +252,11 @@ func formatBytes(value int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(value)/float64(div), "KMGTPE"[exp])
 }
 
-func renderEtcdTable(width int, members []domain.EtcdMemberSnapshot, selectedIndex int) string {
-	return renderEtcdRows(width, members, members, selectedIndex)
+func renderEtcdTable(width int, members []domain.EtcdMemberSnapshot, selectedIndex int, changes ...tableChanges) string {
+	return renderEtcdRows(width, members, members, selectedIndex, changes...)
 }
 
-func renderEtcdRows(width int, members, widthValues []domain.EtcdMemberSnapshot, selectedIndex int) string {
+func renderEtcdRows(width int, members, widthValues []domain.EtcdMemberSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := etcdColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -268,7 +269,7 @@ func renderEtcdRows(width int, members, widthValues []domain.EtcdMemberSnapshot,
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, etcdRowValues(member), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(etcdMemberKey(member), changes)))
 	}
 
 	return output.String()

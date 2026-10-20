@@ -24,6 +24,108 @@ func nodeOperationAdapter(nodes *testkit.FakeNodeReader, etcd *testkit.FakeEtcdR
 	return &testkit.FakeSession{NodeReader: nodes, EtcdReader: etcd, NodeController: controller}
 }
 
+func TestForceActionRequiresTypedSingleTargetAndMapsMode(t *testing.T) {
+	for _, kind := range []ActionKind{ActionReboot, ActionShutdown} {
+		t.Run(string(kind), func(t *testing.T) {
+			var rebootMode ports.RebootMode
+			var shutdownForce bool
+			var calls atomic.Int32
+			controller := &testkit.FakeNodeController{
+				RebootFunc: func(_ context.Context, _ string, mode ports.RebootMode) error {
+					rebootMode = mode
+					calls.Add(1)
+					return nil
+				},
+				ShutdownFunc: func(_ context.Context, _ string, force bool) error { shutdownForce = force; calls.Add(1); return nil },
+			}
+			adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+				return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}, {Name: "worker-2", Role: domain.NodeRoleWorker}}}, nil
+			}}, nil, controller)
+			session := nodeOperationSession(adapter)
+			defer session.Close()
+
+			_, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: kind, Targets: []string{"worker-1", "worker-2"}, Force: true})
+			if err == nil {
+				t.Fatal("bulk force request succeeded; want single-target validation error")
+			}
+			plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: kind, Targets: []string{"worker-1"}, Force: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := plan.Assessment().RequiredToken; got != "worker-1" {
+				t.Fatalf("force confirmation token = %q, want worker-1", got)
+			}
+			if _, err := session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true}, nil); !errors.Is(err, ErrConfirmationRequired) {
+				t.Fatalf("execution without typed target = %v, want ErrConfirmationRequired", err)
+			}
+			if calls.Load() != 0 {
+				t.Fatal("force action ran before the target token was supplied")
+			}
+			_, err = session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "worker-1"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("controller calls = %d, want 1", calls.Load())
+			}
+			if kind == ActionReboot && rebootMode != ports.RebootForce {
+				t.Fatalf("reboot mode = %v, want force", rebootMode)
+			}
+			if kind == ActionShutdown && !shutdownForce {
+				t.Fatal("forced shutdown did not pass force=true")
+			}
+		})
+	}
+}
+
+func TestForceRequestIsWritesGatedAndRejectedForOtherActions(t *testing.T) {
+	var calls atomic.Int32
+	controller := &testkit.FakeNodeController{RebootFunc: func(context.Context, string, ports.RebootMode) error { calls.Add(1); return nil }}
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{Name: "worker-1", Role: domain.NodeRoleWorker}}}, nil
+	}}, nil, controller)
+	session := nodeOperationSession(adapter)
+	session.writesEnabled = false
+	if _, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReboot, Targets: []string{"worker-1"}, Force: true}); !errors.Is(err, ErrWritesDisabled) {
+		t.Fatalf("read-only forced prepare = %v, want ErrWritesDisabled", err)
+	}
+	session.writesEnabled = true
+	if _, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionRollback, Targets: []string{"worker-1"}, Force: true}); err == nil {
+		t.Fatal("force rollback request succeeded")
+	}
+	if calls.Load() != 0 {
+		t.Fatal("invalid force request called a controller")
+	}
+	_ = session.Close()
+}
+
+func TestForceRechecksQuorumBeforeDispatch(t *testing.T) {
+	var reads atomic.Int32
+	var calls atomic.Int32
+	controller := &testkit.FakeNodeController{RebootFunc: func(context.Context, string, ports.RebootMode) error { calls.Add(1); return nil }}
+	adapter := nodeOperationAdapter(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
+		return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "n1", Name: "cp-1", Role: domain.NodeRoleControl}}}, nil
+	}}, &testkit.FakeEtcdReader{ListFunc: func(context.Context, []string) (domain.EtcdSet, error) {
+		if reads.Add(1) == 1 {
+			return domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{MemberID: 1, Hostname: "cp-1", StatusKnown: true}, {MemberID: 2, Hostname: "cp-2", StatusKnown: true}, {MemberID: 3, Hostname: "cp-3", StatusKnown: true}}}, nil
+		}
+		return domain.EtcdSet{Members: []domain.EtcdMemberSnapshot{{MemberID: 1, Hostname: "cp-1", StatusKnown: true}}}, nil
+	}}, controller)
+	session := nodeOperationSession(adapter)
+	defer session.Close()
+	plan, err := session.PrepareNodeAction(context.Background(), NodeActionRequest{Kind: ActionReboot, Targets: []string{"cp-1"}, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.ExecuteNodeAction(context.Background(), plan, Confirmation{Approved: true, Token: "cp-1"}, nil)
+	if !errors.Is(err, ErrActionBlocked) {
+		t.Fatalf("force execution after quorum loss = %v, want ErrActionBlocked", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatal("force bypassed the refreshed quorum block")
+	}
+}
+
 func TestNodeActionsRecheckCurrentQuorum(t *testing.T) {
 	var etcdCalls atomic.Int32
 	adapter := nodeOperationAdapter(

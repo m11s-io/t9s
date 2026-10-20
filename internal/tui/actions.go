@@ -126,7 +126,23 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 	case viewMounts:
 		return append(global,
 			actionHint{Key: "/", Label: "Filter"},
+			actionHint{Key: "u", Label: "Directory usage"},
 			actionHint{Key: "r", Label: "Refresh"},
+		)
+	case viewDiskUsage:
+		return append(global,
+			actionHint{Key: "/", Label: "Filter"},
+			actionHint{Key: "r", Label: "Rescan"},
+			actionHint{Key: "q/Esc", Label: "Back"},
+		)
+	case viewContainers:
+		return append(global,
+			actionHint{Key: "/", Label: "Filter"},
+			actionHint{Key: "n", Label: "Namespace"},
+			actionHint{Key: "i", Label: "Containers/Images"},
+			actionHint{Key: "d", Label: "Detail"},
+			actionHint{Key: "r", Label: "Refresh"},
+			actionHint{Key: "q/Esc", Label: "Back"},
 		)
 	case viewCPU:
 		return append(global, actionHint{Key: "/", Label: "Filter"}, actionHint{Key: "r", Label: "Sample CPU"})
@@ -157,12 +173,12 @@ func actionHints(kind viewKind, writesEnabled bool) []actionHint {
 			actionHint{Key: "q/Esc", Label: "Back"},
 		)
 	case viewServiceDetail:
-		hints := append(global, actionHint{Key: "q/Esc", Label: "Back"})
+		hints := append(global, actionHint{Key: "r", Label: "Refresh"}, actionHint{Key: "q/Esc", Label: "Back"})
 		if writesEnabled {
 			hints = append(hints, actionHint{Key: "S", Label: "Start"}, actionHint{Key: "T", Label: "Stop"}, actionHint{Key: "R", Label: "Restart"})
 		}
 		return hints
-	case viewNodeDetail, viewProcessDetail, viewDiskDetail, viewLinkDetail:
+	case viewNodeDetail, viewProcessDetail, viewDiskDetail, viewLinkDetail, viewContainerDetail:
 		return append(global, actionHint{Key: "q/Esc", Label: "Back"})
 	case viewHelp:
 		return []actionHint{{Key: "q/Esc", Label: "Back"}}
@@ -177,4 +193,9 @@ func renderActionHints(hints []actionHint) string {
 		items = append(items, "<"+hint.Key+"> "+hint.Label)
 	}
 	return strings.Join(items, "  ")
+}
+
+func nodeHelpActionHints(writesEnabled bool) []actionHint {
+	hints := append([]actionHint(nil), actionHints(viewNodes, writesEnabled)...)
+	return append(hints, actionHint{Key: "c", Label: "Containers"})
 }

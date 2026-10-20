@@ -11,6 +11,11 @@ Open services with `:services` or `:svc`. The list is read-only and scoped to th
 - Press `/` to filter visible services or log lines.
 - Press `Esc` or `q` to move back through details and logs.
 
+Service detail reads the selected node and service again, then shows current
+state, optional health, and up to the latest 50 events in timestamp order.
+Invalid event timestamps appear as unknown. Press `r` to refresh the same
+captured service; leaving the detail view cancels a pending read.
+
 ## Log controls
 
 Logs begin in follow mode. Use:

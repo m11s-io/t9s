@@ -355,6 +355,8 @@ func (c *nodeController) Reboot(ctx context.Context, target string, mode ports.R
 	var opts []talosclient.RebootMode
 	if mode == ports.RebootPowercycle {
 		opts = append(opts, talosclient.WithPowerCycle)
+	} else if mode == ports.RebootForce {
+		opts = append(opts, talosclient.WithForce)
 	}
 	if err := c.client.Reboot(talosclient.WithNode(ctx, target), opts...); err != nil {
 		return fmt.Errorf("reboot %s: %w", target, err)

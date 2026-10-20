@@ -225,6 +225,16 @@ func TestNodeControllerRebootPowercycleSetsMode(t *testing.T) {
 	assert.Equal(t, machineapi.RebootRequest_POWERCYCLE, client.rebootReq.Mode)
 }
 
+func TestNodeControllerRebootForceModeIsDistinctFromPowercycle(t *testing.T) {
+	client := &fakeNodeControlClient{}
+	controller := newNodeController(client)
+
+	err := controller.Reboot(t.Context(), "cp-1", ports.RebootForce)
+
+	require.NoError(t, err)
+	assert.Equal(t, machineapi.RebootRequest_FORCE, client.rebootReq.Mode)
+}
+
 func TestNodeControllerRebootWrapsError(t *testing.T) {
 	client := &fakeNodeControlClient{rebootErr: errors.New("unreachable")}
 	controller := newNodeController(client)

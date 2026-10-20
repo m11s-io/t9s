@@ -27,6 +27,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 type resourceKindsModel struct {
+	changes     tableChanges
 	status      directLoadStatus
 	values      domain.ResourceKindSet
 	err         string
@@ -140,7 +141,7 @@ func (m resourceKindsModel) visibleKinds() []domain.ResourceKindSnapshot {
 }
 
 func (m resourceKindsModel) view(width int) string {
-	contents := renderResourceKindTable(width, m.visibleKinds(), m.control.Cursor())
+	contents := renderResourceKindTable(width, m.visibleKinds(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -163,7 +164,7 @@ func (m resourceKindsModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(kinds), m.control.Cursor(), rowCapacity)
-	content := renderResourceKindTable(size.Width, kinds[start:end], m.control.Cursor()-start)
+	content := renderResourceKindTable(size.Width, kinds[start:end], m.control.Cursor()-start, m.changes)
 	if m.status == directPartial || m.err != "" {
 		content += "\n" + m.err
 	}
@@ -180,7 +181,7 @@ var resourceKindColumns = []tableColumn[domain.ResourceKindSnapshot]{
 	}},
 }
 
-func renderResourceKindTable(width int, kinds []domain.ResourceKindSnapshot, selectedIndex int) string {
+func renderResourceKindTable(width int, kinds []domain.ResourceKindSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := resourceKindColumnWidths(width)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -193,7 +194,7 @@ func renderResourceKindTable(width int, kinds []domain.ResourceKindSnapshot, sel
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, resourceKindRowValues(kind), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(kind.Type, changes)))
 	}
 
 	return output.String()
@@ -215,6 +216,7 @@ func resourceKindRowValues(kind domain.ResourceKindSnapshot) []string {
 }
 
 type resourceInstancesModel struct {
+	changes      tableChanges
 	status       directLoadStatus
 	values       domain.ResourceInstanceSet
 	err          string
@@ -345,7 +347,7 @@ func resourceInstanceColumnWidths(width int, instances []domain.ResourceInstance
 }
 
 func (m resourceInstancesModel) view(width int) string {
-	contents := renderResourceInstanceTable(width, m.visibleInstances(), m.control.Cursor())
+	contents := renderResourceInstanceTable(width, m.visibleInstances(), m.control.Cursor(), m.changes)
 	if m.filter != "" || m.filtering {
 		contents += "\nFILTER " + m.filter
 	}
@@ -368,18 +370,18 @@ func (m resourceInstancesModel) viewSized(size contentSize) string {
 	}
 	rowCapacity := max(0, size.Height-1)
 	start, end := resourceWindow(len(instances), m.control.Cursor(), rowCapacity)
-	content := renderResourceInstanceRows(size.Width, instances[start:end], instances, m.control.Cursor()-start)
+	content := renderResourceInstanceRows(size.Width, instances[start:end], instances, m.control.Cursor()-start, m.changes)
 	if m.status == directPartial || m.err != "" {
 		content += "\n" + m.err
 	}
 	return content
 }
 
-func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceSnapshot, selectedIndex int) string {
-	return renderResourceInstanceRows(width, instances, instances, selectedIndex)
+func renderResourceInstanceTable(width int, instances []domain.ResourceInstanceSnapshot, selectedIndex int, changes ...tableChanges) string {
+	return renderResourceInstanceRows(width, instances, instances, selectedIndex, changes...)
 }
 
-func renderResourceInstanceRows(width int, instances, widthValues []domain.ResourceInstanceSnapshot, selectedIndex int) string {
+func renderResourceInstanceRows(width int, instances, widthValues []domain.ResourceInstanceSnapshot, selectedIndex int, changes ...tableChanges) string {
 	widths := resourceInstanceColumnWidths(width, widthValues)
 	var output strings.Builder
 	header := strings.Builder{}
@@ -392,7 +394,7 @@ func renderResourceInstanceRows(width int, instances, widthValues []domain.Resou
 		row := strings.Builder{}
 		row.WriteString(" ")
 		writeTableCells(&row, resourceInstanceRowValues(instance), widths)
-		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, defaultK9sSkin()))
+		output.WriteString(renderSelectedRow(row.String(), width, index == selectedIndex, changedRowSkin(resourceInstanceIdentity(instance), changes)))
 	}
 
 	return output.String()

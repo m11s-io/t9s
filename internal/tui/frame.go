@@ -145,6 +145,20 @@ func directResourceTitle(model model, kind viewKind) string {
 		return fmt.Sprintf("time(%s)", model.time.node)
 	case viewMemory:
 		return fmt.Sprintf("memory(%s)", model.memory.node)
+	case viewDiskUsage:
+		return fmt.Sprintf("diskusage(%s)[%d]", model.diskUsage.path, len(model.diskUsage.rows))
+	case viewContainers:
+		mode := "containers"
+		count := len(model.containers.values.Containers)
+		if selected.ImageMode {
+			mode, count = "images", len(model.containers.images)
+		}
+		return fmt.Sprintf("%s(%s/%s)[%d]", mode, selected.NodeTarget, selected.ContainerNamespace, count)
+	case viewContainerDetail:
+		if selected.ImageMode {
+			return titleWithScope("image", firstNonEmpty(selected.ImageReference, selected.ImageDigest))
+		}
+		return titleWithScope("container", selected.ContainerID)
 	case viewOverview:
 		return "overview"
 	case viewProblems:

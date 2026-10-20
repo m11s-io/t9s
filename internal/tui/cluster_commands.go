@@ -20,7 +20,11 @@ func (m *model) runClusterCommand(value string) tea.Cmd {
 	m.mutation.receiptVisible = false
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), ":"))
 	var command tea.Cmd
-	switch resolveCommand(value) {
+	resolved := resolveCommand(value)
+	if resolved != commandUnknown && resolved != commandContexts {
+		m.contexts.active = false
+	}
+	switch resolved {
 	case commandNodes:
 		m.views = m.views.replaceRoot(viewFrame{Kind: viewNodes, Label: "nodes"})
 	case commandServices:
@@ -67,6 +71,16 @@ func directContextKnown(contexts []domain.ClusterContext, name string) bool {
 
 func (m model) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
+	case directNodeProgress:
+		if !m.requests.current(message.request) || message.request.generation != m.generation() {
+			return m, nil
+		}
+		if len(message.nodes.Nodes) > 0 {
+			m.splash = false
+			m.cluster.nodes = directNodeState{Status: directReady, Value: application.EnrichNodes(message.nodes, m.cluster.kubernetes.Nodes)}
+			m.nodes = m.nodes.normalizeSelection(m.cluster.nodes.Value.Nodes, m.nodes.control.Cursor())
+		}
+		return m, waitForNodeProgress(message.ctx, message.updates)
 	case directNodeServicesLoaded:
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
 			return m, nil
@@ -172,4 +186,14 @@ func (m model) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m *model) refreshDirectSummary() tea.Cmd {
+	etcdRequest, _ := m.requests.beginWithContext("cluster-etcd", m.generation(), m.sessionCtx)
+	var events tea.Cmd
+	if !m.eventFollow.following {
+		request, _ := m.requests.beginWithContext("cluster-events", m.generation(), m.sessionCtx)
+		events = directEventsCommand(m.session, request)
+	}
+	return tea.Batch(m.refreshDirectNodes(), directEtcdCommand(m.session, etcdRequest), events)
 }

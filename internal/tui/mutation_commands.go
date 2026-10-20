@@ -31,6 +31,8 @@ func (m *model) prepareDirectNodeMutation(request application.NodeActionRequest)
 	m.mutation.busy = true
 	m.mutation.notice = "Preparing mutation…"
 	m.mutation.results = nil
+	m.mutation.prompt = nil
+	m.forcePrompt = nil
 	m.view.notice = ""
 	return directPrepareNodeCommand(m.session, m.sessionCtx, operation, m.generation(), request)
 }
@@ -215,6 +217,7 @@ type directMutationPrompt struct {
 	session            *application.Session
 	serviceKind        application.ServiceActionKind
 	nodeKind           application.ActionKind
+	force              bool
 	label              string
 	reset              *ports.ResetOptions
 	deviceWipe         *ports.DeviceWipeOptions
@@ -570,6 +573,17 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 	if a.Blocked != "" && !destructive {
 		return "!! " + truncateWarningTail(a.Blocked, pendingActionWarningBudget) + " — action refused (n to cancel)"
 	}
+	if prompt.force {
+		verb := "Force reboot"
+		if prompt.nodeKind == application.ActionShutdown {
+			verb = "Force shutdown"
+		}
+		warning := "Force can skip graceful shutdown or drain and interrupt workloads"
+		if a.Warning != "" {
+			warning += "; " + a.Warning
+		}
+		return "!! " + truncateWarningTail(warning, pendingActionWarningBudget) + " — " + verb + " " + strings.Join(a.Targets, ", ") + "? (y/n)"
+	}
 	verb, target := "Action", ""
 	if prompt.service != nil {
 		switch prompt.serviceKind {
@@ -624,15 +638,19 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 		}
 		return verb + " " + target + " · complete typed intent in action panel"
 	}
+	confirm := "(y/n)"
+	if (prompt.nodeKind == application.ActionReboot || prompt.nodeKind == application.ActionShutdown) && len(a.Targets) == 1 {
+		confirm = "(y/n; f force)"
+	}
 	if a.Warning != "" {
 		if prompt.nodeKind == application.ActionUpgrade {
 			lineTail := " — " + verb + " " + target + "? (y/n)"
 			warningBudget := 80 - len([]rune("!! "+lineTail))
 			return "!! " + truncateWarningTail(a.Warning, warningBudget) + lineTail
 		}
-		return "!! " + truncateWarningTail(a.Warning, pendingActionWarningBudget) + " — " + verb + " " + target + "? (y/n)"
+		return "!! " + truncateWarningTail(a.Warning, pendingActionWarningBudget) + " — " + verb + " " + target + "? " + confirm
 	}
-	return verb + " " + target + "? (y/n)"
+	return verb + " " + target + "? " + confirm
 }
 
 func etcdActionLabel(kind application.EtcdActionKind) string {
@@ -957,8 +975,11 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 		m.palette = m.palette.close()
 		prompt := &directMutationPrompt{
 			operation: message.operation, generation: message.generation, node: message.plan, nodeKind: message.request.Kind,
-			assessment: message.plan.Assessment(), session: m.session,
+			assessment: message.plan.Assessment(), session: m.session, force: message.request.Force,
 			confirm: application.Confirmation{Approved: message.request.Kind != application.ActionReset && message.request.Kind != application.ActionWipeDevice},
+		}
+		if message.request.Force && len(message.request.Targets) == 1 {
+			prompt.confirm = application.Confirmation{Approved: true, Token: message.request.Targets[0]}
 		}
 		if message.request.Kind == application.ActionUpgrade {
 			prompt.label = message.request.Image
@@ -1192,6 +1213,31 @@ func (m *model) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, boo
 		*prompt, command = prompt.update(message)
 		return command, true
 	}
+	if m.forcePrompt != nil {
+		force := m.forcePrompt
+		switch message.String() {
+		case "esc":
+			m.forcePrompt = nil
+			return nil, true
+		case "enter":
+			if force.input.Value() != force.target {
+				force.err = "target does not match the selected node"
+				return nil, true
+			}
+			ordinary := m.mutation.prompt
+			if ordinary == nil || ordinary.operation != force.operation || ordinary.generation != force.generation || force.generation != m.generation() || ordinary.session != m.session || ordinary.assessment.Blocked != "" {
+				m.forcePrompt = nil
+				return nil, true
+			}
+			kind, target := force.kind, force.target
+			m.forcePrompt = nil
+			m.mutation.prompt = nil
+			return m.prepareDirectNodeMutation(application.NodeActionRequest{Kind: kind, Targets: []string{target}, Force: true}), true
+		}
+		var command tea.Cmd
+		force.input, command = force.input.Update(message)
+		return command, true
+	}
 	if m.mutation.prompt != nil {
 		prompt := m.mutation.prompt
 		if prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice {
@@ -1199,6 +1245,24 @@ func (m *model) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, boo
 			if handled {
 				return command, true
 			}
+		}
+		if message.String() == "f" && (prompt.nodeKind == application.ActionReboot || prompt.nodeKind == application.ActionShutdown) && !prompt.force {
+			if prompt.assessment.Blocked != "" {
+				m.view.notice = "Force cannot bypass a blocked action"
+				return nil, true
+			}
+			if len(prompt.assessment.Targets) != 1 {
+				m.view.notice = "Force mode requires one target; bulk force is refused"
+				return nil, true
+			}
+			if !m.options.WritesEnabled || m.session == nil || prompt.session != m.session {
+				m.view.notice = "Force requires an active writable session"
+				return nil, true
+			}
+			force := newForcePromptModel(prompt.nodeKind, prompt.assessment.Targets[0], prompt.operation, prompt.generation)
+			m.forcePrompt = &force
+			m.view.notice = ""
+			return force.input.Focus(), true
 		}
 		if message.String() == "y" || message.String() == "Y" {
 			if prompt.assessment.Blocked != "" {

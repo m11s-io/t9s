@@ -15,6 +15,7 @@ type RebootMode int
 const (
 	RebootDefault RebootMode = iota
 	RebootPowercycle
+	RebootForce
 )
 
 // WipeMode selects which class of storage a reset erases.

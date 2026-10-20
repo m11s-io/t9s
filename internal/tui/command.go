@@ -7,6 +7,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type command int
@@ -32,7 +34,7 @@ type commandModel struct {
 
 func newCommandModel() commandModel {
 	input := textinput.New()
-	input.Prompt = "COMMAND :"
+	input.Prompt = ">"
 	input.Placeholder = "nodes, services, contexts, or healthcheck"
 	input.CharLimit = 64
 	return commandModel{input: input}
@@ -126,4 +128,22 @@ func (m commandModel) view() string {
 
 func unknownCommandNotice(value string) string {
 	return fmt.Sprintf("Unknown command %q", value)
+}
+
+func (m commandModel) viewBar(width int, skin k9sSkin) string {
+	if !m.active || width <= 0 {
+		return ""
+	}
+	innerWidth := max(0, width-2)
+	body := fitK9sCell(m.view(), innerWidth)
+	return skin.frame.BorderForeground(lipgloss.Color("#00FFFF")).Render(body)
+}
+
+func (m *commandModel) resize(width int) {
+	inputWidth := max(1, width-2-ansi.StringWidth(m.input.Prompt))
+	if inputWidth != m.input.Width() {
+		m.input.SetWidth(inputWidth)
+		// SetWidth alone does not recompute Bubbles' horizontal scroll window.
+		m.input.SetCursor(m.input.Position())
+	}
 }

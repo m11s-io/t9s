@@ -21,8 +21,8 @@ func TestK9sFooterPlacesStatusAboveBottomCrumbTab(t *testing.T) {
 }
 
 func TestK9sFooterPromptTakesTheStatusRow(t *testing.T) {
-	footer := renderK9sFooter(60, "prod > nodes", "COMMAND :svc", "ignored", defaultK9sSkin())
-	assert.Contains(t, strings.Split(footer, "\n")[0], "COMMAND :svc")
+	footer := renderK9sFooter(60, "prod > nodes", ">svc", "ignored", defaultK9sSkin())
+	assert.Contains(t, strings.Split(footer, "\n")[0], ">svc")
 	assert.NotContains(t, footer, "ignored")
 }
 

@@ -226,7 +226,7 @@ func (m *model) resizeDirectResourceDetail() {
 	if m.views.top().Kind != viewResourceDetail || m.resourceDetail.status == directLoading {
 		return
 	}
-	layout := layoutShell(m.width, m.height)
+	layout := m.shellLayout()
 	frame := layoutResourceFrame(layout.Width, layout.ContentHeight, directResourceTitle(*m, viewResourceDetail))
 	wasAtBottom := m.resourceDetail.viewport.YOffset()+m.resourceDetail.bodyHeight >= len(strings.Split(m.resourceDetail.value.YAML, "\n"))
 	m.resourceDetail.setViewport(contentSize{Width: frame.InnerWidth, Height: frame.InnerHeight})

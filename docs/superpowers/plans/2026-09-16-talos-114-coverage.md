@@ -1,8 +1,8 @@
 # Talos 1.14 coverage plan for t9s
 
-Status: Phases 0 and 1 implemented; Phase 2 partially implemented; Phases 3 and 4 pending; Phase 5 Kubernetes upgrades newly planned.
+Status: Phases 0, 1, and 2 implemented; Phases 3 and 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
-Last reconciled with source: 2026-10-18 (`5e4640e`)
+Last reconciled with source: 2026-10-20 (working tree; Phase 2 implementation is uncommitted)
 Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
 Live v1.14.4 cluster smoke testing is pending; implemented below means present in source, not released or live-verified.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.
@@ -21,10 +21,11 @@ Kubernetes upgrades were added to planned scope at user request on 2026-10-17.
   member removal/leave with mandatory pre-snapshot and quorum checks, leadership
   transfer, defragmentation, and alarm disarm. Membership confirmation remains
   `(y/n)`; typed member confirmation is a follow-up.
-- **Phase 2 partially implemented:** streaming dmesg, netstat, mounts/filesystem
-  usage, memory views, live event following, sampled CPU utilization, and
-  permission-aware Time / TimeCheck. Directory disk usage, container inspection,
-  richer service details, and force reboot/shutdown controls remain.
+- **Phase 2 implemented:** streaming dmesg, netstat, mounts/filesystem usage,
+  memory views, live event following, sampled CPU utilization, permission-aware
+  Time / TimeCheck, bounded directory disk usage, namespace-aware containers and
+  images with resource stats, service event history, and explicit force
+  reboot/shutdown controls. Disposable-cluster smoke checks remain pending.
 - **Phases 3 and 4 pending:** curated Talos networking/storage/system views and
   health rules, configuration editing, disaster recovery, and convenience exports.
 - **New planned scope:** cluster-wide Kubernetes upgrades through Talos, separate
@@ -175,7 +176,7 @@ whole application model, a feature registry, or a general screen framework.
   selection (`disk_wipe_prompt.go`, `disks_wipe_actions_test.go`, `wipe_test.go`).
 - [ ] **Follow-up:** replace membership `(y/n)` with typed member confirmation.
 
-### Phase 2 — first-class diagnostics: partially implemented
+### Phase 2 — first-class diagnostics: implemented; live smoke checks pending
 
 - [x] **11a. Dmesg:** streaming node view with follow/reconnect controls.
 - [x] **11b. Netstat:** node-scoped socket view.
@@ -184,18 +185,21 @@ whole application model, a feature registry, or a general screen framework.
   switch. Snapshot remains the default; no automatic replay/reconnect.
 - [x] **12a. Mounts/filesystem usage:** capacity and usage per mounted filesystem.
 - [x] **12b. Memory:** memory and swap statistics; does not provide CPU metrics.
-- [ ] **12c. CPU metrics, directory DiskUsage, Time / TimeCheck.**
+- [x] **12c. CPU metrics, directory DiskUsage, Time / TimeCheck.**
   - [x] Time / TimeCheck: node-scoped status and UTC samples, explicit checks,
     independent result panels and request cancellation. Fake-driven tests pass;
     disposable-cluster smoke checks remain pending.
   - [x] CPU utilization and process counts: two cancellable node-scoped samples,
     aggregate/per-core busy and I/O wait, explicit refresh without polling.
     Fake-driven tests pass; disposable-cluster smoke checks remain pending.
-  - [ ] Directory DiskUsage.
-- [ ] **13. Containers, ImageList, Stats:** namespace-aware inspection, followed by
-  richer ServiceInfo; existing service detail is already available.
-- [ ] **14. Force reboot/shutdown:** expose the port options in prompts; current
-  actions use `RebootDefault` and `Shutdown(..., false)`.
+  - [x] Directory DiskUsage: selected-mount depth-one scan with row/time bounds,
+    partial error rows, and cancellation. Fake-driven tests pass; live scan remains pending.
+- [x] **13. Containers, ImageList, Stats, and service detail:** namespace-aware
+  container/image inspection with resource stats and bounded event history in
+  service detail. Fake-driven checks pass; disposable-cluster checks remain pending.
+- [x] **14. Force reboot/shutdown:** typed exact-target confirmation, writes gate,
+  confirm-time quorum checks, and Talos `FORCE` mapping. No force action bypasses
+  a blocker. Disposable-cluster prompt smoke checks remain pending.
 
 ### Phase 3 — Talos 1.14 surface and health: pending
 

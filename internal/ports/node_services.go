@@ -15,3 +15,10 @@ type NodeServiceReader interface {
 type NodeServiceSession interface {
 	NodeServices() NodeServiceReader
 }
+
+// ProgressiveNodeServiceReader optionally publishes discovery and completed
+// inspections before the final shared node/service observation is ready.
+// Snapshots must be independent; publish is called serially and must honor ctx.
+type ProgressiveNodeServiceReader interface {
+	ListProgress(context.Context, func(domain.NodeSet)) (domain.NodeSet, domain.ServiceSet, error)
+}

@@ -44,5 +44,5 @@ func TestDirectNodesPaletteClosesAndShowsNodes(t *testing.T) {
 	assert.NotNil(t, command, "Enter schedules the direct command message")
 	assert.Equal(t, viewNodes, model.views.top().Kind)
 	assert.False(t, model.palette.active)
-	assert.NotContains(t, model.View().Content, "COMMAND :")
+	assert.Empty(t, model.palette.viewBar(model.width, model.styles.k9s))
 }

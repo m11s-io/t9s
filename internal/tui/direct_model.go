@@ -28,6 +28,7 @@ type model struct {
 	view                directViewState
 	nodes               nodesModel
 	services            servicesModel
+	serviceDetail       serviceDetailModel
 	events              eventsModel
 	etcd                etcdModel
 	problems            problemsModel
@@ -38,10 +39,13 @@ type model struct {
 	network             networkModel
 	netstat             netstatModel
 	mounts              mountsModel
+	diskUsage           diskUsageModel
+	containers          containersModel
 	memory              memoryModel
 	time                timeModel
 	cpu                 cpuModel
 	timePrompt          *timePromptModel
+	forcePrompt         *forcePromptModel
 	upgradePrompt       *upgradePromptModel
 	etcdPathPrompt      *snapshotPromptModel
 	resourceKinds       resourceKindsModel
@@ -180,7 +184,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(directContextsCommand(m.client, request), nodeAutoRefreshTick())
 }
 
-func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = message.Width, message.Height
@@ -189,8 +193,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncDirectStreamViewports()
 		return m, nil
 	case nodeAutoRefreshTickMsg:
-		if m.views.top().Kind == viewNodes && !m.directFilterEditing() && m.session != nil {
-			return m, tea.Batch(m.refreshDirectNodes(), nodeAutoRefreshTick())
+		if !m.directFilterEditing() && m.session != nil && !m.activeRefreshPending() && !m.palette.active && !m.contexts.active && m.mutation.prompt == nil && !m.mutation.busy && m.upgradePrompt == nil && m.timePrompt == nil && m.etcdPathPrompt == nil {
+			switch m.views.top().Kind {
+			case viewNodes, viewServices, viewEvents, viewEtcd, viewOverview, viewProblems, viewProcesses, viewDisks, viewNetwork, viewNetstat, viewMounts, viewMemory, viewTime, viewResourceKinds, viewResourceInstances:
+				updated, command := m.update(tea.KeyPressMsg{Code: 'r'})
+				return updated, tea.Batch(command, nodeAutoRefreshTick())
+			}
 		}
 		return m, nodeAutoRefreshTick()
 	case directContextsLoaded:
@@ -258,8 +266,15 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDirectMutationResult(message)
 	case directEventFollowOpened, directEventFollowBatch, directClusterHealthOpened, directClusterHealthBatch:
 		return m.updateDirectEventAndHealthResult(message)
-	case directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded:
+	case directNodeProgress, directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded:
 		return m.updateDirectClusterResult(message)
+	case directDiskUsageOpened, directDiskUsageBatch:
+		return m, m.applyDirectDiskUsageResult(message)
+	case directContainersLoaded, directImagesOpened, directImagesBatch:
+		return m, m.applyDirectContainerResult(message)
+	case directServiceDetailLoaded:
+		m.applyDirectServiceDetail(message)
+		return m, nil
 	case directProcessesLoaded, directDisksLoaded, directNetworkLoaded, directSocketsLoaded, directMountsLoaded, directMemoryLoaded,
 		directCPULoaded, directTimeLoaded, directTimeCheckLoaded:
 		m.applyDiagnosticResult(message)
@@ -300,6 +315,25 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			*m.timePrompt, command = m.timePrompt.update(message)
 			return m, command
 		}
+		if m.palette.active {
+			switch message.String() {
+			case "esc":
+				m.palette = m.palette.close()
+				return m, nil
+			case "enter":
+				value := m.palette.input.Value()
+				m.palette = m.palette.close()
+				return m, func() tea.Msg { return directRunCommand{value: value} }
+			}
+			var command tea.Cmd
+			m.palette, command = m.palette.update(message)
+			return m, command
+		}
+		if message.String() == ":" && (m.contexts.active || !m.directFilterEditing()) {
+			var command tea.Cmd
+			m.palette, command = m.palette.open()
+			return m, command
+		}
 		if m.contexts.active {
 			switch message.String() {
 			case "esc", "q":
@@ -320,25 +354,6 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.palette.active {
-			switch message.String() {
-			case "esc":
-				m.palette = m.palette.close()
-				return m, nil
-			case "enter":
-				value := m.palette.input.Value()
-				m.palette = m.palette.close()
-				return m, func() tea.Msg { return directRunCommand{value: value} }
-			}
-			var command tea.Cmd
-			m.palette, command = m.palette.update(message)
-			return m, command
-		}
-		if message.String() == ":" && !m.directFilterEditing() {
-			var command tea.Cmd
-			m.palette, command = m.palette.open()
-			return m, command
-		}
 		if message.String() == "?" && !m.directFilterEditing() {
 			m.views = m.views.push(viewFrame{Kind: viewHelp, Label: "help"})
 			return m, nil
@@ -349,6 +364,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if (m.views.top().Kind == viewOverview || m.views.top().Kind == viewProblems) && message.String() == "r" && !m.directFilterEditing() && m.session != nil {
+			return m, m.refreshDirectSummary()
+		}
 		if command, handled := m.handleDiagnosticKey(message); handled {
 			return m, command
 		}
@@ -356,6 +374,16 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		}
 		if m.views.top().Kind == viewNodeDetail || m.views.top().Kind == viewServiceDetail {
+			if m.views.top().Kind == viewServiceDetail {
+				frame := m.views.top()
+				if message.String() == "r" && m.session != nil {
+					return m, m.refreshDirectServiceDetail(frame)
+				}
+				if message.String() == "up" || message.String() == "k" || message.String() == "down" || message.String() == "j" || message.Code == tea.KeyPgUp || message.Code == tea.KeyPgDown {
+					m.serviceDetail = m.serviceDetail.update(message, m.serviceDetailViewportHeight())
+					return m, nil
+				}
+			}
 			if m.views.top().Kind == viewServiceDetail && !m.mutation.busy && m.mutation.prompt == nil && m.options.WritesEnabled && m.session != nil {
 				if kind := directServiceActionKind(message.String()); kind != "" {
 					frame := m.views.top()
@@ -439,8 +467,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if (message.String() == "enter" || message.String() == "d") && !m.services.filtering {
 				if service, ok := m.services.selected(m.cluster.services.Value.Services); ok {
-					label := fallback(service.Name) + "@" + fallback(service.Node)
-					m.views = m.views.push(viewFrame{Kind: viewServiceDetail, Label: label, ServiceKey: serviceKey(service)})
+					return m, m.openDirectServiceDetail(service)
 				}
 				return m, nil
 			}
@@ -514,7 +541,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return m, directEtcdCommand(m.session, request)
 			}
 			if m.mutation.snapshot != nil && m.mutation.receiptVisible && m.canShowDirectEtcdReceipt() && !m.mutation.busy && m.mutation.prompt == nil && (message.Code == tea.KeyPgDown || message.Code == tea.KeyPgUp) {
-				frame := layoutResourceFrame(m.width, layoutShell(m.width, m.height).ContentHeight, "etcd receipt")
+				frame := layoutResourceFrame(m.width, m.shellLayout().ContentHeight, "etcd receipt")
 				pageSize := max(1, frame.InnerHeight-1)
 				lines := etcdReceiptLines(m.mutation, frame.InnerWidth)
 				maxOffset := max(0, len(lines)-pageSize)
@@ -643,7 +670,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) timeViewportHeight() int {
-	layout := layoutShell(m.width, m.height)
+	layout := m.shellLayout()
+	return layoutResourceFrame(layout.Width, layout.ContentHeight, "").InnerHeight
+}
+
+func (m model) serviceDetailViewportHeight() int {
+	layout := m.shellLayout()
 	return layoutResourceFrame(layout.Width, layout.ContentHeight, "").InnerHeight
 }
 
@@ -653,7 +685,7 @@ func (m *model) startClusterObservations(session *application.Session, generatio
 	etcdRequest, _ := m.requests.beginWithContext("cluster-etcd", generation, m.sessionCtx)
 	kubeRequest, _ := m.requests.beginWithContext("cluster-kubernetes", generation, m.sessionCtx)
 	return tea.Batch(
-		directNodeServicesCommand(session, nodeRequest),
+		directInitialNodeServicesCommand(session, nodeRequest),
 		directEventsCommand(session, eventsRequest),
 		directEtcdCommand(session, etcdRequest),
 		directKubernetesNodesCommand(session, kubeRequest),
@@ -748,7 +780,7 @@ func (m *model) nextMutationOperation() uint64 {
 }
 
 func (m model) View() tea.View {
-	layout := layoutShell(m.width, m.height)
+	layout := m.shellLayout()
 	headerKind := m.views.top().Kind
 	if m.contexts.active {
 		headerKind = viewContexts
@@ -772,12 +804,16 @@ func (m model) View() tea.View {
 			content = renderNodeDetail(m.nodes.selectedValue(m.cluster.nodes.Value.Nodes))
 		} else if m.views.top().Kind == viewServiceDetail {
 			if service, ok := findServiceByKey(m.cluster.services.Value.Services, m.views.top().ServiceKey); ok {
-				content = renderServiceDetail(service)
+				if m.serviceDetail.summary.Name == "" {
+					content = renderServiceDetail(service)
+				} else {
+					content = m.serviceDetail.viewSized(innerSize)
+				}
 			} else {
 				content = renderDetail([]detailField{{label: "SERVICE", value: "unavailable"}})
 			}
 		} else if m.views.top().Kind == viewHelp {
-			content = "HELP\n\n" + renderActionHints(actionHints(viewNodes, m.options.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.options.WritesEnabled))
+			content = "HELP\n\n" + renderActionHints(nodeHelpActionHints(m.options.WritesEnabled)) + "\n" + renderActionHints(actionHints(viewNodeDetail, m.options.WritesEnabled))
 		} else if m.views.top().Kind == viewServiceLogs {
 			content = m.logs.viewSized(innerSize)
 		} else if m.views.top().Kind == viewDmesg {
@@ -808,6 +844,10 @@ func (m model) View() tea.View {
 		}
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, title)
 		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt, frame.InnerHeight), m.styles.k9s)
+		contentFramed = true
+	} else if m.forcePrompt != nil {
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "force confirmation")
+		content = renderResourceFrame(frame, m.forcePrompt.view(), m.styles.k9s)
 		contentFramed = true
 	} else if prompt := m.mutation.prompt; prompt != nil && prompt.etcd != nil {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "etcd action")
@@ -842,7 +882,9 @@ func (m model) View() tea.View {
 		breadcrumb = m.cluster.contextName + " > contexts"
 	}
 	prompt := ""
-	if m.mutation.prompt != nil {
+	if m.forcePrompt != nil {
+		prompt = "Type exact target · Enter continues · Esc returns"
+	} else if m.mutation.prompt != nil {
 		prompt = renderDirectMutationPrompt(m.mutation.prompt)
 	} else if m.upgradePrompt != nil {
 		prompt = m.upgradePrompt.view()
@@ -851,7 +893,7 @@ func (m model) View() tea.View {
 	} else if m.timePrompt != nil {
 		prompt = m.timePrompt.view()
 	} else if m.palette.active {
-		prompt = m.palette.view()
+		// Command entry occupies its own bar below the header.
 	} else if !m.palette.active && !m.contexts.active && m.mutation.upgrade.Target != "" && m.mutation.notice != "" && !m.directFilterEditing() {
 		prompt = m.mutation.notice
 	} else if !m.palette.active && m.views.top().Kind == viewNodes && (m.nodes.filtering || m.nodes.filter != "") {
@@ -900,7 +942,7 @@ func (m model) View() tea.View {
 		prompt = "Mutation in progress…"
 	}
 	footer := renderK9sFooter(layout.Width, breadcrumb, prompt, flash, m.styles.k9s)
-	result := tea.NewView(renderShell(layout, header, content, footer))
+	result := tea.NewView(renderShell(layout, header, content, footer, m.palette.viewBar(layout.Width, m.styles.k9s)))
 	result.AltScreen = true
 	result.WindowTitle = "t9s"
 	return result
@@ -934,6 +976,10 @@ func (m model) directFilterEditing() bool {
 		return m.netstat.filtering
 	case viewMounts:
 		return m.mounts.filtering
+	case viewDiskUsage:
+		return m.diskUsage.filtering
+	case viewContainers:
+		return m.containers.filtering
 	case viewMemory:
 		return m.memory.filtering
 	case viewCPU:
@@ -960,8 +1006,11 @@ func (m *model) beginSessionOpen(contextName string) tea.Cmd {
 	m.closeDirectLogs(true)
 	m.closeDirectEventFollow()
 	m.closeDirectHealth()
+	m.diskUsage.close()
+	m.containers.close()
 	m.pendingResourceKind = ""
 	m.mutation.prompt = nil
+	m.forcePrompt = nil
 	m.upgradePrompt = nil
 	m.mutation.upgradePending = false
 	m.mutation.upgrade = directUpgradeDisplayState{}
@@ -1028,6 +1077,9 @@ func (m model) fallbackCleanup() {
 	m.closeDirectLogs(true)
 	m.closeDirectEventFollow()
 	m.closeDirectHealth()
+	m.diskUsage.close()
+	m.containers.close()
+	m.forcePrompt = nil
 	m.eventFollow = directEventFollowState{}
 	m.healthcheck = newDirectHealthcheckModel(healthcheckDisplayState{})
 	if m.rootCancel != nil {
