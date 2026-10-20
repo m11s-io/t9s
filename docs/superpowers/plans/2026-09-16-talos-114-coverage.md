@@ -2,7 +2,7 @@
 
 Status: Phases 0–3 implemented in the working tree; Phase 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
-Last reconciled with source: 2026-10-20 (Phase 3 working-tree implementation; hosted CI pending; disposable smoke recorded below)
+Last reconciled with source: 2026-10-20 (Phase 3 implementation, disposable smoke, and hosted CI/Docs validation recorded below)
 Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
 The Phase 3 Docker smoke used Talos v1.14.4 on two nodes. BGP, LVM/MD, trim/scrub, `sandboxd`, and SystemDisk resources were absent from that cluster; hardware-backed coverage remains pending. Implemented below means present in source, not released.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.
@@ -31,7 +31,8 @@ Kubernetes upgrades were added to planned scope at user request on 2026-10-17.
   conservative health rules and overview rollups, and dedicated system-volume
   details. The disposable smoke verified node/service discovery, BGP and health
   views, system-volume/isolation details, and resource/disk views; configured
-  BGP/storage maintenance evidence was not present. Hosted CI remains pending.
+  BGP/storage maintenance evidence was not present. Hosted Go CI and Docs
+  validation passed for the Phase 3 PR.
 - **Phase 4 pending:** configuration editing, disaster recovery, kubeconfig export,
   and curated etcd resource details.
 - **New planned scope:** cluster-wide Kubernetes upgrades through Talos, separate
@@ -303,10 +304,9 @@ and [Kubernetes version skew policy](https://kubernetes.io/releases/version-skew
 - [ ] Complete the broader read-only smoke matrix for service logs, events,
   etcd detail, and diagnostic subviews. Exercise destructive flows only on
   disposable infrastructure.
-- [ ] Confirm hosted CI for the v1.14.4 dependency, checksum, docs, docs-test,
-  and live-event updates after pushing the reviewed changes. Local tests/race tests,
-  vet, Go build, docs tests/typecheck/build, and module tidiness passed during
-  this update; that does not establish hosted CI or live-cluster compatibility.
+- [x] Confirm hosted CI for the Phase 3 PR: [branch Go CI](https://github.com/m11s-io/t9s/actions/runs/39442950193), [PR Go CI](https://github.com/m11s-io/t9s/actions/runs/39443001625), and [Docs validation](https://github.com/m11s-io/t9s/actions/runs/39443001644) passed. The draft PR Docs deploy job was skipped.
+- [x] Local tests/race tests, vet, Go build, docs tests/typecheck/build, and
+  module tidiness passed. Hardware-backed resource coverage remains pending.
 - [x] Align the README's feature inventory with implemented Phase 0–3 read and
   write coverage.
 - [ ] Release the verified changes; implement signed artifacts (checksums already
