@@ -90,9 +90,11 @@ func renderHeaderActions(hints []actionHint, width int, skin k9sSkin) []string {
 	}
 	columns := max(1, (len(hints)+actionRows-1)/actionRows)
 	columnWidths := make([]int, columns)
+	keyWidths := make([]int, columns)
 	for index, hint := range hints {
 		column := index / actionRows
 		columnWidths[column] = max(columnWidths[column], ansi.StringWidth("<"+hint.Key+"> "+hint.Label))
+		keyWidths[column] = max(keyWidths[column], ansi.StringWidth("<"+hint.Key+">"))
 	}
 	gap := min(columnGap, width/max(1, columns-1))
 	availableWidth := max(0, width-gap*(columns-1))
@@ -119,8 +121,13 @@ func renderHeaderActions(hints []actionHint, width int, skin k9sSkin) []string {
 				lines[row] += strings.Repeat(" ", gap)
 			}
 			hint := hints[index]
-			cell := skin.actionKey.Render("<"+hint.Key+">") +
-				" " +
+			key := "<" + hint.Key + ">"
+			padding := 0
+			if columnWidth >= keyWidths[column]+1+ansi.StringWidth(hint.Label) {
+				padding = max(0, keyWidths[column]-ansi.StringWidth(key))
+			}
+			cell := skin.actionKey.Render(key) +
+				strings.Repeat(" ", padding+1) +
 				skin.actionText.Render(hint.Label)
 			lines[row] += fitK9sCell(cell, columnWidth)
 		}
