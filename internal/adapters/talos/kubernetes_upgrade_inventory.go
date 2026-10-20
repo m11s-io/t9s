@@ -522,7 +522,7 @@ func targetKubeletImage(target, current string) (string, error) {
 func inspectKubernetesPermissions(ctx context.Context, core coreclient.CoreV1Interface, authorization authorizationclient.AuthorizationV1Interface) (map[string]bool, error) {
 	checks := []struct{ verb, resource, subresource, namespace, group string }{
 		{"get", "namespaces", "", "", ""}, {"list", "nodes", "", "", ""}, {"get", "nodes", "", "", ""},
-		{"update", "nodes", "", "", ""}, {"list", "pods", "", "", ""}, {"create", "pods", "eviction", "", ""},
+		{"list", "pods", "", "", ""},
 		{"get", "daemonsets", "", "kube-system", "apps"},
 	}
 	result := make(map[string]bool, len(checks))

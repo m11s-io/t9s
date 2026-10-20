@@ -1,8 +1,13 @@
 # Kubernetes Upgrade Implementation Plan
 
+> **2026-10-21 correction:** Follow Talos v1.14.4's Kubernetes upgrade behavior:
+> update kubelet images serially and verify service/node readiness without
+> cordon, drain, eviction, or uncordon. Draining is separate maintenance. This
+> supersedes the drain-specific implementation and validation steps below.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Upgrade Kubernetes using the standard Talos CLI, then safely roll kubelets through a serial drain/update/readiness/uncordon workflow.
+**Goal:** Upgrade Kubernetes using the standard Talos CLI, then update kubelets serially with readiness verification and unchanged scheduling state.
 
 **Architecture:** A session-owned upgrade backend composes a constrained `talosctl` subprocess with native Talos machinery and Kubernetes adapters. The application owns prepared-plan binding, backup, mutation admission, serial execution, and terminal outcomes; the TUI only handles safe summaries and structured progress.
 

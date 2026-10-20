@@ -161,29 +161,29 @@ Talos OS upgrade is behind the same `--enable-writes` gate and explicit confirma
 
 Kubernetes upgrades use the separate `:upgrade-k8s` command and require
 `talosctl` v1.14.4 on `PATH`. The operator supplies an explicit stable target,
-chooses a new local snapshot path, reviews the node-by-node plan, and types the
-displayed cluster UID and target version. The preview does not run the upgrade
+reviews the prefilled local snapshot path and node-by-node plan, and confirms
+with `y` after checking the displayed cluster UID and target version. The preview does not run the upgrade
 command or mutate the cluster. Execution requires writes mode, a verified etcd
 snapshot, fresh identity and health checks, and the same confirmation-bound
 plan. The standard Talos CLI upgrades control-plane components and reconciles
 managed manifests first; t9s then pre-pulls and upgrades kubelets serially.
-Each kubelet is cordoned and drained through eviction, so PodDisruptionBudgets
-can block progress. Pods are never force-deleted and `emptyDir` data is not
-discarded. A node already cordoned by an operator remains cordoned after a
-successful upgrade.
+Following Talos's Kubernetes upgrade behavior, each kubelet image is patched,
+the service restarts, and readiness and the reported version are verified.
+This workflow does not cordon, drain, evict Pods, or uncordon nodes. Existing
+scheduling state is preserved. Draining remains a separate maintenance operation.
 
 Cancellation or a later-stage failure can leave a partial cluster upgrade. A
-node cordoned by t9s remains cordoned if its kubelet outcome is uncertain or
-fails. The child CLI is terminated and reaped before t9s releases its local
+failed kubelet update requires inspection before retry. The child CLI is
+terminated and reaped before t9s releases its local
 mutation lease, but this cannot stop server-side work already accepted by
 Talos. t9s keeps the verified snapshot and requires a fresh inventory and plan
 before retry; it does not roll versions back or automatically replay an
 ambiguous stage. If t9s observed a successful CLI exit and verified the
 control-plane target, that evidence is retained only for the lifetime of the
 current t9s session so a fresh plan can continue the kubelet stage. If that
-session ends first, managed-manifest convergence cannot be independently
-verified by the next session and t9s blocks automatic resume; use Talos recovery
-procedures and inspect the cluster before continuing. Local mutation exclusion
+session ends first, the next session reruns Talos's same-target reconciliation
+before continuing the kubelets. Completed kubelets are verified and skipped.
+Local mutation exclusion
 coordinates t9s sessions in this process only, not other t9s processes or
 external administrators. Disposable-cluster validation is still required
 before release. Progress and errors are normalized; credentials, talosconfig

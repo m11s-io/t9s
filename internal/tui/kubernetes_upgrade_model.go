@@ -100,10 +100,11 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 			lines = append(lines, "  kube-proxy: remains disabled; Talos image config -> "+summary.TargetProxyImage)
 			lines = append(lines, "Order: control plane, managed manifests, then kubelets")
 		}
-		lines = append(lines, "Kubelets: one node at a time; drain with eviction and restore its prior cordon state")
+		lines = append(lines, "Kubelets: one node at a time; update image, restart service, verify readiness")
+		lines = append(lines, "Node scheduling stays unchanged; draining is a separate operation")
 		lines = append(lines, "Manifest preview: anticipated Talos managed-resource reconciliation; exact diff is execution-time")
 		for _, node := range summary.Nodes {
-			state := "drain + update"
+			state := "update kubelet"
 			if node.Skip {
 				state = "already at target"
 			}
@@ -149,7 +150,7 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 			for _, node := range m.result.Nodes {
 				line := fmt.Sprintf("  %s · %s", node.NodeUID, node.Outcome)
 				if node.LeftCordoned {
-					line += " · left cordoned for operator review"
+					line += " · existing cordon preserved"
 				}
 				body = append(body, line)
 			}

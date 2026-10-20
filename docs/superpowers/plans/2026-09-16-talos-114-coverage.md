@@ -73,7 +73,7 @@ any resource kind) and the streaming upgrade lifecycle.
 | Area | Exposed |
 | --- | --- |
 | Read | nodes + detail, services/detail + streaming logs, snapshot/live events, etcd membership/status/alarms, processes, disks with LVM/MD and volume details, network links/addresses/multipath routes, BGP peers, streaming dmesg, netstat, mounts/filesystem usage, memory, sampled CPU, Time / TimeCheck, containers/images/stats, generic COSI browser, health overview/problems, explicit streaming `:healthcheck` |
-| Write (`--enable-writes`) | node reboot/shutdown/rollback/reset/upgrade; disk wipe; service start/stop/restart; etcd snapshot/remove/leave/defragment/disarm/forfeit leadership; Kubernetes cordon/drain/uncordon during upgrade |
+| Write (`--enable-writes`) | node reboot/shutdown/rollback/reset/upgrade; disk wipe; service start/stop/restart; etcd snapshot/remove/leave/defragment/disarm/forfeit leadership; Kubernetes component and kubelet configuration updates |
 | Health rules | `node-readiness`, `node-services-degraded`, `etcd-member-unhealthy`, `etcd-member-alarmed`, `bgp-peer-not-established`, `lvm-volume-missing`, `lvm-volume-group-partial`, `md-array-unhealthy`, `volume-failed`, `volume-trim-overdue`, `filesystem-scrub-failed`, `sandboxd-service-unhealthy` |
 
 ## 2. Remaining gap inventory
@@ -262,8 +262,9 @@ do not hard-code v1.37.1 as the newest available or universally valid target.
   Give this a separate cluster-scoped entry point; do not reuse per-node `U`.
 - [x] **29. Progress and partial failure:** preserve upstream component sequencing
   and readiness checks for API servers, controller managers, schedulers,
-  kube-proxy, kubelets, and managed manifests. Show image pre-pull, drain/eviction
-  where applicable, per-component progress, and final version/health verification.
+  kube-proxy, kubelets, and managed manifests. Show image pre-pull,
+  per-component progress, and final version/health verification. Kubernetes
+  kubelet updates preserve scheduling state; draining is separate maintenance.
   Cancellation or disconnection must report a potentially partial upgrade and
   require rediscovery before retry; do not promise automatic rollback or treat
   reconnecting as evidence of completion.

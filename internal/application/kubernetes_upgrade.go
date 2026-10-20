@@ -74,7 +74,7 @@ func (s *Session) PrepareKubernetesUpgrade(ctx context.Context, target string) (
 	state := &preparedState{
 		session: s,
 		assessment: Assessment{Targets: []string{plan.ClusterUID}, RequiredToken: phrase,
-			Warning: "Kubernetes components and workloads may restart; nodes are drained one at a time."},
+			Warning: "Kubernetes components and kubelet services restart sequentially; node scheduling stays unchanged."},
 		kubernetesUpgradePlan: &plan, kubernetesUpgradeRequest: request,
 	}
 	state.kubernetesUpgradeFacts = &kubernetesUpgradeFacts{plan: cloneKubernetesUpgradePlan(plan), expiresAt: time.Now().Add(kubernetesUpgradePlanLifetime)}

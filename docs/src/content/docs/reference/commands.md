@@ -28,9 +28,10 @@ snapshot path. Its preview is read-only and checks cluster identity, versions,
 node mapping, permissions, Talos compatibility, and the selected `talosctl`
 release. Execution takes and verifies the snapshot before invoking the standard
 `talosctl upgrade-k8s` command for control-plane components and managed
-manifests. t9s then upgrades kubelets one node at a time, using eviction-based
-drain, readiness checks, and restoration of the node's original scheduling
-state. See [Security](/security/) for cancellation and recovery behavior.
+manifests. t9s then upgrades kubelets one node at a time by updating their image,
+waiting for the service, and verifying readiness and version. Node scheduling
+is unchanged; draining is a separate maintenance operation.
+See [Security](/security/) for cancellation and recovery behavior.
 
 `:config` reads a nonempty regular file from the local machine (maximum 4 MiB),
 then lets you select one or more nodes and explicitly choose `AUTO`,

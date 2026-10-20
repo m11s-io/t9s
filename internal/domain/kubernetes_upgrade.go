@@ -109,10 +109,8 @@ const (
 	KubernetesUpgradeKubeProxy    KubernetesUpgradeStage = "kube-proxy"
 	KubernetesUpgradeManifests    KubernetesUpgradeStage = "manifests"
 	KubernetesUpgradePrePull      KubernetesUpgradeStage = "kubelet-pre-pull"
-	KubernetesUpgradeDrain        KubernetesUpgradeStage = "drain"
 	KubernetesUpgradeKubelet      KubernetesUpgradeStage = "kubelet"
 	KubernetesUpgradeReadiness    KubernetesUpgradeStage = "readiness"
-	KubernetesUpgradeUncordon     KubernetesUpgradeStage = "uncordon"
 	KubernetesUpgradeVerify       KubernetesUpgradeStage = "verify"
 )
 

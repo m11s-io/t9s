@@ -1,5 +1,10 @@
 # Kubernetes upgrades through Talos
 
+> **2026-10-21 correction:** The operator requested upstream Talos v1.14.4
+> behavior: serial kubelet image updates and readiness verification with no
+> automatic cordon, drain, eviction, or uncordon. Draining is a separate
+> maintenance operation. This supersedes the drain policy described below.
+
 **Status:** Approved design; implementation is in progress, with disposable-cluster validation pending
 
 **Date:** 2026-10-20

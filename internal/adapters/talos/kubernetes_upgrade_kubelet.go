@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/cosi-project/runtime/pkg/resource"
@@ -76,21 +75,6 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 	if wasUnschedulable != plan.OriginallyCordoned {
 		return result, errors.New("node scheduling state changed after preview")
 	}
-	emit(domain.KubernetesUpgradeDrain)
-	changedScheduling, err := access.Cordon(ctx, plan.Name, plan.UID)
-	if err != nil {
-		return result, err
-	}
-	if changedScheduling == plan.OriginallyCordoned {
-		result.LeftCordoned = true
-		return result, errors.New("node scheduling state changed during cordon")
-	}
-	if changedScheduling {
-		result.LeftCordoned = true
-	}
-	if err := access.Drain(ctx, plan.Name, plan.UID, 10*time.Minute); err != nil {
-		return result, fmt.Errorf("node drain failed; node remains cordoned for operator review: %w", err)
-	}
 	current, fingerprint, err := b.readActiveConfig(ctx, plan.TalosAddress)
 	if err != nil || fingerprint != plan.ConfigFingerprint {
 		return result, errors.New("node configuration changed before kubelet patch")
@@ -124,33 +108,24 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 	response, err := b.talos.ApplyConfiguration(nodeCtx, &machineapi.ApplyConfigurationRequest{Data: configBytes, Mode: machineapi.ApplyConfigurationRequest_NO_REBOOT})
 	if err != nil || response == nil {
 		result.Outcome = domain.OperationUnconfirmed
-		return result, errors.New("kubelet configuration apply is unconfirmed; node remains cordoned")
+		return result, errors.New("kubelet configuration apply is unconfirmed")
 	}
 	emit(domain.KubernetesUpgradeReadiness)
 	if err := b.waitKubeletService(ctx, plan.TalosAddress); err != nil {
 		result.Outcome = domain.OperationUnconfirmed
-		return result, errors.New("Talos kubelet service did not become healthy; node remains cordoned")
+		return result, errors.New("Talos kubelet service did not become healthy")
 	}
 	if err := access.WaitKubelet(ctx, plan.Name, plan.UID, plan.TargetVersion, 5*time.Minute); err != nil {
 		result.Outcome = domain.OperationUnconfirmed
-		return result, errors.New("Kubernetes kubelet did not converge; node remains cordoned")
+		return result, errors.New("Kubernetes kubelet did not converge")
 	}
 	expectedConfig := sha256.Sum256(configBytes)
 	_, appliedFingerprint, err := b.readActiveConfig(ctx, plan.TalosAddress)
 	if err != nil || appliedFingerprint != hex.EncodeToString(expectedConfig[:]) {
 		result.Outcome = domain.OperationUnconfirmed
-		return result, errors.New("active node configuration does not match the kubelet update; node remains cordoned")
+		return result, errors.New("active node configuration does not match the kubelet update")
 	}
 	result.ConfigFingerprint = appliedFingerprint
-	if changedScheduling {
-		emit(domain.KubernetesUpgradeUncordon)
-		if err := access.Uncordon(ctx, plan.Name, plan.UID); err != nil {
-			result.Outcome = domain.OperationUnconfirmed
-			result.LeftCordoned = true
-			return result, errors.New("kubelet is ready but node remains cordoned")
-		}
-		result.LeftCordoned = false
-	}
 	result.Outcome = domain.OperationCompleted
 	return result, nil
 }
