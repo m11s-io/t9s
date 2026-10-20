@@ -94,7 +94,7 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 		return result, errors.New("node configuration changed before kubelet patch")
 	}
 	provider := current.Provider()
-	patch, err := stdpatches.WithKubeletImage(stdpatches.GuessVersionContractKubelet(provider), plan.TargetKubeletImage)
+	patch, err := stdpatches.PreparePatch(stdpatches.WithKubeletImage(stdpatches.GuessVersionContractKubelet(provider), plan.TargetKubeletImage))
 	if err != nil {
 		return result, errors.New("unable to prepare kubelet image update")
 	}
@@ -105,6 +105,9 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 	newConfig, err := patched.Config()
 	if err != nil {
 		return result, errors.New("unable to encode kubelet configuration")
+	}
+	if newConfig.K8sKubeletConfig() == nil || newConfig.K8sKubeletConfig().Image() != plan.TargetKubeletImage {
+		return result, errors.New("kubelet configuration patch did not produce the target image")
 	}
 	configBytes, err := newConfig.EncodeBytes(encoder.WithComments(encoder.CommentsDisabled))
 	if err != nil {
