@@ -281,7 +281,10 @@ func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (model, tea
 		}
 		if message.err != "" || message.plan == nil {
 			u.phase = kubernetesUpgradeEditing
-			u.err = "Unable to prepare a safe Kubernetes upgrade plan"
+			u.err = message.err
+			if u.err == "" {
+				u.err = "Unable to prepare a safe Kubernetes upgrade plan"
+			}
 			return *m, nil
 		}
 		u.plan = message.plan

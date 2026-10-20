@@ -120,7 +120,16 @@ func sameKubernetesUpgradePlan(left, right domain.KubernetesUpgradePlan) bool {
 	return leftErr == nil && rightErr == nil && string(leftBytes) == string(rightBytes)
 }
 
-func safeKubernetesUpgradeError(error) error { return ErrActionBlocked }
+func safeKubernetesUpgradeError(err error) error {
+	if err == nil {
+		return ErrActionBlocked
+	}
+
+	// The Talos backend returns fixed, sanitized preflight messages. Preserve
+	// those explanations for the operator while retaining the blocked-action
+	// sentinel for callers that rely on errors.Is.
+	return fmt.Errorf("%w: %s", ErrActionBlocked, err)
+}
 
 type kubernetesUpgradeStream struct {
 	events chan domain.KubernetesUpgradeEvent

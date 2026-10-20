@@ -7,7 +7,8 @@ import (
 )
 
 // KubernetesUpgradeBackend owns the Talos CLI and node-level kubelet stages.
-// Implementations must emit normalized events and must not expose raw output.
+// Implementations must emit normalized events and return only fixed, sanitized
+// errors; raw Talos, Kubernetes, or process output must never escape this port.
 type KubernetesUpgradeBackend interface {
 	Inspect(ctx context.Context, target string) (domain.KubernetesUpgradeInventory, error)
 	RunControlPlane(ctx context.Context, plan domain.KubernetesUpgradePlan, progress func(domain.KubernetesUpgradeEvent)) error

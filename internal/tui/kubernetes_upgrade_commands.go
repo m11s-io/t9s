@@ -33,7 +33,7 @@ func directKubernetesUpgradePrepareCommand(session *application.Session, request
 	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
 		plan, err := session.PrepareKubernetesUpgrade(ctx, target)
 		if err != nil {
-			return directKubernetesUpgradePrepared{operation: operation, generation: generation, err: "Unable to prepare a safe Kubernetes upgrade plan"}
+			return directKubernetesUpgradePrepared{operation: operation, generation: generation, err: err.Error()}
 		}
 		return directKubernetesUpgradePrepared{operation: operation, generation: generation, plan: plan}
 	})
