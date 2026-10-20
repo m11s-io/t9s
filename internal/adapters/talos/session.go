@@ -37,13 +37,15 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		client:          client,
 		fallbackMembers: fallbackMemberRecords(config.Contexts[contextName].Nodes),
 	}
+	nodeReader := newNodeReader(api, time.Now)
 
 	return &session{
 		client:            client,
-		nodes:             newNodeReader(api, time.Now),
+		nodes:             nodeReader,
 		nodeServices:      newNodeServiceReader(api, time.Now),
 		nodeController:    newNodeController(machineryNodeControlClient{client: client}),
 		configuration:     newConfigurationController(machineryConfigurationClient{client: client}),
+		kubernetesUpgrade: newKubernetesUpgradeBackend(client, config, contextName, nodeReader),
 		serviceController: newServiceController(machineryServiceControlClient{client: client}),
 		services:          newDetailedServiceReader(api, time.Now),
 		logs:              newServiceLogReader(machineryLogClient{client: client}),
@@ -74,6 +76,7 @@ type session struct {
 	nodeServices      ports.NodeServiceReader
 	nodeController    ports.NodeController
 	configuration     ports.ConfigurationController
+	kubernetesUpgrade ports.KubernetesUpgradeBackend
 	serviceController ports.ServiceController
 	services          ports.ServiceReader
 	logs              ports.ServiceLogReader
@@ -106,6 +109,8 @@ func (s *session) NodeServices() ports.NodeServiceReader { return s.nodeServices
 func (s *session) NodeActions() ports.NodeController { return s.nodeController }
 
 func (s *session) Configuration() ports.ConfigurationController { return s.configuration }
+
+func (s *session) KubernetesUpgrade() ports.KubernetesUpgradeBackend { return s.kubernetesUpgrade }
 
 func (s *session) ServiceActions() ports.ServiceController { return s.serviceController }
 

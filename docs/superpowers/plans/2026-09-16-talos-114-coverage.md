@@ -239,43 +239,41 @@ reference targets, not evidence of any user's running Kubernetes version.
 Discover installed versions and validate compatibility again at execution time;
 do not hard-code v1.37.1 as the newest available or universally valid target.
 
-- [ ] **25. Cluster version inventory:** discover every API server and kubelet
+- [x] **25. Cluster version inventory:** discover every API server and kubelet
   version, cluster identity, node roles, and Talos versions. Surface mixed or
   unavailable versions explicitly. Verify that Talos and Kubernetes credentials
   identify the same cluster before offering a mutation.
-- [ ] **26. Upstream orchestration integration:** evaluate reuse of the pinned
-  Talos implementation behind `talosctl upgrade-k8s`. The inspected upstream
-  orchestration lives in `pkg/cluster/kubernetes`, outside the currently pinned
-  `pkg/machinery` module; establish availability, API shape, provider interfaces,
-  and dependency cost at the chosen release before selecting an integration.
-  Keep it behind a narrow cluster-upgrade port and normalize progress/errors.
-  The design must choose a Go-library integration or a constrained, version-
-  checked talosctl adapter; it must not add arbitrary shell execution.
-- [ ] **27. Upgrade preview and preflight:** require explicit target selection;
+- [x] **26. Upstream orchestration integration:** evaluated the pinned Talos
+  v1.14.4 source and selected a constrained direct `talosctl upgrade-k8s`
+  adapter because orchestration is outside the pinned machinery module. It is
+  behind a narrow cluster-upgrade port with a fixed argument vector and
+  normalized progress/errors; arbitrary shell execution is not available.
+- [x] **27. Upgrade preview and preflight:** require explicit target selection;
   check Talos compatibility on all participating nodes and Kubernetes version
   skew. Support patch upgrades and one minor step at a time; reject downgrades,
-  minor-version skips, and unknown/incompatible source versions. Show a dry-run
-  plan, affected control-plane/worker nodes, image references, manifest changes,
-  and permission/health failures before enabling confirmation. Verify that the
-  preview path does not mutate the cluster.
-- [ ] **28. Confirmed cluster operation:** require `--enable-writes`, a verified
+  minor-version skips, and unknown/incompatible source versions. Show an
+  explicitly anticipated plan, affected nodes, image references, manifest
+  reconciliation scope, and permission/health failures before confirmation.
+  The preview does not run the upstream CLI dry-run or mutate the cluster.
+- [x] **28. Confirmed cluster operation:** require `--enable-writes`, a verified
   etcd snapshot before mutation, fresh health/version checks, and typed cluster
   identity plus target-version confirmation. Prevent concurrent Kubernetes/Talos
   upgrades and conflicting maintenance operations against the same cluster.
   Give this a separate cluster-scoped entry point; do not reuse per-node `U`.
-- [ ] **29. Progress and partial failure:** preserve upstream component sequencing
+- [x] **29. Progress and partial failure:** preserve upstream component sequencing
   and readiness checks for API servers, controller managers, schedulers,
   kube-proxy, kubelets, and managed manifests. Show image pre-pull, drain/eviction
   where applicable, per-component progress, and final version/health verification.
   Cancellation or disconnection must report a potentially partial upgrade and
   require rediscovery before retry; do not promise automatic rollback or treat
   reconnecting as evidence of completion.
-- [ ] **30. Validation and documentation:** cover read-only gating, wrong-cluster
-  credentials, unsupported/skipped versions, mixed versions, snapshot failure,
-  concurrent operations, stale confirmation, cancellation, and partial completion.
-  Validate supported upgrade paths on disposable Talos clusters before release.
-  Update the README/security/commands guides when the feature actually ships;
-  current documentation must continue to describe the existing OS-only action.
+- [ ] **30. Validation and documentation:** automated and disposable-cluster
+  validation remain pending. The README, security guide, and command reference
+  now document the CLI prerequisite, explicit target, snapshot, stage order,
+  drain policy, cancellation, and partial recovery. The operator asked to skip
+  tests; no tests or cluster operations were run for this implementation. Build
+  and source review do not replace validation of supported paths on disposable
+  Talos clusters before release.
 
 References for the design: [upstream upgrade-k8s command](https://github.com/siderolabs/talos/blob/v1.14.4/cmd/talosctl/cmd/talos/upgrade-k8s.go),
 [upstream Kubernetes orchestration](https://github.com/siderolabs/talos/tree/v1.14.4/pkg/cluster/kubernetes),
@@ -283,9 +281,9 @@ and [Kubernetes version skew policy](https://kubernetes.io/releases/version-skew
 
 ## 5. Explicit non-goals
 
-- Kubernetes upgrade implementation remains pending Phase 5; the existing Talos
-  OS upgrade action does not upgrade Kubernetes. Kubernetes upgrades are no longer
-  a permanent non-goal.
+- Kubernetes upgrades have a separate Phase 5 implementation. Talos OS upgrade
+  remains node-scoped; disposable release validation for Kubernetes upgrades is
+  still pending.
 - Kubernetes workload/object management (`kubectl` remains the tool).
 - etcd downgrade operations and learner promotion.
 - META partition writes, LVM/MD teardown fan-out, credential generation.
@@ -320,8 +318,8 @@ These are remaining candidates, not newly approved implementation work:
    followed by disposable-cluster validation. CPU and time are already implemented.
 2. `feat(etcd): require typed member confirmation`
 3. Document etcd port 2383 and close remaining Phase 4 convenience gaps.
-4. Kubernetes upgrade design/integration study (Phase 5 items 25–30; separate
-   reviewed spec and implementation plan before feature development).
+4. Kubernetes upgrade validation on supported disposable Talos clusters
+   (Phase 5 item 30); no live-cluster validation is implied.
 
 ## Appendix — source reports
 

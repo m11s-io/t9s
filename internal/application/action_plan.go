@@ -1,6 +1,9 @@
 package application
 
-import "github.com/m11s-io/t9s/internal/ports"
+import (
+	"github.com/m11s-io/t9s/internal/domain"
+	"github.com/m11s-io/t9s/internal/ports"
+)
 
 // ActionKind identifies a node mutation.
 type ActionKind string
@@ -84,20 +87,24 @@ type PreparedNodeAction struct{ state *preparedState }
 type PreparedServiceAction struct{ state *preparedState }
 type PreparedEtcdAction struct{ state *preparedState }
 type PreparedConfiguration struct{ state *preparedState }
+type PreparedKubernetesUpgrade struct{ state *preparedState }
 
 type preparedState struct {
-	session                 *Session
-	consumed                bool // guarded by session.mu
-	assessment              Assessment
-	serviceFacts            *serviceActionFacts
-	nodeFacts               *nodeActionFacts
-	etcdFacts               *etcdActionFacts
-	nodeRequest             *NodeActionRequest
-	serviceRequest          *ServiceActionRequest
-	etcdRequest             *EtcdActionRequest
-	configurationRequest    *ConfigurationApplyRequest
-	configurationFacts      *configurationFacts
-	configurationAssessment *ConfigurationAssessment
+	session                  *Session
+	consumed                 bool // guarded by session.mu
+	assessment               Assessment
+	serviceFacts             *serviceActionFacts
+	nodeFacts                *nodeActionFacts
+	etcdFacts                *etcdActionFacts
+	nodeRequest              *NodeActionRequest
+	serviceRequest           *ServiceActionRequest
+	etcdRequest              *EtcdActionRequest
+	configurationRequest     *ConfigurationApplyRequest
+	configurationFacts       *configurationFacts
+	configurationAssessment  *ConfigurationAssessment
+	kubernetesUpgradePlan    *domain.KubernetesUpgradePlan
+	kubernetesUpgradeRequest *string
+	kubernetesUpgradeFacts   *kubernetesUpgradeFacts
 }
 
 func newPreparedNodeAction(session *Session, request NodeActionRequest, assessment Assessment) PreparedNodeAction {
@@ -125,6 +132,8 @@ func (p PreparedEtcdAction) Assessment() Assessment    { return assessmentOf(p.s
 func (p PreparedConfiguration) Assessment() ConfigurationAssessment {
 	return configurationAssessmentOf(p.state)
 }
+
+func (p PreparedKubernetesUpgrade) Assessment() Assessment { return assessmentOf(p.state) }
 
 func assessmentOf(state *preparedState) Assessment {
 	if state == nil {

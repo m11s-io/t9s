@@ -26,6 +26,7 @@ const (
 	commandResources
 	commandClusterHealth
 	commandConfiguration
+	commandKubernetesUpgrade
 	commandHelp
 )
 
@@ -37,7 +38,7 @@ type commandModel struct {
 func newCommandModel() commandModel {
 	input := textinput.New()
 	input.Prompt = ">"
-	input.Placeholder = "nodes, services, contexts, config, bgp, or healthcheck"
+	input.Placeholder = "nodes, services, contexts, config, upgrade-k8s, bgp, or healthcheck"
 	input.CharLimit = 64
 	return commandModel{input: input}
 }
@@ -66,6 +67,8 @@ func resolveCommand(value string) command {
 		return commandClusterHealth
 	case "config":
 		return commandConfiguration
+	case "upgrade-k8s", "k8s-upgrade":
+		return commandKubernetesUpgrade
 	case "help", "?":
 		return commandHelp
 	default:

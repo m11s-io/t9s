@@ -157,7 +157,38 @@ etcd state is unknown, is refused outright rather than warned about. Learners
 do not vote, so removing one is never quorum-blocked, but it still requires the
 snapshot. The refused prompt stays on screen until explicitly cancelled.
 
-Talos upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages. Progress and errors are normalized; credentials, talosconfig contents, kubeconfig contents, and registry tokens are not stored in model state or logs. Kubernetes control-plane upgrades are not part of this action.
+Talos OS upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages.
+
+Kubernetes upgrades use the separate `:upgrade-k8s` command and require
+`talosctl` v1.14.4 on `PATH`. The operator supplies an explicit stable target,
+chooses a new local snapshot path, reviews the node-by-node plan, and types the
+displayed cluster UID and target version. The preview does not run the upgrade
+command or mutate the cluster. Execution requires writes mode, a verified etcd
+snapshot, fresh identity and health checks, and the same confirmation-bound
+plan. The standard Talos CLI upgrades control-plane components and reconciles
+managed manifests first; t9s then pre-pulls and upgrades kubelets serially.
+Each kubelet is cordoned and drained through eviction, so PodDisruptionBudgets
+can block progress. Pods are never force-deleted and `emptyDir` data is not
+discarded. A node already cordoned by an operator remains cordoned after a
+successful upgrade.
+
+Cancellation or a later-stage failure can leave a partial cluster upgrade. A
+node cordoned by t9s remains cordoned if its kubelet outcome is uncertain or
+fails. The child CLI is terminated and reaped before t9s releases its local
+mutation lease, but this cannot stop server-side work already accepted by
+Talos. t9s keeps the verified snapshot and requires a fresh inventory and plan
+before retry; it does not roll versions back or automatically replay an
+ambiguous stage. If t9s observed a successful CLI exit and verified the
+control-plane target, that evidence is retained only for the lifetime of the
+current t9s session so a fresh plan can continue the kubelet stage. If that
+session ends first, managed-manifest convergence cannot be independently
+verified by the next session and t9s blocks automatic resume; use Talos recovery
+procedures and inspect the cluster before continuing. Local mutation exclusion
+coordinates t9s sessions in this process only, not other t9s processes or
+external administrators. Disposable-cluster validation is still required
+before release. Progress and errors are normalized; credentials, talosconfig
+contents, kubeconfig contents, and registry tokens are not stored in model
+state or logs.
 
 The supplied Talos credentials can still be privileged. Protect every talosconfig as a sensitive secret and grant only the permissions an operator needs.
 

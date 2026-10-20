@@ -24,14 +24,14 @@
 - Ten-minute drain deadline, five-minute kubelet convergence deadline, thirty-minute CLI deadline; respect shorter caller deadlines. Scale the total operation budget with node count.
 - Child termination is followed by reaping before lease release. Neither exit zero nor reconnection establishes cluster convergence.
 - Credentials, raw subprocess output, config bytes/diffs, and raw transport errors never reach TUI state or persistent operation records.
-- No live/disposable cluster upgrade is authorized by implementation. Disposable release evidence remains pending, as requested; no tests run during planning.
+- No live/disposable cluster upgrade is authorized by implementation. Disposable release evidence remains pending. The user requested no tests, so implementation verification is build-only.
 
 ## Review Focus
 
 1. A Kubernetes Node replaced under the same name must fail UID checks before eviction, patch, or uncordon (Tasks 1 and 4).
 2. An alias context or second session must not permit a conflicting mutation; unknown identity must conservatively conflict rather than bypass ownership (Task 2).
 3. A child that fills both pipes, prints an oversized line, or ignores cancellation must not hang the UI or release its lease early (Tasks 3 and 5).
-4. A CLI-completed or partially completed cluster must be rediscovered without downgrading components or replaying ambiguous work as successful (Tasks 1 and 5).
+4. A CLI-completed or partially completed cluster must be rediscovered without downgrading components or replaying ambiguous work as successful; verified manifest-stage evidence is retained only for the current application session (Tasks 1 and 5).
 5. An externally cordoned node or a config edited between CLI and kubelet patch must preserve operator intent and stop on observed conflicting drift (Task 4).
 
 ## File and interface map
@@ -141,6 +141,10 @@
 - [ ] **Step 6:** Run `go test ./...`, `go vet ./...`, and `go build ./...`; require successful exits. Run `go test -race ./internal/application ./internal/adapters/talos ./internal/adapters/kubernetes ./internal/tui` once for the final integrated change. Use the existing docs package scripts from `docs/package.json` for docs tests/typecheck/build; require successful exits. Do not broaden/repeat validation without new changes or failures.
 - [ ] **Step 7:** Review the whole diff against the spec and normalize any accidentally exposed raw output/config data. Confirm `go.mod` still lacks the Talos root module. Commit as `feat(tui): expose Kubernetes upgrade preview and progress`.
 
+## Execution status
+
+The user approved native implementation on the existing feature branch. Tasks 1–6 are implemented in the working tree. Tests and cluster operations were intentionally not run; the full Go build and diff review remain the verification steps. Disposable-cluster release validation remains pending.
+
 ## Plan self-review and handoff
 
 - Inventory, identity, compatibility/skew, nonmutating preview: Task 1.
@@ -150,4 +154,4 @@
 - Prepared confirmation, verified snapshot, serial orchestration, fresh verification, retained partial outcomes: Task 5.
 - Cluster UX, context lifecycle, documentation and integrated verification: Task 6.
 - All five Review Focus cases have explicit owning tests. Types and methods named in later tasks are defined in the earlier interface blocks; private raw data remains adapter-owned.
-- Native execution is recommended: the six tasks share tightly coupled contracts, so one implementer can keep those interfaces consistent. No execution method has yet been selected. Review/approval of this written plan is required before product implementation.
+- Native execution was selected: the six tasks share tightly coupled contracts, so one implementer kept those interfaces consistent. The user approved implementation before product changes began.

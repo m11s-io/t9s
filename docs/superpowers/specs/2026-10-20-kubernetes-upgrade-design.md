@@ -1,6 +1,6 @@
 # Kubernetes upgrades through Talos
 
-**Status:** Draft for user review; implementation has not started
+**Status:** Approved design; implementation is in progress, with disposable-cluster validation pending
 
 **Date:** 2026-10-20
 
@@ -96,7 +96,7 @@ Reuse the verified local etcd snapshot implementation and its checksum receipt w
 
 Track stages and per-node results as pending, running, verified, failed before dispatch, unconfirmed after dispatch, or not attempted. Retain successful observations when a later stage fails. CLI exit zero alone does not establish a completed cluster upgrade. Any cancellation, connection loss, unknown child outcome, or failed final verification produces a partial/unconfirmed result and requires a fresh plan before retry.
 
-Do not automatically rerun the CLI, roll back component versions, uncordon an unhealthy node, or resume solely because connectivity returns. A fresh plan may skip work independently verified at the target, but must not turn prior ambiguous progress into success.
+Do not automatically rerun the CLI, roll back component versions, uncordon an unhealthy node, or resume solely because connectivity returns. During the current application session, a successful CLI exit followed by verified target control-plane observations is retained as evidence that the upstream managed-manifest stage completed, allowing a fresh plan to continue kubelets. This evidence is memory-only. If the session ends before kubelets finish, and managed-manifest convergence cannot be independently rediscovered, block automatic resume and require Talos recovery procedures and fresh operator review. Never turn ambiguous progress into success.
 
 ## Delivery and validation scope
 
@@ -104,7 +104,7 @@ No live cluster operation is part of design or implementation authorization. The
 
 Implementation verification should focus on actual boundaries: exact subprocess arguments and credentials, version rejection, nonmutating preview, wrong-cluster rejection, all-node compatibility, mixed/partial inventory, stale confirmation, backup failure, mutation ownership, secret-bearing child output, cancellation/reaping, sequential eviction and PDB failures, preservation of preexisting cordons, post-CLI configuration rereads, and partial results. Do not use a live cluster to exercise failures.
 
-When shipped, update the commands, security, prerequisites, and upgrade guides with the required CLI version, stage order, drain policy, backup behavior, cancellation limits, and manual recovery guidance. Keep user-facing Phase 5 availability marked pending until code and its required release validation exist.
+The command and security guides now describe the CLI prerequisite, stage order, drain policy, backup behavior, cancellation limits, and manual recovery guidance. Keep Phase 5 release validation pending until supported upgrade paths have evidence from disposable Talos clusters.
 
 ## Self-review
 
@@ -113,4 +113,4 @@ When shipped, update the commands, security, prerequisites, and upgrade guides w
 - Draining is serial, PDB-aware, preserves prior scheduling intent, and never automatically restores an unverified failed node.
 - Preview avoids the inspected CLI dry-run hazards and labels the limits of manifest prediction.
 - Cluster matching, all-node compatibility, local concurrency limits, backup verification, and partial outcomes are explicit.
-- Product code, implementation-plan approval, and disposable-cluster release validation remain outstanding.
+- Product code is implemented in the working tree; build-only validation and whole-diff review remain in progress. Manifest-stage resume evidence is retained only for the current application session. Disposable-cluster release validation remains outstanding.

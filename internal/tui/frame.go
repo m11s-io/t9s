@@ -102,6 +102,8 @@ func directResourceTitle(model model, kind viewKind) string {
 	switch kind {
 	case viewConfiguration:
 		return "configuration"
+	case viewKubernetesUpgrade:
+		return "kubernetes upgrade"
 	case viewServices:
 		return fmt.Sprintf("services(all)[%d]", len(model.cluster.services.Value.Services))
 	case viewServiceLogs:

@@ -56,6 +56,7 @@ type model struct {
 	dmesg               logsModel
 	healthcheck         healthcheckModel
 	configuration       configurationModel
+	kubernetesUpgrade   kubernetesUpgradeModel
 	logStream           directLogStreamState
 	dmesgStream         directDmesgStreamState
 	eventFollow         directEventFollowState
@@ -267,6 +268,8 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDirectMutationResult(message)
 	case directConfigurationPreviewLoaded, directConfigurationProgress, directConfigurationFinished:
 		return m.updateDirectConfigurationResult(message)
+	case directKubernetesUpgradePrepared, directKubernetesUpgradeOpened, directKubernetesUpgradeEvent, directKubernetesUpgradeFinished:
+		return m.updateDirectKubernetesUpgradeResult(message)
 	case directEventFollowOpened, directEventFollowBatch, directClusterHealthOpened, directClusterHealthBatch:
 		return m.updateDirectEventAndHealthResult(message)
 	case directNodeProgress, directNodeServicesLoaded, directEventsLoaded, directEtcdLoaded, directKubernetesNodesLoaded, directNodeStatusesLoaded:
@@ -359,6 +362,12 @@ func (m model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.views.top().Kind == viewConfiguration {
 			return m.updateDirectConfigurationInput(message)
+		}
+		if m.views.top().Kind == viewKubernetesUpgrade {
+			command, handled := m.updateKubernetesUpgradeInput(message)
+			if handled {
+				return m, command
+			}
 		}
 		if message.String() == "?" && !m.directFilterEditing() {
 			m.views = m.views.push(viewFrame{Kind: viewHelp, Label: "help"})
@@ -846,6 +855,8 @@ func (m model) View() tea.View {
 			content = m.healthcheck.viewSized(innerSize)
 		} else if m.views.top().Kind == viewConfiguration {
 			content = renderConfigurationView(m.configuration, innerSize)
+		} else if m.views.top().Kind == viewKubernetesUpgrade {
+			content = m.kubernetesUpgrade.view(innerSize.Width, innerSize.Height, m.options.WritesEnabled)
 		} else if m.views.top().Kind == viewEtcd {
 			content = m.etcd.viewSized(innerSize, m.cluster.etcd)
 		} else if m.views.top().Kind == viewBGPPeers {
@@ -1022,6 +1033,7 @@ func (m model) directFilterEditing() bool {
 }
 
 func (m *model) beginSessionOpen(contextName string) tea.Cmd {
+	m.kubernetesUpgrade.close(m.session)
 	m.configuration.discard(m.session)
 	m.configuration = configurationModel{}
 	m.requests.cancelSlot("upgrade-image")
@@ -1097,6 +1109,7 @@ func directActionHints(kind viewKind, writesEnabled bool) []actionHint {
 }
 
 func (m model) fallbackCleanup() {
+	m.kubernetesUpgrade.close(m.session)
 	m.configuration.discard(m.session)
 	m.closeDirectLogs(false)
 	m.closeDirectLogs(true)

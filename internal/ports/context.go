@@ -18,6 +18,7 @@ type Session interface {
 	Nodes() NodeReader
 	NodeActions() NodeController
 	Configuration() ConfigurationController
+	KubernetesUpgrade() KubernetesUpgradeBackend
 	ServiceActions() ServiceController
 	Services() ServiceReader
 	ServiceLogs() ServiceLogReader

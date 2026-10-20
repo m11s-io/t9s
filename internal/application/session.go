@@ -16,11 +16,13 @@ var (
 
 // Session owns one adapter session and the resources associated with its lifetime.
 type Session struct {
-	sdkSession      ports.Session
-	kubernetesNodes ports.KubernetesNodeReader
-	lifetimeCtx     context.Context
-	lifetimeCancel  context.CancelFunc
-	writesEnabled   bool
+	sdkSession                 ports.Session
+	kubernetesNodes            ports.KubernetesNodeReader
+	lifetimeCtx                context.Context
+	lifetimeCancel             context.CancelFunc
+	writesEnabled              bool
+	clusterUID                 string
+	kubernetesUpgradeManifests map[string]bool
 
 	mu           sync.Mutex
 	closed       bool
