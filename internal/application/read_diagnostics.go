@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -56,6 +57,75 @@ func (s *Session) Network(ctx context.Context, node string) (domain.NetworkSet, 
 		return domain.NetworkSet{}, ErrCapabilityUnavailable
 	}
 	return s.sdkSession.Network().List(ctx, node)
+}
+
+// NodeStatus reads the curated networking, storage, volume, and security
+// evidence for one node. The adapter preserves per-resource availability so a
+// partial read remains useful without presenting unsupported data as healthy.
+func (s *Session) NodeStatus(ctx context.Context, node string) (domain.NodeStatusSnapshot, error) {
+	ctx, cancel, err := s.operationContext(ctx, unaryReadTimeout)
+	if err != nil {
+		return domain.NodeStatusSnapshot{}, err
+	}
+	defer cancel()
+	if s.sdkSession == nil || s.sdkSession.NodeStatus() == nil {
+		return domain.NodeStatusSnapshot{}, ErrCapabilityUnavailable
+	}
+	return s.sdkSession.NodeStatus().List(ctx, node)
+}
+
+func (s *Session) SupportsNodeStatus() bool {
+	return s != nil && s.sdkSession != nil && s.sdkSession.NodeStatus() != nil
+}
+
+// NodeStatuses bounds concurrent COSI inspections so cluster-wide health
+// refreshes do not fan out an unbounded number of reads.
+func (s *Session) NodeStatuses(ctx context.Context, nodes []domain.NodeSnapshot) (domain.NodeStatusSet, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	set := domain.NodeStatusSet{Statuses: make([]domain.NodeStatusSnapshot, len(nodes))}
+	semaphore := make(chan struct{}, 8)
+	var wait sync.WaitGroup
+	var mu sync.Mutex
+	var readErrs []error
+	var admissionErr error
+	for index := range nodes {
+		index := index
+		select {
+		case semaphore <- struct{}{}:
+		case <-ctx.Done():
+			admissionErr = ctx.Err()
+			goto waitForReads
+		}
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			defer func() { <-semaphore }()
+			target := nodes[index].Target()
+			if target == "" {
+				name := nodes[index].DisplayName()
+				mu.Lock()
+				set.Statuses[index] = domain.NodeStatusSnapshot{}
+				set.Problems = append(set.Problems, domain.NodeStatusProblem{Node: name, Message: "node target unavailable"})
+				readErrs = append(readErrs, fmt.Errorf("node %s: target unavailable", name))
+				mu.Unlock()
+				return
+			}
+			status, err := s.NodeStatus(ctx, target)
+			set.Statuses[index] = status
+			if err != nil {
+				mu.Lock()
+				set.Problems = append(set.Problems, domain.NodeStatusProblem{Node: target, Message: err.Error()})
+				readErrs = append(readErrs, fmt.Errorf("node %s: %w", target, err))
+				mu.Unlock()
+			}
+		}()
+	}
+
+waitForReads:
+	wait.Wait()
+	return set, errors.Join(admissionErr, errors.Join(readErrs...))
 }
 
 func (s *Session) Sockets(ctx context.Context, node string) (domain.SocketSet, error) {

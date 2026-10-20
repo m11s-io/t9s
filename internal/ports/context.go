@@ -26,6 +26,7 @@ type Session interface {
 	Processes() ProcessReader
 	Disks() DiskReader
 	Network() NetworkReader
+	NodeStatus() NodeStatusReader
 	Dmesg() DmesgReader
 	Netstat() NetstatReader
 	Mounts() MountReader

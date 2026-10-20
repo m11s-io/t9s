@@ -23,6 +23,7 @@ const (
 	viewDisks
 	viewDiskDetail
 	viewNetwork
+	viewBGPPeers
 	viewLinkDetail
 	viewDmesg
 	viewNetstat

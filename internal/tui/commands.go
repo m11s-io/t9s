@@ -71,6 +71,12 @@ type directKubernetesNodesLoaded struct {
 	err     error
 }
 
+type directNodeStatusesLoaded struct {
+	request directRequestStamp
+	values  domain.NodeStatusSet
+	err     error
+}
+
 type directSelectContext struct{ name string }
 
 func directCommand(ctx context.Context, run func(context.Context) tea.Msg) tea.Cmd {
@@ -127,5 +133,12 @@ func directKubernetesNodesCommand(session *application.Session, request directRe
 	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
 		nodes, err := session.KubernetesNodes(ctx)
 		return directKubernetesNodesLoaded{request: request.stamp, nodes: nodes, err: err}
+	})
+}
+
+func directNodeStatusesCommand(session *application.Session, request directRequest, nodes []domain.NodeSnapshot) tea.Cmd {
+	return directCommand(request.ctx, func(ctx context.Context) tea.Msg {
+		values, err := session.NodeStatuses(ctx, nodes)
+		return directNodeStatusesLoaded{request: request.stamp, values: values, err: err}
 	})
 }

@@ -124,10 +124,14 @@ func (s *Session) KubernetesNodes(ctx context.Context) (map[string]domain.Kubern
 // HealthInput carries both observed values and whether each observation is
 // authoritative. An unknown collection is omitted from diagnosis.
 type HealthInput struct {
-	Nodes      domain.NodeSet
-	NodesKnown bool
-	Etcd       domain.EtcdSet
-	EtcdKnown  bool
+	Nodes             domain.NodeSet
+	NodesKnown        bool
+	Etcd              domain.EtcdSet
+	EtcdKnown         bool
+	NodeStatuses      domain.NodeStatusSet
+	NodeStatusesKnown bool
+	Services          domain.ServiceSet
+	ServicesKnown     bool
 }
 
 // EnrichNodes returns copied node snapshots correlated with Kubernetes data.

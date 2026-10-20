@@ -52,6 +52,7 @@ func (f *sessionFactory) Open(ctx context.Context, contextName string) (ports.Se
 		processes:         newProcessReader(machineryProcessClient{client: client}),
 		disks:             newDiskReader(machineryDiskClient{client: client}),
 		network:           newNetworkReader(machineryNetworkClient{client: client}),
+		nodeStatus:        newNodeStatusReader(machineryNodeStatusClient{client: client}),
 		dmesg:             newDmesgReader(machineryDmesgClient{client: client}),
 		netstat:           newNetstatReader(machineryNetstatClient{client: client}),
 		mounts:            newMountReader(machineryMountClient{client: client}),
@@ -80,6 +81,7 @@ type session struct {
 	processes         ports.ProcessReader
 	disks             ports.DiskReader
 	network           ports.NetworkReader
+	nodeStatus        ports.NodeStatusReader
 	dmesg             ports.DmesgReader
 	netstat           ports.NetstatReader
 	mounts            ports.MountReader
@@ -118,6 +120,8 @@ func (s *session) Processes() ports.ProcessReader { return s.processes }
 func (s *session) Disks() ports.DiskReader { return s.disks }
 
 func (s *session) Network() ports.NetworkReader { return s.network }
+
+func (s *session) NodeStatus() ports.NodeStatusReader { return s.nodeStatus }
 
 func (s *session) Dmesg() ports.DmesgReader { return s.dmesg }
 

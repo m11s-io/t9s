@@ -13,6 +13,7 @@ Press `Enter` to run the command or `Esc` to close the input.
 | `:contexts` | `:ctx` | Select another discovered context. |
 | `:events` | `:ev` | Open the machine event snapshot; `s` toggles live follow. |
 | `:etcd` | `:et` | Open etcd membership and status; with `--enable-writes`, snapshot/membership maintenance actions live here. See [Etcd operations](/guides/etcd-ops/). |
+| `:bgp` | `:bgps` | Show BGP peer sessions across nodes, including peer ASN, FSM state, BFD, and route counters. |
 | `:overview` | `:ov` | Cluster-wide health summary. See [Health](/guides/health/). |
 | `:problems` | | Drillable list of everything currently unhealthy. See [Health](/guides/health/). |
 | `:healthcheck` | `:hc` | Stream the server-side cluster health check; accepts an optional wait timeout (e.g. `:healthcheck 5m`, default 60s). See [Cluster health check](/guides/health/#healthcheck). |
@@ -54,7 +55,7 @@ These act on the selected row in `:disks` (opened with `k` from `:nodes`):
 
 | Key | Result |
 | --- | --- |
-| `Enter` / `d` | Open disk detail. |
+| `Enter` / `d` | Open disk detail, including matching LVM physical volumes, volume groups/logical volumes, MD arrays, and Talos volume status. |
 | `W` | Wipe the selected block device, behind a typed device-path prompt and a confirm step. The system disk and read-only devices are refused. Requires `--enable-writes`. See [Processes, disks, and network](/guides/processes-disks-network/). |
 
 `W` is inert unless `t9s` was started with `--enable-writes` (or `T9S_ENABLE_WRITES`); see [Security](/security/).

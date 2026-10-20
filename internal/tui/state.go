@@ -22,6 +22,7 @@ type directClusterState struct {
 	events      directEventState
 	etcd        directEtcdState
 	kubernetes  directKubernetesState
+	nodeStatus  directNodeStatusState
 }
 
 // directNodeState contains the node data and presentation status owned by the
@@ -56,6 +57,12 @@ type directEventState struct {
 type directEtcdState struct {
 	Status directLoadStatus
 	Value  domain.EtcdSet
+	Err    string
+}
+
+type directNodeStatusState struct {
+	Status directLoadStatus
+	Value  domain.NodeStatusSet
 	Err    string
 }
 

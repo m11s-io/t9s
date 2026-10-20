@@ -11,7 +11,7 @@ Press `p` on a selected node to open its process list: `PID`, `STATE`, `CPU`, `M
 
 ## Disks
 
-Press `k` on a selected node (`d` already opens node detail) to open its disk device list: `DEVICE`, `TYPE`, `SIZE`, `MODEL`, `SYSTEM`. Detail adds `Serial`, `BusPath`, and `ReadOnly`. Only the size, usage, and health facts Talos exposes directly are shown — `t9s` does not infer filesystem or mount information beyond that.
+Press `k` on a selected node (`d` already opens node detail) to open its disk device list: `DEVICE`, `TYPE`, `SIZE`, `MODEL`, `SYSTEM`. Detail adds `Serial`, `BusPath`, and `ReadOnly`, plus matching LVM physical volumes, volume groups/logical volumes, MD arrays, Talos volume phase/filesystem, and configured trim/scrub schedule state. Node detail lists Talos-labeled system volumes with their phase, location, mount, trim, and scrub status. Unknown resource groups remain marked unknown when Talos does not expose them.
 
 ### Wipe a block device
 
@@ -22,6 +22,11 @@ The default wipe method is `FAST` (erase signatures, filesystem, and partition m
 ## Network
 
 Press `n` on a selected node to open its network interface list: `LINK`, `TYPE`, `STATE`, `MTU`, `ADDRESSES`. Detail adds every assigned route for the selected link, alongside its full address list.
+
+Use `:bgp` (or `:bgps`) to inspect BGP peers across the cluster. The view shows
+the owning node, peer address and ASN, BGP session state, BFD state, and route
+counters. A non-established peer produces a health diagnosis; an unavailable
+peer-status resource is shown as unknown in `:overview`.
 
 ## Refreshing
 

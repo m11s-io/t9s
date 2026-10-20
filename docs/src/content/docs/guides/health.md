@@ -3,13 +3,28 @@ title: Health
 description: Explainable cluster health with :overview and :problems.
 ---
 
-`:overview`/`:ov` and `:problems` are projections over the same node, service, and etcd snapshots the rest of `t9s` already shows — they never make their own API calls, and evaluating them never changes what `:nodes`/`:services`/`:etcd` display.
+`:overview`/`:ov` and `:problems` are projections over the same node, service, etcd, and node-scoped Talos status snapshots the rest of `t9s` already shows — they never make their own API calls, and evaluating them never changes the underlying observations.
 
 Diagnoses are deterministic and cite evidence: each one has a severity, a short summary, the resource it's about, and a stable rule identity, so "unhealthy" is always traceable back to why.
 
 Service health summaries distinguish explicitly unhealthy services from services whose health is unknown. Unknown service health remains visible in the node service counters but does not by itself mark the cluster degraded; only an explicit unhealthy service contributes a `node-services-degraded` diagnosis. If the service list or node observations cannot be loaded, the existing unavailable/unknown data handling still applies.
 
 Active etcd alarms (`NOSPACE`, `CORRUPT`, and future alarm types) are treated as critical `etcd-member-alarmed` diagnoses — a `NOSPACE` alarm makes the cluster read-only until it is cleared — and are also shown in the `:etcd` view's `ALARMS` column. From `:etcd`, `A` disarms the selected member's alarms behind `--enable-writes`; disarming lifts the read-only restriction but does not reclaim disk, so free space first or the alarm returns. A `CORRUPT` alarm still requires restoring from a snapshot — disarming does not repair corruption. See [Etcd operations](/guides/etcd-ops/).
+
+The overview also rolls up BGP, storage, volume maintenance, and system status.
+Non-established BGP sessions warn; unknown peer state remains unknown. Missing
+LVM physical volumes, partial volume groups, failed MD arrays, failed Talos
+volumes, unsuccessful filesystem scrubs, and unhealthy `sandboxd` services are
+reported from explicit status evidence. Rebuilding MD arrays and waiting volumes
+warn while Talos reports those transitions. Volume location, provisioning, and
+preparation phases also warn; unknown and closed phases remain unknown. A trim
+schedule that is past its next scheduled time warns. Workload isolation is shown
+as enabled, disabled, or unknown; disabled is not treated as unhealthy because
+older clusters may have that policy intentionally.
+
+Use `:bgp`/`:bgps` to inspect peer sessions. Node detail separates workload
+isolation configuration from `sandboxd` service health and lists system volumes.
+Disk detail shows matching LVM, MD RAID, volume, trim, and scrub evidence.
 
 ## `:overview`
 

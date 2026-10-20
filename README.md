@@ -9,30 +9,37 @@ information over those snapshots.
 
 ## Current status
 
-This repository implements the full Phase 1 read-only MVP scope. It
-discovers Talos contexts, opens a context-scoped session, renders a compact
-read-only `:nodes` view with node detail, filters nodes with `/`, and
-switches contexts with `:contexts` or `:ctx`. Also implemented: services
-with service detail and streaming logs, machine events with optional live follow (`:events`, `s`), etcd
-membership and status (`:etcd`), node-scoped process lists (press `p` on a
-selected node), node-scoped disk devices (press `k`), node-scoped network
-interfaces (press `n`), a generic read-only Talos resource browser
-(`:resources`/`:res`), explainable health rules with `:overview` and
-`:problems`, optional Kubernetes Node correlation on `:nodes` when a
-Kubernetes context matches the active Talos context, and the k9s Node-view
-launcher (`--kube-context`/`--node`, see [k9s integration](#k9s-integration)
-below). Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
-additionally enables gated node reboot, shutdown, rollback, and upgrade from
-`:nodes` (`space` to mark, `R`/`X`/`B`/`U` to act, each behind a confirm
-prompt), gated service start/stop/restart from `:services` (`S`/`T`/`R`), and
-gated etcd snapshot/defragment/alarm-disarm from `:etcd` (`s`/`d`/`A`) — see
-[Security](#security) below; the UI remains read-only by default.
+Phases 0–3 of the Talos v1.14 coverage roadmap are implemented. t9s discovers
+Talos contexts, opens a context-scoped session, and provides read-only views for
+nodes, services and logs, events, etcd, processes, disks, network links and
+routes, BGP peers (`:bgp`/`:bgps`), containers and images, memory, CPU, time,
+mounts, sockets, kernel logs, and bounded directory usage. Disk details include
+LVM and MD RAID status; node details include system volumes, trim/XFS scrub
+status, workload isolation configuration, and `sandboxd` service health. The
+generic Talos resource browser remains available at `:resources`/`:res`.
+
+Explainable health rules are summarized by `:overview`/`:ov` and listed in
+`:problems`. Optional Kubernetes Node correlation appears on `:nodes` when a
+Kubernetes context matches the active Talos context. The k9s Node-view launcher
+(`--kube-context`/`--node`) is documented in [k9s integration](#k9s-integration).
+Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`) enables gated node
+reboot, shutdown, rollback, reset, and Talos OS upgrade; service start/stop/
+restart; device wipe; and etcd snapshot and membership maintenance. See
+[Security](#security); t9s stays read-only by default.
 
 Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
 implemented.
 
-The Talos SDK and cluster compatibility target is **v1.14.4**. Automated checks verify SDK integration; live cluster compatibility requires the manual smoke test in [CONTRIBUTING.md](CONTRIBUTING.md). Talos upgrades are node-level operations: t9s upgrades the Talos OS on the selected node; it does not perform a Kubernetes control-plane upgrade.
+The Talos SDK compatibility target is **v1.14.4**. A disposable two-node Docker
+smoke check ran on 2026-10-20 and verified node/service discovery, the BGP and
+health views, system-volume details, workload isolation, and the resource and
+disk views. The cluster had no BGP peers, LVM/MD arrays, trim or scrub schedules,
+or `sandboxd` service; it also did not expose a `SystemDisk` resource. Those
+hardware-backed cases remain unverified. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the full manual checklist.
+Talos upgrades are node-level operations: t9s upgrades the Talos OS on the
+selected node; it does not perform a Kubernetes control-plane upgrade.
 
 ## Install
 
