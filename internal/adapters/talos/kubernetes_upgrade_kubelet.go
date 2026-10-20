@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cosi-project/runtime/pkg/resource"
@@ -88,7 +89,7 @@ func (b *kubernetesUpgradeBackend) UpgradeKubelet(ctx context.Context, plan doma
 		result.LeftCordoned = true
 	}
 	if err := access.Drain(ctx, plan.Name, plan.UID, 10*time.Minute); err != nil {
-		return result, errors.New("node drain failed; node remains cordoned for operator review")
+		return result, fmt.Errorf("node drain failed; node remains cordoned for operator review: %w", err)
 	}
 	current, fingerprint, err := b.readActiveConfig(ctx, plan.TalosAddress)
 	if err != nil || fingerprint != plan.ConfigFingerprint {
