@@ -151,6 +151,7 @@ func TestDirectFollowedEventsKeepNewestRowsVisibleAfterOverflow(t *testing.T) {
 	stream := &directEventStreamFake{batches: []domain.EventSet{{Events: batch}}}
 	session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
 	model := newModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
 	model.session, model.sessionCtx = session, context.Background()
 	model.width, model.height = 100, 12
 	model.cluster.events = directEventState{Status: directReady, Value: domain.EventSet{Events: []domain.EventSnapshot{{Node: "cp-1", Kind: "Sequence", Message: "boot START"}}}}
@@ -286,6 +287,7 @@ func TestDirectHealthcheckColonKeyStaysInActiveFilter(t *testing.T) {
 
 func runDirectPaletteCommand(t *testing.T, model model, value string) (model, tea.Cmd) {
 	t.Helper()
+	model.splash = false
 	model, _ = updateDirect(model, keyPress(':'))
 	for _, key := range []rune(value) {
 		model, _ = updateDirect(model, keyPress(key))

@@ -24,6 +24,7 @@ func TestServicesLogKeyOpensSelectedServiceLogs(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	root := newModel(context.Background(), client, LaunchOptions{ContextName: "prod"})
+	root.splash = false
 	root.session, root.sessionCtx = session, context.Background()
 	root.cluster.services = directServiceState{Status: directReady, Value: domain.ServiceSet{Services: []domain.ServiceSnapshot{{Node: "cp-1", Name: "etcd"}}}}
 	root.services = root.services.normalizeSelection(root.cluster.services.Value.Services, 0)

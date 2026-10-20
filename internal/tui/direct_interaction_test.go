@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"unicode"
@@ -22,10 +23,25 @@ func TestDirectRootInitStartsSplashAndRefreshHeartbeat(t *testing.T) {
 	require.NotNil(t, command)
 	batch, ok := command().(tea.BatchMsg)
 	require.True(t, ok)
-	require.Len(t, batch, 3, "startup includes context discovery, splash timer, and node refresh heartbeat")
-	assert.Contains(t, root.View().Content, "Inspect Talos clusters")
+	require.Len(t, batch, 2, "startup includes context discovery and node refresh heartbeat")
+	root, _ = updateDirect(root, tea.WindowSizeMsg{Width: 80, Height: 24})
+	lines := strings.Split(ansi.Strip(root.View().Content), "\n")
+	var titleLine, loadingLine string
+	for _, line := range lines {
+		if strings.Contains(line, "Inspect Talos clusters") {
+			titleLine = line
+		}
+		if strings.Contains(line, "Loading cluster data") {
+			loadingLine = line
+		}
+	}
+	require.NotEmpty(t, titleLine)
+	require.NotEmpty(t, loadingLine)
+	assert.Equal(t, (80-ansi.StringWidth("Inspect Talos clusters"))/2, strings.Index(titleLine, "Inspect Talos clusters"))
+	assert.Equal(t, (80-ansi.StringWidth("◌ Loading cluster data…"))/2, strings.Index(loadingLine, "◌ Loading cluster data…"))
 
-	root, _ = updateDirect(root, splashDoneMsg{})
+	request, _ := root.requests.begin("cluster-nodes-services", root.generation())
+	root, _ = updateDirect(root, directNodeServicesLoaded{request: request.stamp})
 	assert.NotContains(t, root.View().Content, "Inspect Talos clusters")
 }
 
@@ -68,10 +84,10 @@ func TestDirectActionHintsFollowWritePermission(t *testing.T) {
 	assert.Contains(t, content, "<W> Reset")
 }
 
-func TestDirectRootSkipsSplashOnKeypress(t *testing.T) {
+func TestDirectRootKeepsSplashOnKeypressUntilNodeDataArrives(t *testing.T) {
 	root := newModel(context.Background(), application.NewClient(application.Dependencies{}), LaunchOptions{})
 	root, _ = updateDirect(root, keyPress('x'))
-	assert.NotContains(t, root.View().Content, "Inspect Talos clusters")
+	assert.Contains(t, root.View().Content, "Inspect Talos clusters")
 }
 
 func TestDirectRootUsesOnlyActiveViewFilterForPalettePrecedence(t *testing.T) {

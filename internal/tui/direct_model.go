@@ -177,7 +177,7 @@ func newModel(parent context.Context, client *application.Client, options Launch
 
 func (m model) Init() tea.Cmd {
 	request, _ := m.requests.beginWithContext("contexts", 0, m.rootCtx)
-	return tea.Batch(directContextsCommand(m.client, request), splashTimer(), nodeAutoRefreshTick())
+	return tea.Batch(directContextsCommand(m.client, request), nodeAutoRefreshTick())
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -187,9 +187,6 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.time = m.time.clampOffset(m.timeViewportHeight())
 		m.resizeDirectResourceDetail()
 		m.syncDirectStreamViewports()
-		return m, nil
-	case splashDoneMsg:
-		m.splash = false
 		return m, nil
 	case nodeAutoRefreshTickMsg:
 		if m.views.top().Kind == viewNodes && !m.directFilterEditing() && m.session != nil {
@@ -203,6 +200,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.requests.cancelSlot("contexts")
 		m.cluster.contexts = append([]domain.ClusterContext(nil), message.contexts...)
 		if message.err != nil {
+			m.splash = false
 			m.cluster.nodes = directNodeState{Status: directFailed, Err: "Context discovery failed"}
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
@@ -213,6 +211,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		selected, err := directResolveContext(message.contexts, m.options.ContextName)
 		if err != nil {
+			m.splash = false
 			m.cluster.nodes = directNodeState{Status: directFailed, Err: "Selected context is unavailable"}
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
@@ -242,6 +241,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if message.err != nil {
+			m.splash = false
 			m.cluster.nodes = directNodeState{Status: directFailed, Err: "Session unavailable"}
 			m.cluster.services = directServiceState{Status: directFailed, Err: "Service data is unavailable"}
 			m.cluster.events = directEventState{Status: directFailed, Err: "Event data is unavailable"}
@@ -271,7 +271,6 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case directRunCommand:
 		return m, m.runClusterCommand(message.value)
 	case tea.KeyPressMsg:
-		m.splash = false
 		if message.String() == "ctrl+c" {
 			return m, m.cleanup(tea.Quit())
 		}
@@ -763,7 +762,7 @@ func (m model) View() tea.View {
 		content = renderResourceFrame(frame, m.contexts.viewSized(innerSize), m.styles.k9s)
 		contentFramed = true
 	} else if m.splash {
-		content = "t9s\nInspect Talos clusters"
+		content = renderStartupScreen(contentSize{Width: layout.Width, Height: layout.ContentHeight}, m.styles.k9s)
 	} else {
 		if diagnosticContent, handled := m.directDiagnosticContent(innerSize); handled {
 			content = diagnosticContent

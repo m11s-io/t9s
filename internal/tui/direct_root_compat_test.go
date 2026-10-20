@@ -117,7 +117,7 @@ func TestDirectParentCancellationAndQuitCancelBlockedContextDiscovery(t *testing
 			model := newModel(parent, client, LaunchOptions{})
 			startup, ok := model.Init()().(tea.BatchMsg)
 			require.True(t, ok)
-			require.Len(t, startup, 3)
+			require.Len(t, startup, 2)
 			result := make(chan tea.Msg, 1)
 			go func() { result <- startup[0]() }()
 			select {

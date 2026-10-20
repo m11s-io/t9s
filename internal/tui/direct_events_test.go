@@ -60,6 +60,7 @@ func TestDirectEventsFollowToggleIsIsolatedFromFilterInput(t *testing.T) {
 	stream := &directEventStreamFake{started: make(chan struct{}, 1)}
 	session, _ := directStreamSession(t, &testkit.FakeEventReader{OpenFunc: func(context.Context) (ports.EventStream, error) { return stream, nil }}, nil)
 	model := newModel(context.Background(), nil, LaunchOptions{})
+	model.splash = false
 	model.session, model.sessionCtx = session, context.Background()
 	model.views = model.views.replaceRoot(viewFrame{Kind: viewEvents, Label: "events"})
 
@@ -225,6 +226,7 @@ func TestDirectEventsContextResetClearsFilterAndSelection(t *testing.T) {
 
 func runDirectPalette(t *testing.T, model model, value string) (model, tea.Cmd) {
 	t.Helper()
+	model.splash = false
 	if !model.palette.active {
 		model, _ = updateDirect(model, keyPress(':'))
 	}

@@ -8,10 +8,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const splashDuration = time.Second
-
-type splashDoneMsg struct{}
-
 // nodeAutoRefreshInterval paces refreshes of the node inventory and optional
 // Kubernetes correlation while the nodes view is active.
 const nodeAutoRefreshInterval = 30 * time.Second
@@ -23,10 +19,6 @@ type shellLayout struct {
 	Height        int
 	HeaderHeight  int
 	ContentHeight int
-}
-
-func splashTimer() tea.Cmd {
-	return tea.Tick(splashDuration, func(time.Time) tea.Msg { return splashDoneMsg{} })
 }
 
 // nodeAutoRefreshTick fires once and must be rescheduled by its own handler
@@ -57,6 +49,25 @@ func layoutShell(width, height int) shellLayout {
 		HeaderHeight:  headerHeight,
 		ContentHeight: remaining,
 	}
+}
+
+func renderStartupScreen(size contentSize, skin k9sSkin) string {
+	content := []string{
+		skin.logo.Render("t9s"),
+		skin.actionText.Render("Inspect Talos clusters"),
+		skin.flashInfo.Render("◌ Loading cluster data…"),
+	}
+	lines := make([]string, max(0, size.Height))
+	start := max(0, (len(lines)-len(content))/2)
+	for index, line := range content {
+		row := start + index
+		if row >= len(lines) {
+			break
+		}
+		padding := max(0, (size.Width-ansi.StringWidth(line))/2)
+		lines[row] = strings.Repeat(" ", padding) + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderShell(layout shellLayout, header, content, footer string) string {

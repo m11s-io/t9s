@@ -71,6 +71,7 @@ func (m model) updateDirectClusterResult(message tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.requests.current(message.request) || message.request.generation != m.generation() {
 			return m, nil
 		}
+		m.splash = false
 		m.requests.cancelSlot("cluster-nodes-services")
 		nodeStatus := directNodeLoadStatus(message.nodes)
 		state := directNodeState{Status: directReady, Value: message.nodes}
