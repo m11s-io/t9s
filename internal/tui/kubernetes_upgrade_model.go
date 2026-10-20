@@ -3,7 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -26,7 +29,6 @@ const (
 type kubernetesUpgradeModel struct {
 	target        textinput.Model
 	snapshot      textinput.Model
-	confirmation  textinput.Model
 	field         int
 	phase         kubernetesUpgradePhase
 	plan          *application.PreparedKubernetesUpgrade
@@ -51,11 +53,12 @@ func newKubernetesUpgradeModel() kubernetesUpgradeModel {
 	snapshot.Placeholder = "new local snapshot path"
 	snapshot.CharLimit = 4096
 	snapshot.SetWidth(64)
-	confirmation := textinput.New()
-	confirmation.Prompt = "TYPE :"
-	confirmation.CharLimit = 256
-	confirmation.SetWidth(64)
-	return kubernetesUpgradeModel{target: target, snapshot: snapshot, confirmation: confirmation, phase: kubernetesUpgradeEditing}
+	snapshot.SetValue(defaultKubernetesUpgradeSnapshotPath())
+	return kubernetesUpgradeModel{target: target, snapshot: snapshot, phase: kubernetesUpgradeEditing}
+}
+
+func defaultKubernetesUpgradeSnapshotPath() string {
+	return filepath.Join(os.TempDir(), "t9s-k8s-upgrade-"+time.Now().Format("2006-01-02_15-04-05.000")+".snapshot")
 }
 
 func (m *kubernetesUpgradeModel) close(session *application.Session) {
@@ -73,7 +76,7 @@ func (m *kubernetesUpgradeModel) close(session *application.Session) {
 		m.target.Reset()
 	}
 	if m.snapshot.Value() != "" {
-		m.snapshot.Reset()
+		m.snapshot.SetValue(defaultKubernetesUpgradeSnapshotPath())
 	}
 	_ = session
 }
@@ -120,7 +123,7 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 		if m.phase == kubernetesUpgradeReviewing {
 			body = append(body, "Enter to confirm; Esc discards this plan.")
 		} else {
-			body = append(body, "Type the displayed cluster UID and target phrase to start.", m.plan.Assessment().RequiredToken, m.confirmation.View())
+			body = append(body, "Press y to start this upgrade · n/Esc cancels.")
 		}
 	case kubernetesUpgradeRunning:
 		body = append(body, plan, "Upgrade is running. Esc requests cancellation.")
@@ -229,32 +232,29 @@ func (m *model) updateKubernetesUpgradeInput(message tea.KeyPressMsg) (tea.Cmd, 
 		}
 		if key == "enter" {
 			u.phase = kubernetesUpgradeConfirming
-			_ = u.confirmation.Focus()
 			return nil, true
 		}
 		return nil, true
 	case kubernetesUpgradeConfirming:
-		if key == "esc" {
+		if key == "esc" || key == "n" {
 			u.close(m.session)
 			return nil, true
 		}
-		if key == "enter" {
+		if key == "y" {
 			if !m.options.WritesEnabled {
 				u.err = "Execution requires --enable-writes"
 				return nil, true
 			}
-			if u.plan == nil || u.confirmation.Value() != u.plan.Assessment().RequiredToken {
-				u.err = "Typed confirmation does not match cluster and target"
+			if u.plan == nil {
+				u.err = "Prepared upgrade plan is unavailable"
 				return nil, true
 			}
 			request, cancel := m.requests.beginWithContext("kubernetes-upgrade", u.generation, m.sessionCtx)
 			u.cancelRequest = cancel
 			u.phase, u.err = kubernetesUpgradeRunning, ""
-			return directKubernetesUpgradeStartCommand(m.session, request, u.operation, u.generation, u.plan, application.Confirmation{Approved: true, Token: u.confirmation.Value()}, u.snapshot.Value()), true
+			return directKubernetesUpgradeStartCommand(m.session, request, u.operation, u.generation, u.plan, application.Confirmation{Approved: true, Token: u.plan.Assessment().RequiredToken}, u.snapshot.Value()), true
 		}
-		var command tea.Cmd
-		u.confirmation, command = u.confirmation.Update(message)
-		return command, true
+		return nil, true
 	case kubernetesUpgradeRunning:
 		if key == "esc" && u.stream != nil {
 			u.stream.Cancel()
