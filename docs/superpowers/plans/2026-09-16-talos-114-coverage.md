@@ -2,7 +2,7 @@
 
 Status: Phases 0, 1, and 2 implemented; Phases 3 and 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
-Last reconciled with source: 2026-10-20 (working tree; Phase 2 implementation is uncommitted)
+Last reconciled with source: 2026-10-20 (Phase 2 commit `6e1fceb`, pushed to `origin/main`)
 Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
 Live v1.14.4 cluster smoke testing is pending; implemented below means present in source, not released or live-verified.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.

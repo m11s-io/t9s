@@ -233,7 +233,8 @@ Existing NodeController signatures are sufficient.
   DiskUsage partial status and visible rows, CPU no-polling behavior, service
   history scrolling, help-overlay result handling, navigation cancellation,
   image detail, and the CPU deadline/refresh documentation.
-- [x] Keep the work uncommitted as requested; do not push or run live cluster actions.
+- [x] Keep the work uncommitted during implementation as requested. The user
+  later requested publication; see the final handoff. No live cluster actions.
 
 ## Final verification and handoff
 
@@ -257,5 +258,6 @@ Existing NodeController signatures are sufficient.
     prompts without dispatching; verify exact-target typing, final warning,
     cancel behavior, and the writes gate. Dispatch force only after explicit
     approval for the disposable-cluster run.
-- [x] Report branch/commits and pending live checks. Do not push or merge without
-  a request. Preserve the original checkout's Kubernetes roadmap changes.
+- [x] Report branch/commits and pending live checks: commit `6e1fceb` was pushed
+  to `origin/main` after the user's request; disposable-cluster checks remain
+  pending. Preserve the original checkout's Kubernetes roadmap changes.
