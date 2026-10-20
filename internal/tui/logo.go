@@ -4,13 +4,14 @@ import (
 	"strings"
 )
 
+// The 9s lettering is copied from K9s internal/ui/splash.go (LogoSmall).
 var t9sLogo = []string{
-	` _______    ___     _____ `,
-	`|__   __|  / _ \   / ____|`,
-	`   | |    | (_) | | (___  `,
-	`   | |     \__, |  \___ \ `,
-	`   | |       / /    ___) |`,
-	`   |_|      /_/    |_____/`,
+	` ________ ________       `,
+	`|__    __/   __   \______`,
+	`   |  |  \____    /  ___/`,
+	`   |  |     /    /\___  \`,
+	`   |__|    /____//____  /`,
+	`                      \/ `,
 }
 
 func renderT9SLogo(skin k9sSkin) string {

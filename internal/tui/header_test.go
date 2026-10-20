@@ -30,7 +30,7 @@ func TestK9sHeaderAddsOneCellGutter(t *testing.T) {
 	assert.True(t, strings.HasPrefix(ansi.Strip(strings.Split(header, "\n")[0]), " Context:"))
 }
 
-func TestT9SLogoRestoresOriginalLettering(t *testing.T) {
+func TestT9SLogoUsesK9sLettering(t *testing.T) {
 	logo := strings.Split(renderT9SLogo(defaultK9sSkin()), "\n")
 	got := make([]string, len(logo))
 	for index, line := range logo {
@@ -38,12 +38,12 @@ func TestT9SLogoRestoresOriginalLettering(t *testing.T) {
 	}
 
 	assert.Equal(t, []string{
-		" _______    ___     _____",
-		"|__   __|  / _ \\   / ____|",
-		"   | |    | (_) | | (___",
-		"   | |     \\__, |  \\___ \\",
-		"   | |       / /    ___) |",
-		"   |_|      /_/    |_____/",
+		` ________ ________`,
+		`|__    __/   __   \______`,
+		`   |  |  \____    /  ___/`,
+		`   |  |     /    /\___  \`,
+		`   |__|    /____//____  /`,
+		`                      \/`,
 	}, got)
 }
 
