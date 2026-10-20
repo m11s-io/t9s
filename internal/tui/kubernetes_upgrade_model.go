@@ -268,12 +268,12 @@ func (m *model) updateKubernetesUpgradeInput(message tea.KeyPressMsg) (tea.Cmd, 
 	return nil, false
 }
 
-func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (model, tea.Cmd) {
 	u := &m.kubernetesUpgrade
 	switch message := message.(type) {
 	case directKubernetesUpgradePrepared:
 		if message.operation != u.operation || message.generation != m.generation() || !m.views.contains(viewKubernetesUpgrade) {
-			return m, nil
+			return *m, nil
 		}
 		if u.cancelRequest != nil {
 			u.cancelRequest()
@@ -282,18 +282,18 @@ func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (tea.Model,
 		if message.err != "" || message.plan == nil {
 			u.phase = kubernetesUpgradeEditing
 			u.err = "Unable to prepare a safe Kubernetes upgrade plan"
-			return m, nil
+			return *m, nil
 		}
 		u.plan = message.plan
 		u.phase = kubernetesUpgradeReviewing
 		u.err = ""
-		return m, nil
+		return *m, nil
 	case directKubernetesUpgradeOpened:
 		if message.operation != u.operation || message.generation != m.generation() || !m.views.contains(viewKubernetesUpgrade) {
 			if message.stream != nil {
 				message.stream.Cancel()
 			}
-			return m, nil
+			return *m, nil
 		}
 		if message.err != "" || message.stream == nil {
 			if u.cancelRequest != nil {
@@ -302,24 +302,24 @@ func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (tea.Model,
 			}
 			u.phase = kubernetesUpgradeReviewing
 			u.err = "Unable to start upgrade; review the prepared plan and session"
-			return m, nil
+			return *m, nil
 		}
 		// Keep this request context alive: it is also the retained operation's
 		// parent and is canceled only when the operator leaves or cancels.
 		u.stream = message.stream
-		return m, directKubernetesUpgradeAwaitCommand(u.stream, u.operation, u.generation)
+		return *m, directKubernetesUpgradeAwaitCommand(u.stream, u.operation, u.generation)
 	case directKubernetesUpgradeEvent:
 		if message.operation != u.operation || message.generation != m.generation() || !m.views.contains(viewKubernetesUpgrade) || u.phase != kubernetesUpgradeRunning {
-			return m, nil
+			return *m, nil
 		}
 		u.events = append(u.events, message.event)
 		if len(u.events) > 50 {
 			u.events = append([]domain.KubernetesUpgradeEvent(nil), u.events[len(u.events)-50:]...)
 		}
-		return m, directKubernetesUpgradeAwaitCommand(u.stream, u.operation, u.generation)
+		return *m, directKubernetesUpgradeAwaitCommand(u.stream, u.operation, u.generation)
 	case directKubernetesUpgradeFinished:
 		if message.operation != u.operation || message.generation != m.generation() || !m.views.contains(viewKubernetesUpgrade) {
-			return m, nil
+			return *m, nil
 		}
 		if u.cancelRequest != nil {
 			u.cancelRequest()
@@ -329,8 +329,8 @@ func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (tea.Model,
 		u.result = &message.result
 		u.err = message.err
 		u.phase = kubernetesUpgradeComplete
-		return m, nil
+		return *m, nil
 	default:
-		return m, nil
+		return *m, nil
 	}
 }
