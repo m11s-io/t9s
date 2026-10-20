@@ -83,7 +83,10 @@ func renderHeaderActions(hints []actionHint, width int, skin k9sSkin) []string {
 	if width <= 0 {
 		return lines
 	}
-	const columnGap = 3
+	const (
+		columnGap           = 3
+		actionKeyFieldWidth = 9
+	)
 	actionRows := 6
 	if width < 64 {
 		actionRows = k9sHeaderHeight
@@ -91,7 +94,7 @@ func renderHeaderActions(hints []actionHint, width int, skin k9sSkin) []string {
 	columns := max(1, (len(hints)+actionRows-1)/actionRows)
 	columnWidths := make([]int, columns)
 	labelWidths := make([]int, columns)
-	keyWidth := 0
+	keyWidth := actionKeyFieldWidth
 	for index, hint := range hints {
 		column := index / actionRows
 		keyWidth = max(keyWidth, ansi.StringWidth("<"+hint.Key+">"))
