@@ -73,6 +73,9 @@ func (sessionStub) Resources() ResourceInstanceReader  { return nil }
 func (sessionStub) EtcdOperations() EtcdOperations     { return stubEtcdOperations{} }
 func (sessionStub) Close() error                       { return nil }
 
+func (sessionStub) Configuration() ConfigurationController      { return nil }
+func (sessionStub) KubernetesUpgrade() KubernetesUpgradeBackend { return nil }
+
 var _ Session = sessionStub{}
 
 func TestSessionExposesEtcdOperations(t *testing.T) {

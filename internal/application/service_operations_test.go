@@ -146,9 +146,15 @@ func TestConcurrentActionFamiliesShareExclusion(t *testing.T) {
 		_, executeErr := session.ExecuteServiceAction(context.Background(), servicePlan, Confirmation{Approved: true})
 		finished <- executeErr
 	}()
-	<-started
+	select {
+	case <-started:
+	case err := <-finished:
+		t.Fatalf("service execution ended before dispatch: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("service controller did not start")
+	}
 	nodePlan := newPreparedNodeAction(session, NodeActionRequest{Kind: ActionReboot, Targets: []string{"cp-2"}}, Assessment{Targets: []string{"cp-2"}})
-	if _, _, err := session.admit(context.Background(), nodePlan.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrMutationBusy) {
+	if _, _, err := admitForTest(t, session, nodePlan.state, Confirmation{Approved: true}); !errors.Is(err, ErrMutationBusy) {
 		t.Fatalf("node admission during service execution = %v, want ErrMutationBusy", err)
 	}
 	close(resume)
