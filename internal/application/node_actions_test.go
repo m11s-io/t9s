@@ -287,7 +287,7 @@ func TestBulkActionHoldsLeaseUntilAllTargetsFinish(t *testing.T) {
 		t.Fatal("bulk controller did not start")
 	}
 	other := newPreparedNodeAction(session, NodeActionRequest{Kind: ActionShutdown, Targets: []string{"cp-2"}}, Assessment{Targets: []string{"cp-2"}})
-	if _, _, err := session.admit(context.Background(), other.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrMutationBusy) {
+	if _, _, err := admitForTest(t, session, other.state, Confirmation{Approved: true}); !errors.Is(err, ErrMutationBusy) {
 		t.Fatalf("admission while bulk target is active = %v, want ErrMutationBusy", err)
 	}
 	close(resume)
