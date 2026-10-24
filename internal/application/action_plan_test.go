@@ -9,6 +9,17 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 )
 
+// admitForTest keeps the process-wide mutation lease from leaking into other
+// tests, including when an assertion fails before the explicit release.
+func admitForTest(t *testing.T, session *Session, plan *preparedState, confirmation Confirmation) (context.Context, func(), error) {
+	t.Helper()
+	ctx, release, err := session.admit(context.Background(), plan, confirmation, time.Second)
+	if release != nil {
+		t.Cleanup(release)
+	}
+	return ctx, release, err
+}
+
 func planTestSession(writes bool) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Session{lifetimeCtx: ctx, lifetimeCancel: cancel, writesEnabled: writes}
@@ -24,12 +35,12 @@ func TestPlanCopySharesOneShotState(t *testing.T) {
 	plan := planTestNode(session, "")
 	copy := plan
 
-	_, release, err := session.admit(context.Background(), plan.state, Confirmation{Approved: true}, time.Second)
+	_, release, err := admitForTest(t, session, plan.state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	release()
-	if _, _, err := session.admit(context.Background(), copy.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrPlanUsed) {
+	if _, _, err := admitForTest(t, session, copy.state, Confirmation{Approved: true}); !errors.Is(err, ErrPlanUsed) {
 		t.Fatalf("copy replay error = %v, want ErrPlanUsed", err)
 	}
 }
@@ -40,13 +51,13 @@ func TestPlanRejectsWrongSessionAndZeroValue(t *testing.T) {
 	defer second.Close()
 	plan := planTestNode(first, "")
 
-	if _, _, err := second.admit(context.Background(), plan.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrInvalidPlan) {
+	if _, _, err := admitForTest(t, second, plan.state, Confirmation{Approved: true}); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("cross-session error = %v, want ErrInvalidPlan", err)
 	}
-	if _, _, err := first.admit(context.Background(), nil, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrInvalidPlan) {
+	if _, _, err := admitForTest(t, first, nil, Confirmation{Approved: true}); !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("zero-value error = %v, want ErrInvalidPlan", err)
 	}
-	if _, _, err := first.admit(context.Background(), plan.state, Confirmation{Approved: true}, time.Second); err != nil {
+	if _, _, err := admitForTest(t, first, plan.state, Confirmation{Approved: true}); err != nil {
 		t.Fatalf("wrong-session attempt consumed plan: %v", err)
 	}
 }
@@ -56,10 +67,10 @@ func TestInvalidConfirmationDoesNotConsumePlan(t *testing.T) {
 	defer session.Close()
 	plan := planTestNode(session, "node-a")
 
-	if _, _, err := session.admit(context.Background(), plan.state, Confirmation{Approved: true, Token: "wrong"}, time.Second); !errors.Is(err, ErrConfirmationRequired) {
+	if _, _, err := admitForTest(t, session, plan.state, Confirmation{Approved: true, Token: "wrong"}); !errors.Is(err, ErrConfirmationRequired) {
 		t.Fatalf("invalid token error = %v, want ErrConfirmationRequired", err)
 	}
-	_, release, err := session.admit(context.Background(), plan.state, Confirmation{Approved: true, Token: "node-a"}, time.Second)
+	_, release, err := admitForTest(t, session, plan.state, Confirmation{Approved: true, Token: "node-a"})
 	if err != nil {
 		t.Fatalf("valid confirmation after invalid attempt: %v", err)
 	}
@@ -70,15 +81,15 @@ func TestBusyDoesNotConsumePlan(t *testing.T) {
 	session := planTestSession(true)
 	defer session.Close()
 	first, second := planTestNode(session, ""), planTestNode(session, "")
-	_, release, err := session.admit(context.Background(), first.state, Confirmation{Approved: true}, time.Second)
+	_, release, err := admitForTest(t, session, first.state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := session.admit(context.Background(), second.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrMutationBusy) {
+	if _, _, err := admitForTest(t, session, second.state, Confirmation{Approved: true}); !errors.Is(err, ErrMutationBusy) {
 		t.Fatalf("concurrent admission error = %v, want ErrMutationBusy", err)
 	}
 	release()
-	_, releaseSecond, err := session.admit(context.Background(), second.state, Confirmation{Approved: true}, time.Second)
+	_, releaseSecond, err := admitForTest(t, session, second.state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatalf("busy attempt consumed plan: %v", err)
 	}
@@ -89,14 +100,14 @@ func TestAdmittedAttemptConsumesBeforeSafetyRead(t *testing.T) {
 	session := planTestSession(true)
 	defer session.Close()
 	plan := planTestNode(session, "")
-	_, release, err := session.admit(context.Background(), plan.state, Confirmation{Approved: true}, time.Second)
+	_, release, err := admitForTest(t, session, plan.state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Admission happens before the caller performs any fresh safety read. A
 	// failure after this boundary must not make the attempt replayable.
 	release()
-	if _, _, err := session.admit(context.Background(), plan.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrPlanUsed) {
+	if _, _, err := admitForTest(t, session, plan.state, Confirmation{Approved: true}); !errors.Is(err, ErrPlanUsed) {
 		t.Fatalf("replay after safety-read attempt error = %v, want ErrPlanUsed", err)
 	}
 }
@@ -133,14 +144,14 @@ func TestAdmissionReleaseIsIdempotentAndUnblocksSession(t *testing.T) {
 	session := planTestSession(true)
 	defer session.Close()
 	plan := planTestNode(session, "")
-	_, release, err := session.admit(context.Background(), plan.state, Confirmation{Approved: true}, time.Second)
+	_, release, err := admitForTest(t, session, plan.state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	release()
 	release()
 	second := planTestNode(session, "")
-	_, releaseSecond, err := session.admit(context.Background(), second.state, Confirmation{Approved: true}, time.Second)
+	_, releaseSecond, err := admitForTest(t, session, second.state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatalf("second admission after release: %v", err)
 	}

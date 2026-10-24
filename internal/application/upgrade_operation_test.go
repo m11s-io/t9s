@@ -66,7 +66,7 @@ func TestUpgradeLeaseLivesThroughCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := session.admit(context.Background(), upgradePlan(t, session, "installer:v1.15.0").state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrMutationBusy) {
+	if _, _, err := admitForTest(t, session, upgradePlan(t, session, "installer:v1.15.0").state, Confirmation{Approved: true}); !errors.Is(err, ErrMutationBusy) {
 		t.Fatalf("second mutation admission = %v, want ErrMutationBusy", err)
 	}
 	// The progress stream deliberately remains unread while terminal cleanup is pending.
@@ -81,7 +81,7 @@ func TestUpgradeLeaseLivesThroughCleanup(t *testing.T) {
 	if err != nil || got.Outcome != ports.UpgradeOutcomeApplied {
 		t.Fatalf("Wait() = (%+v, %v)", got, err)
 	}
-	_, release, err := session.admit(context.Background(), upgradePlan(t, session, "installer:v1.15.0").state, Confirmation{Approved: true}, time.Second)
+	_, release, err := admitForTest(t, session, upgradePlan(t, session, "installer:v1.15.0").state, Confirmation{Approved: true})
 	if err != nil {
 		t.Fatalf("lease not released after upstream completion: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestUpgradeCanceledCallerWaitDoesNotReleaseLease(t *testing.T) {
 		t.Fatalf("Wait error = %v", err)
 	}
 	other := upgradePlan(t, session, "installer:v1.15.0")
-	if _, _, err := session.admit(context.Background(), other.state, Confirmation{Approved: true}, time.Second); !errors.Is(err, ErrMutationBusy) {
+	if _, _, err := admitForTest(t, session, other.state, Confirmation{Approved: true}); !errors.Is(err, ErrMutationBusy) {
 		t.Fatalf("lease released after local wait ended: %v", err)
 	}
 	upstream.finish()
@@ -240,12 +240,13 @@ func TestUpgradeRequiresPreparedCurrentImageAndPolicy(t *testing.T) {
 
 func TestUpgradeRejectsWrongKindForeignPlanAndCanceledAdmission(t *testing.T) {
 	var dispatches atomic.Int32
+	upstream := newGatedUpgradeStream(ports.UpgradeResult{})
 	makeSession := func() *Session {
 		return upgradeOperationSession(&testkit.FakeNodeReader{ListFunc: func(context.Context) (domain.NodeSet, error) {
 			return domain.NodeSet{Nodes: []domain.NodeSnapshot{{ID: "w1", Name: "worker-1", Role: domain.NodeRoleWorker, Version: "v1.14.0"}}}, nil
 		}}, &testkit.FakeNodeController{UpgradeStreamFunc: func(context.Context, string, string) ports.UpgradeStream {
 			dispatches.Add(1)
-			return newGatedUpgradeStream(ports.UpgradeResult{})
+			return upstream
 		}})
 	}
 	first, second := makeSession(), makeSession()
@@ -277,6 +278,13 @@ func TestUpgradeRejectsWrongKindForeignPlanAndCanceledAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan consumed by canceled admission: %v", err)
 	}
+	t.Cleanup(func() {
+		stream.Cancel()
+		upstream.finish()
+		if _, err := stream.Wait(context.Background()); err != nil {
+			t.Errorf("upgrade cleanup: %v", err)
+		}
+	})
 	if dispatches.Load() != 1 {
 		t.Fatalf("upgrade dispatches = %d, want 1", dispatches.Load())
 	}
