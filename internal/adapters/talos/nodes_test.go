@@ -292,3 +292,28 @@ func TestDiscoveredMachineTypeDoesNotRequireExtraRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.NodeRoleControl, got.Nodes[0].Role)
 }
+
+func TestNodeReaderSlowUnrelatedInspectionDoesNotConsumeReadDeadline(t *testing.T) {
+	api := &fakeTalosAPI{members: []memberRecord{
+		{Hostname: "cp-1", MachineType: "controlplane"},
+		{Hostname: "worker-1", MachineType: "worker"},
+	}, machineStatus: func(ctx context.Context, target string) (machineRecord, error) {
+		if target == "worker-1" {
+			<-ctx.Done()
+			return machineRecord{}, ctx.Err()
+		}
+		ready := true
+		return machineRecord{Stage: "running", Ready: &ready}, nil
+	}}
+	reader := newNodeReader(api, time.Now)
+	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Second)
+	defer cancel()
+	got, err := reader.List(ctx)
+	require.NoError(t, err, "a stalled worker must not exhaust the whole inventory deadline")
+	require.Len(t, got.Nodes, 2)
+	assert.Equal(t, domain.NodeRoleControl, got.Nodes[0].Role)
+	assert.Equal(t, domain.HealthHealthy, got.Nodes[0].Health)
+	assert.Equal(t, domain.NodeRoleWorker, got.Nodes[1].Role)
+	assert.Contains(t, got.Nodes[1].Problem, "inspection timed out")
+	assert.NoError(t, ctx.Err(), "leave time for preparation's quorum checks")
+}

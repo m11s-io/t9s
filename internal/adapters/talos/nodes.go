@@ -2,6 +2,7 @@ package talos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,6 +19,9 @@ import (
 )
 
 const maxConcurrentNodeInspections = 8
+
+// Leave time within the shared read deadline for other nodes and quorum reads.
+const nodeInspectionTimeout = 5 * time.Second
 
 type memberRecord struct {
 	ID              string
@@ -118,6 +122,16 @@ func (r *nodeReader) List(ctx context.Context) (domain.NodeSet, error) {
 }
 
 func (r *nodeReader) inspectNode(ctx context.Context, member memberRecord) rawNode {
+	ctx, cancel := context.WithTimeout(ctx, nodeInspectionTimeout)
+	defer cancel()
+	raw := r.inspectNodeDetails(ctx, member)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		raw.Problem = "node inspection timed out"
+	}
+	return raw
+}
+
+func (r *nodeReader) inspectNodeDetails(ctx context.Context, member memberRecord) rawNode {
 	raw := rawNode{
 		ID:              member.ID,
 		Hostname:        member.Hostname,
