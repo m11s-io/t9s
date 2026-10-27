@@ -3,7 +3,8 @@
 Status: Phases 0–3 implemented in the working tree; Phase 4 pending; Phase 5 Kubernetes upgrades newly planned.
 Created: 2026-09-16
 Last reconciled with source: 2026-10-20 (Phase 3 implementation, disposable smoke, and hosted CI/Docs validation recorded below)
-Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.4`.
+Scope: Talos 1.14 coverage; current working-tree SDK target is `pkg/machinery v1.14.5`.
+The [v1.14.5 compatibility review](../reviews/2026-10-27-talos-1145-compatibility.md) records the patch update; live v1.14.5 smoke testing remains pending.
 The Phase 3 Docker smoke used Talos v1.14.4 on two nodes. BGP, LVM/MD, trim/scrub, `sandboxd`, and SystemDisk resources were absent from that cluster; hardware-backed coverage remains pending. Implemented below means present in source, not released.
 Inputs: five historical read-only gap analyses in `.superpowers/gap-analysis/`.
 Their original v1.14.1 findings are background; this document records current status.

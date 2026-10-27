@@ -160,7 +160,7 @@ snapshot. The refused prompt stays on screen until explicitly cancelled.
 Talos OS upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages.
 
 Kubernetes upgrades use the separate `:upgrade-k8s` command and require
-`talosctl` v1.14.4 on `PATH`. The operator supplies an explicit stable target,
+`talosctl` v1.14.5 on `PATH`. The operator supplies an explicit stable target,
 reviews the prefilled local snapshot path and node-by-node plan, and confirms
 with `y` after checking the displayed cluster UID and target version. The preview does not run the upgrade
 command or mutate the cluster. Execution requires writes mode, a verified etcd

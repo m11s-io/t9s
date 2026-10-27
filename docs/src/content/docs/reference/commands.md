@@ -12,7 +12,7 @@ Press `Enter` to run the command or `Esc` to close the input.
 | `:services` | `:svc` | Open Talos services. |
 | `:contexts` | `:ctx` | Select another discovered context. |
 | `:config` | | Preview and apply a local Talos machine configuration to selected nodes. Requires `--enable-writes`; see [Security](/security/). |
-| `:upgrade-k8s` | `:k8s-upgrade` | Prepare and, with `--enable-writes`, run a cluster Kubernetes upgrade through Talos. Requires `talosctl` v1.14.4; see [Security](/security/). |
+| `:upgrade-k8s` | `:k8s-upgrade` | Prepare and, with `--enable-writes`, run a cluster Kubernetes upgrade through Talos. Requires `talosctl` v1.14.5; see [Security](/security/). |
 | `:events` | `:ev` | Open the machine event snapshot; `s` toggles live follow. |
 | `:etcd` | `:et` | Open etcd membership and status; with `--enable-writes`, snapshot/membership maintenance actions live here. See [Etcd operations](/guides/etcd-ops/). |
 | `:bgp` | `:bgps` | Show BGP peer sessions across nodes, including peer ASN, FSM state, BFD, and route counters. |

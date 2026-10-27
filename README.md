@@ -33,16 +33,16 @@ Cross-platform release binaries, checksums, and installation documentation
 are available — see [Install](#install) below. Signed artifacts are not yet
 implemented.
 
-The Talos SDK compatibility target is **v1.14.4**. A disposable two-node Docker
-smoke check ran on 2026-10-20 and verified node/service discovery, the BGP and
-health views, system-volume details, workload isolation, and the resource and
-disk views. The cluster had no BGP peers, LVM/MD arrays, trim or scrub schedules,
+The Talos SDK compatibility target is **v1.14.5**. Live v1.14.5 smoke testing
+is pending. A disposable two-node Docker smoke check against v1.14.4 ran on
+2026-10-20 and verified node/service discovery, the BGP and health views,
+system-volume details, workload isolation, and the resource and disk views. The cluster had no BGP peers, LVM/MD arrays, trim or scrub schedules,
 or `sandboxd` service; it also did not expose a `SystemDisk` resource. Those
 hardware-backed cases remain unverified. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for the full manual checklist.
 Talos upgrades are node-level operations: t9s upgrades the Talos OS on the
 selected node. Kubernetes upgrades use a separate `:upgrade-k8s` workflow and
-require `talosctl` v1.14.4; see [Security](#security) and the
+require `talosctl` v1.14.5; see [Security](#security) and the
 [command reference](docs/src/content/docs/reference/commands.md).
 
 ## Install

@@ -140,7 +140,7 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 	fail := func(reason string) (KubernetesUpgradePlan, error) {
 		return KubernetesUpgradePlan{}, fmt.Errorf("%w: %s", ErrKubernetesUpgradeAssessment, reason)
 	}
-	if inventory.ClusterUID == "" || inventory.TalosClusterID == "" || inventory.Gateway == "" || inventory.CLI.Version != "v1.14.4" || inventory.CLI.Path == "" || inventory.CLI.SHA256 == "" {
+	if inventory.ClusterUID == "" || inventory.TalosClusterID == "" || inventory.Gateway == "" || inventory.CLI.Version != "v1.14.5" || inventory.CLI.Path == "" || inventory.CLI.SHA256 == "" {
 		return fail("cluster identity or supported talosctl identity is incomplete")
 	}
 	if !inventory.Healthy || len(inventory.Nodes) == 0 {

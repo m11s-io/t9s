@@ -399,7 +399,7 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	var identity domain.TalosCLIIdentity
 	path, err := exec.LookPath("talosctl")
 	if err != nil {
-		return identity, errors.New("talosctl v1.14.4 must be installed and available on PATH")
+		return identity, errors.New("talosctl v1.14.5 must be installed and available on PATH")
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
@@ -411,8 +411,8 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	var output boundedVersionOutput
 	versionCommand.Stdout = &output
 	versionCommand.Stderr = io.Discard
-	if err := versionCommand.Run(); err != nil || !clientVersionMatches(output.String(), "v1.14.4") {
-		return identity, errors.New("talosctl v1.14.4 is required")
+	if err := versionCommand.Run(); err != nil || !clientVersionMatches(output.String(), "v1.14.5") {
+		return identity, errors.New("talosctl v1.14.5 is required")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -427,7 +427,7 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	if _, err := io.Copy(hash, io.LimitReader(file, info.Size()+1)); err != nil {
 		return identity, errors.New("unable to fingerprint talosctl executable")
 	}
-	return domain.TalosCLIIdentity{Path: path, Version: "v1.14.4", SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+	return domain.TalosCLIIdentity{Path: path, Version: "v1.14.5", SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
 }
 
 type boundedVersionOutput struct{ bytes.Buffer }

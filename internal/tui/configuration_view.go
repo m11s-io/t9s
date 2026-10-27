@@ -64,7 +64,7 @@ func renderConfigurationView(model configurationModel, size contentSize) string 
 			}
 			appendLine(line)
 		}
-		appendLine("Talos v1.14.4 does not include warning text in dry-run responses. Diff and warning text are hidden to protect secrets.")
+		appendLine("Talos v1.14.5 does not include warning text in dry-run responses. Diff and warning text are hidden to protect secrets.")
 		if model.assessment.Blocked != "" {
 			appendLine("APPLY BLOCKED: " + sanitizeUntrustedText(model.assessment.Blocked))
 		} else {
