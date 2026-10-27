@@ -12,6 +12,7 @@ import (
 	"github.com/m11s-io/t9s/internal/ports"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/siderolabs/talos/pkg/machinery/resources/cluster"
+	configresource "github.com/siderolabs/talos/pkg/machinery/resources/config"
 	runtimeresource "github.com/siderolabs/talos/pkg/machinery/resources/runtime"
 	"golang.org/x/sync/errgroup"
 )
@@ -42,6 +43,7 @@ type serviceRecord struct {
 type talosAPI interface {
 	Members(context.Context) ([]memberRecord, error)
 	MachineStatus(context.Context, string) (machineRecord, error)
+	MachineType(context.Context, string) (string, error)
 	Services(context.Context, string) ([]serviceRecord, error)
 	Version(context.Context, string) (string, error)
 }
@@ -134,6 +136,16 @@ func (r *nodeReader) inspectNode(ctx context.Context, member memberRecord) rawNo
 	}
 
 	problems := make([]string, 0, 3)
+	// Configured node addresses have no discovery metadata. Read the live
+	// role before mutation preparation needs it for quorum checks.
+	if convertRole(raw.MachineType) == domain.NodeRoleUnknown {
+		machineType, err := r.api.MachineType(ctx, target)
+		if err != nil {
+			problems = append(problems, "machine type unavailable")
+		} else {
+			raw.MachineType = machineType
+		}
+	}
 	status, err := r.api.MachineStatus(ctx, target)
 	if err != nil {
 		problems = append(problems, "machine status unavailable")
@@ -242,6 +254,18 @@ func cloneMemberRecords(members []memberRecord) []memberRecord {
 	}
 
 	return result
+}
+
+func (a *machineryAPI) MachineType(ctx context.Context, node string) (string, error) {
+	machineType, err := safe.StateGet[*configresource.MachineType](
+		talosclient.WithNode(ctx, node),
+		a.client.COSI,
+		configresource.NewMachineType().Metadata(),
+	)
+	if err != nil {
+		return "", err
+	}
+	return machineType.MachineType().String(), nil
 }
 
 func (a *machineryAPI) MachineStatus(ctx context.Context, node string) (machineRecord, error) {

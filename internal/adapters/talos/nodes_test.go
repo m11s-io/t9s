@@ -153,6 +153,7 @@ type fakeTalosAPI struct {
 	members       []memberRecord
 	membersErr    error
 	machineStatus func(context.Context, string) (machineRecord, error)
+	machineType   func(context.Context, string) (string, error)
 	services      func(context.Context, string) ([]serviceRecord, error)
 	version       func(context.Context, string) (string, error)
 	delay         time.Duration
@@ -237,4 +238,57 @@ func wait(ctx context.Context, delay time.Duration) {
 	case <-ctx.Done():
 	case <-timer.C:
 	}
+}
+
+func (f *fakeTalosAPI) MachineType(ctx context.Context, node string) (string, error) {
+	if f.machineType != nil {
+		return f.machineType(ctx, node)
+	}
+	return "", nil
+}
+
+func TestConfiguredNodeInventoryReadsLiveMachineTypes(t *testing.T) {
+	for _, progressive := range []bool{false, true} {
+		t.Run(fmt.Sprint(progressive), func(t *testing.T) {
+			api := &fakeTalosAPI{members: fallbackMemberRecords([]string{"10.0.0.1", "10.0.0.2"}), machineType: func(_ context.Context, node string) (string, error) {
+				if node == "10.0.0.1" {
+					return "controlplane", nil
+				}
+				return "worker", nil
+			}}
+			reader := newNodeServiceReader(api, time.Now)
+			var got domain.NodeSet
+			var err error
+			if progressive {
+				got, _, err = reader.ListProgress(t.Context(), func(domain.NodeSet) {})
+			} else {
+				got, _, err = reader.List(t.Context())
+			}
+			require.NoError(t, err)
+			require.Len(t, got.Nodes, 2)
+			assert.Equal(t, domain.NodeRoleControl, got.Nodes[0].Role)
+			assert.Equal(t, domain.NodeRoleWorker, got.Nodes[1].Role)
+			assert.Equal(t, "10.0.0.1", got.Nodes[0].Target())
+		})
+	}
+}
+
+func TestMissingMachineTypeReadRemainsUnknownAndSanitized(t *testing.T) {
+	api := &fakeTalosAPI{members: fallbackMemberRecords([]string{"10.0.0.1"}), machineType: func(context.Context, string) (string, error) { return "", errors.New("Bearer secret-token") }}
+	got, err := newNodeReader(api, time.Now).List(t.Context())
+	require.NoError(t, err)
+	require.Len(t, got.Nodes, 1)
+	assert.Equal(t, domain.NodeRoleUnknown, got.Nodes[0].Role)
+	assert.Contains(t, got.Nodes[0].Problem, "machine type unavailable")
+	assert.NotContains(t, got.Nodes[0].Problem, "secret-token")
+}
+
+func TestDiscoveredMachineTypeDoesNotRequireExtraRead(t *testing.T) {
+	api := &fakeTalosAPI{members: []memberRecord{{Hostname: "cp-1", MachineType: "controlplane"}}, machineType: func(context.Context, string) (string, error) {
+		t.Fatal("known roles must use member discovery")
+		return "", nil
+	}}
+	got, err := newNodeReader(api, time.Now).List(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, domain.NodeRoleControl, got.Nodes[0].Role)
 }

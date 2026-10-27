@@ -539,6 +539,27 @@ func mutationErrorMessage(err error) string {
 	}
 }
 
+func mutationPreparationErrorMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "preparation timed out reading cluster state; no action was sent"
+	}
+	if err == nil {
+		return "preparation failed: no plan returned; no action was sent"
+	}
+	switch {
+	case errors.Is(err, application.ErrAssessmentChanged),
+		errors.Is(err, application.ErrActionBlocked),
+		errors.Is(err, application.ErrWritesDisabled),
+		errors.Is(err, application.ErrMutationBusy),
+		errors.Is(err, application.ErrConfirmationRequired):
+		return mutationErrorMessage(err)
+	case errors.Is(err, context.Canceled):
+		return "preparation canceled; no action was sent"
+	default:
+		return "preparation failed reading cluster state; no action was sent"
+	}
+}
+
 func directUpgradeAdmissionNotice(target string, err error) string {
 	reason := "upgrade was not started"
 	switch {
@@ -965,11 +986,9 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 			}
 		}
 		m.mutation.busy = false
+		m.mutation.notice = ""
 		if message.err != nil || message.plan == nil {
-			if message.request.Kind == application.ActionUpgrade {
-				m.mutation.notice = ""
-			}
-			m.view.notice = mutationErrorMessage(message.err)
+			m.view.notice = mutationPreparationErrorMessage(message.err)
 			return m, nil
 		}
 		m.palette = m.palette.close()
