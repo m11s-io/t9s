@@ -105,11 +105,12 @@ const (
 )
 
 type UpgradeResult struct {
-	Event   *UpgradeEvent
-	Err     error
-	Outcome UpgradeOutcome
-	Warning string
-	Done    bool
+	Snapshot *domain.EtcdSnapshotResult
+	Event    *UpgradeEvent
+	Err      error
+	Outcome  UpgradeOutcome
+	Warning  string
+	Done     bool
 }
 
 type UpgradeStream interface {

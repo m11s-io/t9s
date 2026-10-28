@@ -159,6 +159,15 @@ snapshot. The refused prompt stays on screen until explicitly cancelled.
 
 Talos OS upgrade is behind the same `--enable-writes` gate and explicit confirmation. For Talos versions that support `LifecycleService`, the selected node is drained before reboot and uncordoned after readiness, including cleanup after later-stage failure; the streamed progress is described in [Nodes](/guides/nodes/). Talos versions outside that lifecycle range use the legacy upgrade RPC and do not claim those streamed maintenance stages.
 
+A healthy single-control-plane Talos upgrade has a separate planned-downtime
+exception: `d allow downtime`, followed by a new explicit `y` confirmation.
+The application permits this only for the sole known healthy etcd member and
+sole control-plane node, requires a verified local snapshot under the mutation
+lease, and revalidates identity, membership and health after snapshot completion.
+Ordinary quorum refusal remains the default. The exception does not enable Talos
+Force, change membership, or bypass Kubernetes eviction/PDB checks. The local
+snapshot contains sensitive etcd data and should be stored securely.
+
 Kubernetes upgrades use the separate `:upgrade-k8s` command and require
 `talosctl` v1.14.5 on `PATH`. The operator supplies an explicit stable target,
 reviews the prefilled local snapshot path and node-by-node plan, and confirms

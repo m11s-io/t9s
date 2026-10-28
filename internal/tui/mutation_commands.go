@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -563,6 +564,8 @@ func mutationPreparationErrorMessage(err error) string {
 func directUpgradeAdmissionNotice(target string, err error) string {
 	reason := "upgrade was not started"
 	switch {
+	case errors.Is(err, application.ErrUpgradeSnapshotFailed):
+		reason = "etcd snapshot failed; no upgrade was sent"
 	case errors.Is(err, application.ErrAssessmentChanged):
 		reason = "assessment changed — prepare the action again"
 	case errors.Is(err, application.ErrActionBlocked):
@@ -590,6 +593,12 @@ func renderDirectMutationPrompt(prompt *directMutationPrompt) string {
 		return "y confirm · n cancel"
 	}
 	a := prompt.assessment
+	if prompt.nodeKind == application.ActionUpgrade && a.ControlPlaneDowntimeAvailable {
+		return "Only control-plane node: upgrade refused · d allow downtime · n cancel"
+	}
+	if prompt.nodeKind == application.ActionUpgrade && a.SnapshotPath != "" && a.Blocked == "" {
+		return "Allow control-plane downtime on " + strings.Join(a.Targets, ", ") + "? (y/n)"
+	}
 	destructive := prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice
 	if a.Blocked != "" && !destructive {
 		return "!! " + truncateWarningTail(a.Blocked, pendingActionWarningBudget) + " — action refused (n to cancel)"
@@ -1002,6 +1011,9 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 		}
 		if message.request.Kind == application.ActionUpgrade {
 			prompt.label = message.request.Image
+			if message.request.AllowControlPlaneDowntime && prompt.assessment.Blocked == "" {
+				prompt.confirm.Token = prompt.assessment.RequiredToken
+			}
 		}
 		if message.request.Reset != nil {
 			options := *message.request.Reset
@@ -1079,6 +1091,8 @@ func (m model) updateDirectMutationResult(message tea.Msg) (tea.Model, tea.Cmd) 
 			m.mutation.upgradeErr = message.upgradeWaitErr
 			state := directUpgradeDisplayState{Target: message.upgradeTarget}
 			if message.upgrade != nil {
+				m.mutation.snapshot = cloneEtcdSnapshotResult(message.upgrade.Snapshot)
+				m.mutation.receiptVisible = m.mutation.snapshot != nil
 				state.Event = upgradeEventValue(message.upgrade.Event)
 				switch message.upgrade.Outcome {
 				case ports.UpgradeOutcomeAppliedWithRecoveryWarning:
@@ -1259,6 +1273,14 @@ func (m *model) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, boo
 	}
 	if m.mutation.prompt != nil {
 		prompt := m.mutation.prompt
+		if message.String() == "d" && prompt.nodeKind == application.ActionUpgrade && prompt.node != nil && prompt.assessment.ControlPlaneDowntimeAvailable {
+			if !m.options.WritesEnabled || m.session == nil || prompt.session != m.session || prompt.generation != m.generation() || prompt.operation != m.mutation.operation || len(prompt.assessment.Targets) != 1 {
+				return nil, true
+			}
+			target := prompt.assessment.Targets[0]
+			path := application.DefaultEtcdSnapshotPath(m.cluster.contextName, target, time.Now().UTC())
+			return m.prepareDirectNodeMutation(application.NodeActionRequest{Kind: application.ActionUpgrade, Targets: []string{target}, Image: prompt.label, AllowControlPlaneDowntime: true, SnapshotPath: path}), true
+		}
 		if prompt.nodeKind == application.ActionReset || prompt.nodeKind == application.ActionWipeDevice {
 			command, handled := m.updateDirectDestructivePrompt(message)
 			if handled {
@@ -1301,6 +1323,9 @@ func (m *model) handleDirectMutationInput(message tea.KeyPressMsg) (tea.Cmd, boo
 			m.mutation.etcdKind = prompt.etcdKind
 			m.mutation.receiptOffset = 0
 			m.mutation.notice = "Mutation in progress…"
+			if prompt.nodeKind == application.ActionUpgrade && prompt.assessment.SnapshotPath != "" {
+				m.mutation.notice = "Taking etcd snapshot: " + prompt.assessment.SnapshotPath + " — upgrade starts after verification"
+			}
 			capacity := m.mutation.total
 			if capacity < 1 {
 				capacity = 1

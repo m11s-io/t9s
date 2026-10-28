@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -878,6 +879,20 @@ func (m model) View() tea.View {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, title)
 		content = renderResourceFrame(frame, renderDirectMutationOverlay(prompt, frame.InnerHeight), m.styles.k9s)
 		contentFramed = true
+	} else if prompt := m.mutation.prompt; prompt != nil && prompt.nodeKind == application.ActionUpgrade && prompt.assessment.SnapshotPath != "" {
+		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "control-plane maintenance")
+		lines := []string{
+			"Allow control-plane downtime",
+			"TARGET: " + strings.Join(prompt.assessment.Targets, ", "),
+			"IMAGE: " + prompt.label,
+			"WARNING: " + prompt.assessment.Warning,
+			"SNAPSHOT: " + prompt.assessment.SnapshotPath,
+			"The snapshot must succeed before the normal graceful upgrade starts.",
+			"Drain and Longhorn PDB checks remain enabled.",
+			renderDirectMutationPrompt(prompt),
+		}
+		content = renderResourceFrame(frame, strings.Join(etcdPanelLines(lines, frame.InnerWidth), "\n"), m.styles.k9s)
+		contentFramed = true
 	} else if m.forcePrompt != nil {
 		frame := layoutResourceFrame(layout.Width, layout.ContentHeight, "force confirmation")
 		content = renderResourceFrame(frame, m.forcePrompt.view(), m.styles.k9s)
@@ -982,7 +997,8 @@ func (m model) View() tea.View {
 }
 
 func (m model) canShowDirectEtcdReceipt() bool {
-	return m.views.top().Kind == viewEtcd && !m.etcd.filtering && !m.palette.active && !m.contexts.active && m.etcdPathPrompt == nil && m.timePrompt == nil
+	upgradeReceipt := m.views.top().Kind == viewNodes && m.mutation.upgradeResult != nil && m.mutation.upgradeResult.Snapshot != nil
+	return (m.views.top().Kind == viewEtcd || upgradeReceipt) && !m.etcd.filtering && !m.palette.active && !m.contexts.active && m.etcdPathPrompt == nil && m.timePrompt == nil
 }
 
 func (m model) directFilterEditing() bool {

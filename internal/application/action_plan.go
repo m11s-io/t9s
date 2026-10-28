@@ -51,21 +51,24 @@ type ResetPreview struct {
 // Assessment describes the user-visible risk and confirmation scope for a
 // prepared mutation. Values returned by Prepared*.Assessment are deep copies.
 type Assessment struct {
-	Targets       []string
-	Warning       string
-	Blocked       string
-	RequiredToken string
-	SnapshotPath  string
-	ResetPreview  []ResetPreview
+	ControlPlaneDowntimeAvailable bool
+	Targets                       []string
+	Warning                       string
+	Blocked                       string
+	RequiredToken                 string
+	SnapshotPath                  string
+	ResetPreview                  []ResetPreview
 }
 
 type NodeActionRequest struct {
-	Kind       ActionKind
-	Targets    []string
-	Force      bool
-	Image      string
-	Reset      *ports.ResetOptions
-	DeviceWipe *ports.DeviceWipeOptions
+	AllowControlPlaneDowntime bool
+	SnapshotPath              string
+	Kind                      ActionKind
+	Targets                   []string
+	Force                     bool
+	Image                     string
+	Reset                     *ports.ResetOptions
+	DeviceWipe                *ports.DeviceWipeOptions
 }
 
 type ServiceActionRequest struct {

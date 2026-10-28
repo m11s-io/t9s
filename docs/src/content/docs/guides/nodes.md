@@ -35,6 +35,29 @@ The suggestion preserves the running node's Image Factory repository details: fa
 
 For Talos versions supporting `LifecycleService`, the notice area streams image pull, install, Kubernetes drain, reboot, readiness wait, and uncordon. Byte progress is shown when totals are available. Verified completion requires lifecycle exit code zero, readiness checks, and completion of cleanup. Nodes outside the lifecycle API range use the legacy upgrade RPC; its final notice says the request was accepted and completion has not been verified.
 
+### Single control-plane maintenance
+
+A normal upgrade refuses to take the only etcd member offline. If the selected
+node is the sole control-plane node and etcd has exactly one known healthy
+member, the refused prompt offers `d allow downtime`. Press `d`, review the
+maintenance panel and local snapshot destination, then press `y` to confirm or
+`n`/`Esc` to cancel. The Kubernetes API and scheduling will be unavailable during
+the reboot; existing workloads may also be interrupted by draining.
+
+Confirmation takes a fresh, checksum-verified local etcd snapshot before sending
+the upgrade. The default filename includes the context, node and UTC timestamp
+in the current working directory; existing files are not overwritten. Snapshot
+failure or a change in node identity, etcd membership or health stops the upgrade.
+The terminal result retains the snapshot receipt; press `v` on the Nodes screen
+to show it again. This snapshot protects cluster state, not application volume
+data: confirm Longhorn volumes have recovered before maintaining the next node.
+
+The downtime choice does not enable Force or bypass drain/PDB protection. It is
+unavailable for multi-member clusters, learners, unhealthy/unknown membership,
+or missing snapshot capability. During lifecycle recovery, t9s retries Kubernetes
+API availability within the normal readiness timeout. Older Talos versions keep
+the legacy accepted/unverified completion semantics described above.
+
 Pull and install share a 20-minute client budget. Maintenance preparation,
 cordon, and reboot requests each have a 30-second budget. Drain, readiness, and
 cleanup have separate limits; the entire workflow can take longer than 20

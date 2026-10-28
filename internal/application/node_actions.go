@@ -20,12 +20,13 @@ type nodeIdentityFacts struct {
 }
 
 type nodeActionFacts struct {
-	Nodes       []nodeIdentityFacts
-	Warning     string
-	Blocked     string
-	Disks       *destructiveDiskFacts
-	ResetQuorum etcdQuorumAssessment
-	HasQuorum   bool
+	DowntimeMemberID uint64
+	Nodes            []nodeIdentityFacts
+	Warning          string
+	Blocked          string
+	Disks            *destructiveDiskFacts
+	ResetQuorum      etcdQuorumAssessment
+	HasQuorum        bool
 }
 
 // PrepareNodeAction resolves real backend nodes and captures their identity
@@ -85,6 +86,11 @@ func (s *Session) PrepareNodeAction(ctx context.Context, request NodeActionReque
 		return nil, err
 	}
 	assessment := Assessment{Targets: append([]string(nil), canonical...), Warning: facts.Warning, Blocked: facts.Blocked}
+	assessment.ControlPlaneDowntimeAvailable = facts.DowntimeMemberID != 0 && s.sdkSession.EtcdOperations() != nil && !request.AllowControlPlaneDowntime
+	if request.AllowControlPlaneDowntime {
+		assessment.RequiredToken = "allow-downtime " + canonical[0]
+		assessment.SnapshotPath = request.SnapshotPath
+	}
 	if request.Force {
 		assessment.RequiredToken = canonical[0]
 	}
@@ -213,6 +219,16 @@ func (s *Session) ExecuteNodeAction(ctx context.Context, plan *PreparedNodeActio
 }
 
 func validateNodeActionRequest(request NodeActionRequest) error {
+	if request.AllowControlPlaneDowntime {
+		if request.Kind != ActionUpgrade {
+			return errors.New("control-plane downtime is only valid for Talos upgrade")
+		}
+		if err := ValidateEtcdSnapshotPath(request.SnapshotPath); err != nil {
+			return err
+		}
+	} else if request.SnapshotPath != "" {
+		return errors.New("upgrade snapshot path requires control-plane downtime intent")
+	}
 	if request.Force && request.Kind != ActionReboot && request.Kind != ActionShutdown {
 		return errors.New("force mode is only valid for reboot or shutdown")
 	}
@@ -330,6 +346,10 @@ func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []d
 		hasControlPlane = hasControlPlane || node.Role == domain.NodeRoleControl
 	}
 	if !hasControlPlane {
+		if request.AllowControlPlaneDowntime {
+			facts.Blocked = "refusing: downtime upgrade requires the sole healthy control-plane member"
+			return facts, nil
+		}
 		if request.Kind == ActionUpgrade {
 			facts.Warning = upgradeActionWarningFacts(allNodes, EtcdPolicyFacts{}, targetNames, request.Image)
 		}
@@ -364,6 +384,15 @@ func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []d
 	if request.Kind == ActionUpgrade {
 		facts.Warning = upgradeActionWarningFacts(allNodes, etcdFacts, targetNames, request.Image)
 		facts.Blocked = etcdQuorumBlockReasonFacts(etcdFacts, targetNames)
+		facts.DowntimeMemberID = singleControlPlaneUpgradeMember(allNodes, targets, etcdFacts)
+		if request.AllowControlPlaneDowntime {
+			if facts.DowntimeMemberID == 0 || s.sdkSession.EtcdOperations() == nil {
+				facts.Blocked = "refusing: downtime upgrade requires the sole healthy control-plane member and etcd snapshot capability"
+			} else {
+				facts.Blocked = ""
+				facts.Warning = appendWarning("Allow control-plane downtime: Kubernetes API and scheduling will stop until the node recovers; etcd snapshot required", UpgradeMinorWarning(targets[0].Version, request.Image))
+			}
+		}
 	} else if request.Kind == ActionReset {
 		facts.Warning = etcdQuorumWarningFacts(etcdFacts, targetNames)
 		if request.Reset.Graceful {
@@ -380,6 +409,9 @@ func (s *Session) readNodeActionFacts(ctx context.Context, allNodes, targets []d
 }
 
 func sameNodeActionFacts(prepared, current nodeActionFacts) bool {
+	if prepared.DowntimeMemberID != current.DowntimeMemberID {
+		return false
+	}
 	if !slices.Equal(prepared.Nodes, current.Nodes) || prepared.Warning != current.Warning || prepared.Blocked != current.Blocked {
 		return false
 	}

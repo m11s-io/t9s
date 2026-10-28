@@ -10,6 +10,10 @@ coverage.*
 *.coverprofile
 profile.cov
 
+# Local etcd snapshots contain cluster state and credentials
+etcd-*.db
+etcd-*.db.part
+
 # Go workspace files
 go.work
 go.work.sum

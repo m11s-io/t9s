@@ -743,10 +743,15 @@ func (m machineryUpgradeMaintenance) WaitTalosReady(ctx context.Context, timeout
 }
 
 func (m machineryUpgradeMaintenance) WaitKubernetesReady(ctx context.Context, timeout time.Duration) error {
-	return k8swait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+	var lastErr error
+	err := k8swait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		node, err := m.clientset.CoreV1().Nodes().Get(ctx, m.nodeName, metav1.GetOptions{})
 		if err != nil {
-			return false, fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+			// A single-control-plane upgrade temporarily stops the API server.
+			// Keep waiting under the readiness deadline instead of aborting
+			// recovery on the first connection or API availability error.
+			lastErr = fmt.Errorf("get Kubernetes node %q: %w", m.nodeName, err)
+			return false, nil
 		}
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
@@ -758,6 +763,10 @@ func (m machineryUpgradeMaintenance) WaitKubernetesReady(ctx context.Context, ti
 
 		return false, nil
 	})
+	if err != nil {
+		return errors.Join(err, lastErr)
+	}
+	return nil
 }
 
 func (m machineryUpgradeMaintenance) Uncordon(ctx context.Context) error {
