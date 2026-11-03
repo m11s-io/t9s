@@ -16,8 +16,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,6 +42,7 @@ jobs:
       - run: bun run build
 
   deploy:
+    timeout-minutes: 60
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest
