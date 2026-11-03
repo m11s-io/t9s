@@ -1,3 +1,4 @@
+# Managed by infra/github; edit the shared workflow or its OpenTofu settings.
 name: OSV dependency scan
 
 on:
@@ -5,7 +6,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '5 5 * * 2'
+    - cron: '32 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -19,4 +20,6 @@ concurrency:
 
 jobs:
   scan:
-    uses: m11s-io/.github/.github/workflows/osv-scanner.yml@main
+    uses: m11s-io/.github/.github/workflows/osv-scanner.yml@9e6797b0fbb9da638bed8558dcc97167ea20d4cb
+    with:
+      upload-sarif: true
