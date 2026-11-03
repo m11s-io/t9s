@@ -23,7 +23,7 @@ concurrency:
 jobs:
   validate:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     defaults:
       run:
         working-directory: docs
@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 60
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: production
     concurrency:
       group: t9s-docs-production
