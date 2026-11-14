@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
 import { readFile } from "node:fs/promises";
 
 const requiredPages = [
@@ -19,25 +20,25 @@ describe("documentation MVP", () => {
   for (const page of requiredPages) {
     test(`${page} has title frontmatter`, async () => {
       const text = await readFile(new URL(`../src/content/docs/${page}`, import.meta.url), "utf8");
-      expect(text).toMatch(/^---\n[\s\S]*?^title:\s*.+$/m);
+      assert.match(text, /^---\n[\s\S]*?^title:\s*.+$/m);
     });
   }
 
   test("records supported Talos and Go versions", async () => {
     const install = await readFile(new URL("../src/content/docs/getting-started/installation.md", import.meta.url), "utf8");
-    expect(install).toContain("Talos v1.14.5");
-    expect(install).toContain("Go 1.27.1");
+    assert.ok(install.includes("Talos v1.14.6"));
+    assert.ok(install.includes("Go 1.27.1"));
   });
 
   test("documents both Talos configuration variables", async () => {
     const env = await readFile(new URL("../src/content/docs/reference/environment-variables.md", import.meta.url), "utf8");
-    expect(env).toContain("TALOSCONFIG");
-    expect(env).toContain("TALOSCONFIGS");
+    assert.ok(env.includes("TALOSCONFIG"));
+    assert.ok(env.includes("TALOSCONFIGS"));
   });
 
   test("states the security boundary", async () => {
     const security = await readFile(new URL("../src/content/docs/security.md", import.meta.url), "utf8");
-    expect(security).toContain("read-only");
-    expect(security).toContain("talosconfig");
+    assert.ok(security.includes("read-only"));
+    assert.ok(security.includes("talosconfig"));
   });
 });

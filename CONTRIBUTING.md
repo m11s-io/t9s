@@ -3,8 +3,8 @@
 ## Requirements and commands
 
 Use Go 1.27.2 on Linux to match CI (Go 1.27.1 is the module minimum).
-The target Talos SDK and cluster version for this slice is v1.14.5.
-Automated checks cover SDK integration; live v1.14.5 compatibility remains
+The target Talos SDK and cluster version for this slice is v1.14.6.
+Automated checks cover SDK integration; live v1.14.6 compatibility remains
 pending until the manual smoke test below is recorded.
 
 ```bash
@@ -27,6 +27,26 @@ threshold: timing and allocation results vary with the Go toolchain, hardware,
 and dependency versions. The behavioral guarantee is that every benchmark
 iteration constructs and renders the 120x40 initial view without opening a
 session or performing network I/O.
+
+## Documentation site
+
+The documentation site uses Node.js 26 or newer and pnpm 12.19.0,
+pinned in `docs/package.json`. Install pnpm using the
+[official installation instructions](https://pnpm.io/installation).
+From the repository root:
+
+```bash
+cd docs
+pnpm install --frozen-lockfile
+pnpm test
+pnpm run typecheck
+pnpm run build
+pnpm run dev
+```
+
+Commit `docs/pnpm-lock.yaml` when changing dependencies. Dependency build scripts
+are explicitly approved in `docs/pnpm-workspace.yaml`; review new build requests
+before approving them. The Go application does not require Node.js or pnpm.
 
 ## Architecture boundaries
 
@@ -118,7 +138,7 @@ the owning package plus the full test suite.
 
 ## Optional manual smoke test
 
-On a disposable v1.14.5 cluster, check `:nodes`, `:services` and service
+On a disposable v1.14.6 cluster, check `:nodes`, `:services` and service
 logs, `:events`, `:etcd`, `:bgp`, `:overview`, and `:problems`; inspect node
 detail for system volumes, workload isolation, and `sandboxd`; inspect disk
 detail for LVM, MD RAID, trim, and scrub status; and browse `:resources` in the
@@ -126,7 +146,7 @@ default read-only mode.
 Record the t9s commit, Talos version, checks performed, and results without
 including endpoints or credentials.
 
-When a disposable Talos v1.14.5 cluster is available, verify that the first
+When a disposable Talos v1.14.6 cluster is available, verify that the first
 frame appears before node results, unreachable endpoints do not freeze input,
 context switching never displays old-context nodes, partial failures preserve
 reachable rows, `/` filters without changing the snapshot, and no key or

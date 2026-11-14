@@ -1,4 +1,4 @@
 {
-  "compilerOptions": { "types": ["bun"] },
+  "compilerOptions": { "types": ["node"] },
   "extends": "astro/tsconfigs/strict"
 }

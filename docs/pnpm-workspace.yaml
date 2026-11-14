@@ -1,0 +1,4 @@
+# Native tooling used by Astro and image optimization. Other builds require review.
+allowBuilds:
+  esbuild: true
+  sharp: true

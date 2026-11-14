@@ -3,7 +3,7 @@ title: Contributing
 description: Build, test, and extend t9s without crossing its architecture boundaries.
 ---
 
-Use Go 1.27.2 on Linux to match CI (Go 1.27.1 is the module minimum). The target Talos SDK and cluster version is v1.14.5.
+Use Go 1.27.2 on Linux to match CI (Go 1.27.1 is the module minimum). The target Talos SDK and cluster version is v1.14.6.
 
 ```bash
 go build ./cmd/t9s
@@ -17,6 +17,26 @@ Run the startup benchmark with:
 ```bash
 go test ./internal/tui -run "^$" -bench BenchmarkInitialView -benchmem -count=3
 ```
+
+## Documentation site
+
+The documentation site uses Node.js 26 or newer and pnpm 12.19.0,
+pinned in `docs/package.json`. Install pnpm using the
+[official installation instructions](https://pnpm.io/installation).
+From the repository root:
+
+```bash
+cd docs
+pnpm install --frozen-lockfile
+pnpm test
+pnpm run typecheck
+pnpm run build
+pnpm run dev
+```
+
+Commit `docs/pnpm-lock.yaml` when changing dependencies. Dependency build scripts
+are explicitly approved in `docs/pnpm-workspace.yaml`; review new build requests
+before approving them. The Go application does not require Node.js or pnpm.
 
 ## Architecture boundaries
 
