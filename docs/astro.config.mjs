@@ -6,7 +6,9 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "t9s",
-      description: "A resource-first terminal UI for Talos Linux clusters.",
+      // The docs collection supplies the 404 page.
+      disable404Route: true,
+      description: "A terminal UI for exploring and managing Talos Linux clusters.",
       customCss: ["./src/styles/custom.css"],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/m11s-io/t9s" }],
       sidebar: [

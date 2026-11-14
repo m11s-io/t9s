@@ -2,8 +2,8 @@
 
 ## Requirements and commands
 
-Use Go 1.27.2 on Linux to match CI (Go 1.27.1 is the module minimum).
-The target Talos SDK and cluster version for this slice is v1.14.6.
+Go 1.27.3 is required and matches the Linux CI toolchain.
+The Talos SDK compatibility target is v1.14.6.
 Automated checks cover SDK integration; live v1.14.6 compatibility remains
 pending until the manual smoke test below is recorded.
 
@@ -104,9 +104,8 @@ goroutine should use a buffer sized for the targets or otherwise ensure the
 observer cannot block result collection. The TUI owns operation stamps and
 checks them before applying late results, so a superseded request cannot replace
 current presentation state. The TUI also owns any shared cluster snapshot it
-passes among views. A future web frontend must define its own transport and
-policy for local snapshot paths; no React frontend, HTTP server, authentication,
-or download transport is provided here.
+passes among views. Snapshot paths refer to files on the local machine;
+transports embedding the backend must define their own storage and access policy.
 
 Application operations own their client deadlines. Targets in one bulk node
 execution share one deadline: 30 seconds for ordinary actions and 30 minutes
@@ -135,6 +134,16 @@ TUI flows, and assert on normalized domain values rather than Talos SDK types.
 When a fixture shape changes, keep credentials obviously fake, verify that
 serialized domain results do not disclose credential fields or values, and run
 the owning package plus the full test suite.
+
+## Recorded validation
+
+A disposable two-node Docker smoke check against Talos v1.14.4 ran on
+2026-10-20. It verified node/service discovery, BGP and health views,
+system-volume details, workload isolation, and the resource and disk views.
+The cluster had no BGP peers, LVM/MD arrays, trim or scrub schedules, or
+`sandboxd` service, and did not expose a `SystemDisk` resource. Those
+hardware-backed cases remain unverified. Live Talos v1.14.6 smoke testing and
+disposable-cluster Kubernetes upgrade validation remain pending.
 
 ## Optional manual smoke test
 

@@ -1,9 +1,9 @@
 ---
 title: t9s
-description: A resource-first terminal UI for Talos Linux clusters.
+description: A terminal UI for exploring and managing Talos Linux clusters.
 template: splash
 hero:
-  tagline: Explore a Talos cluster quickly, see what is healthy or unhealthy, and drill from any resource into the evidence.
+  tagline: Explore your Talos cluster from the terminal. Browse resources, investigate problems, and make changes when you choose.
   actions:
     - text: Get started
       link: /getting-started/installation/
@@ -16,18 +16,41 @@ hero:
 
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
-:::note[Phase 1 MVP released]
-t9s implements the full read-only Phase 1 MVP: nodes, services and logs, events, etcd, processes, disks, network, a generic resource browser, explainable health rules, optional Kubernetes correlation, and the k9s launcher. [v0.1.0](https://github.com/m11s-io/t9s/releases/tag/v0.1.0) ships cross-platform binaries and checksums; signed artifacts are not yet included.
-:::
+`t9s` brings Talos nodes, services, logs, events, storage, and networking into
+one terminal UI. Move from a cluster overview to the resource you need, with
+health findings that show the observations behind them.
 
 <CardGrid>
-  <Card title="Resource first" icon="seti:config">
-    Open directly on objective cluster resources, then layer explainable health information over those snapshots.
+  <Card title="Explore your cluster" icon="seti:config">
+    Browse resources, open details, and follow logs. Filter the view to find
+    what matters, or switch contexts to work with another cluster.
+  </Card>
+  <Card title="Understand the problem" icon="magnifier">
+    See which resources need attention, inspect the evidence, and open
+    node diagnostics to investigate further.
   </Card>
   <Card title="Read only by default" icon="lock">
-    Explore nodes and services without mutation or an arbitrary command path. Pass `--enable-writes` to additionally allow gated, confirmed node actions and etcd snapshot, defragment, and alarm disarm.
-  </Card>
-  <Card title="Talos v1.14.6" icon="rocket">
-    The current development target is Talos Linux v1.14.6. Live cluster compatibility is verified separately with a manual smoke test.
+    Start by looking around. Maintenance actions, configuration applies, and
+    upgrades are opt-in and require confirmation. Read [Security](/security/)
+    before enabling writes.
   </Card>
 </CardGrid>
+
+## Start exploring
+
+[Install t9s](/getting-started/installation/) with Homebrew or download a
+[release binary](https://github.com/m11s-io/t9s/releases), then run:
+
+```bash
+t9s
+```
+
+Use your existing [Talos configuration](/getting-started/talos-configuration/).
+Press `?` for help, `/` to filter, or `:` to open the
+[command palette](/reference/commands/).
+
+Already working in k9s? Use the [k9s integration](/guides/k9s-integration/) to
+open a selected node in t9s.
+
+For compatibility details and live validation, see the
+[contributor guide](/contributing/#compatibility-and-manual-validation).

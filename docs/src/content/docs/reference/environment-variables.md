@@ -11,7 +11,9 @@ The standard Talos variable selects one configuration file:
 export TALOSCONFIG="$HOME/.talos/config"
 ```
 
-Explicit `--talosconfig` arguments take part in file selection according to the CLI invocation.
+Explicit `--talosconfig` arguments take precedence over `TALOSCONFIGS`. If neither
+is supplied, the Talos client resolves `TALOSCONFIG` or its default configuration
+file.
 
 ## `TALOSCONFIGS`
 
@@ -25,7 +27,10 @@ Use `:` as the separator on Unix and `;` on Windows. Repeated `--talosconfig` fl
 
 ## `T9S_ENABLE_WRITES`
 
-Enables gated node reboot, shutdown, rollback, and Talos upgrade from `:nodes` (equivalent to passing `--enable-writes`), plus service actions. Read-only by default:
+Equivalent to `--enable-writes`: enables confirmed node lifecycle actions and
+resets, service actions, block-device wipe, etcd snapshots and maintenance,
+machine configuration apply, and Kubernetes upgrades. Writes are disabled by
+default:
 
 ```bash
 export T9S_ENABLE_WRITES=true

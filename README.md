@@ -1,136 +1,93 @@
 # t9s
 
-`t9s` is a standalone, resource-first terminal UI for exploring Talos Linux
-clusters. It opens on objective cluster resources and layers explainable health
-information over those snapshots.
+**Explore your Talos cluster from the terminal.**
 
-> **Explore a Talos cluster quickly, see what is healthy or unhealthy, and
-> drill from any resource into the evidence.**
+`t9s` is a terminal UI for exploring and managing Talos Linux clusters.
+Browse nodes, follow logs, investigate health problems, and work through
+maintenance tasks without leaving the terminal.
 
-## Current status
+[Documentation](https://t9s.m11s.io/) · [Installation](https://t9s.m11s.io/getting-started/installation/) · [Releases](https://github.com/m11s-io/t9s/releases)
 
-Phases 0–3 of the Talos v1.14 coverage roadmap are implemented. Phase 5 now has
-a cluster-scoped Kubernetes upgrade workflow; its disposable-cluster release
-validation remains pending. t9s discovers
-Talos contexts, opens a context-scoped session, and provides read-only views for
-nodes, services and logs, events, etcd, processes, disks, network links and
-routes, BGP peers (`:bgp`/`:bgps`), containers and images, memory, CPU, time,
-mounts, sockets, kernel logs, and bounded directory usage. Disk details include
-LVM and MD RAID status; node details include system volumes, trim/XFS scrub
-status, workload isolation configuration, and `sandboxd` service health. The
-generic Talos resource browser remains available at `:resources`/`:res`.
+## See what is happening
 
-Explainable health rules are summarized by `:overview`/`:ov` and listed in
-`:problems`. Optional Kubernetes Node correlation appears on `:nodes` when a
-Kubernetes context matches the active Talos context. The k9s Node-view launcher
-(`--kube-context`/`--node`) is documented in [k9s integration](#k9s-integration).
-Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`) enables gated node
-reboot, shutdown, rollback, reset, and Talos OS upgrade; service start/stop/
-restart; device wipe; and etcd snapshot and membership maintenance. See
-[Security](#security); t9s stays read-only by default.
+- **Explore your cluster.** Move between nodes, services, events, etcd,
+  storage, and networking. Open a resource to see its details.
+- **Investigate a problem.** Follow service and kernel logs, inspect processes
+  and containers, and check CPU, memory, disks, and connections.
+- **Understand cluster health.** See which resources need attention and the
+  observations behind each diagnosis.
+- **Go deeper when you need to.** Browse Talos resources directly, switch
+  between cluster contexts, or open a node from k9s.
 
-Cross-platform release binaries, checksums, and installation documentation
-are available — see [Install](#install) below. Signed artifacts are not yet
-implemented.
+## Get started
 
-The Talos SDK compatibility target is **v1.14.6**. Live v1.14.6 smoke testing
-is pending. A disposable two-node Docker smoke check against v1.14.4 ran on
-2026-10-20 and verified node/service discovery, the BGP and health views,
-system-volume details, workload isolation, and the resource and disk views. The cluster had no BGP peers, LVM/MD arrays, trim or scrub schedules,
-or `sandboxd` service; it also did not expose a `SystemDisk` resource. Those
-hardware-backed cases remain unverified. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the full manual checklist.
-Talos upgrades are node-level operations: t9s upgrades the Talos OS on the
-selected node. Kubernetes upgrades use a separate `:upgrade-k8s` workflow and
-require `talosctl` v1.14.6; see [Security](#security) and the
-[command reference](docs/src/content/docs/reference/commands.md).
-
-## Install
+Install with Homebrew on macOS or Linux:
 
 ```bash
 brew install m11s-io/tap/t9s
 ```
 
-Prebuilt binaries for Linux and macOS are also available on the
-[GitHub Releases](https://github.com/m11s-io/t9s/releases) page. See
-[Installation](https://t9s.m11s.io/getting-started/installation/) for
-download, checksum verification, and `PATH` setup steps.
-
-## Build, test, and run
-
-Go 1.27.1 is required.
+Then open the cluster configured in your Talos configuration:
 
 ```bash
-go build ./cmd/t9s
-go test ./...
-go test -race ./...
-go run ./cmd/t9s --context <name>
+t9s
 ```
 
-The context must exist in the Talos configuration resolved by the Talos client.
-Pass `--talosconfig <path>` to select a specific file.
-
-`t9s` also accepts multiple Talos config files. Repeat `--talosconfig` or set the
-`t9s`-specific `TALOSCONFIGS` path-list environment variable (`:` on Unix, `;` on Windows):
+To choose a context or configuration file explicitly:
 
 ```bash
-export TALOSCONFIGS="$HOME/.talos/mgmt:$HOME/.talos/ai:$HOME/.talos/stage:$HOME/.talos/test"
-go run ./cmd/t9s
-
-# Equivalent explicit form
-go run ./cmd/t9s \
-  --talosconfig "$HOME/.talos/mgmt" \
-  --talosconfig "$HOME/.talos/ai" \
-  --talosconfig "$HOME/.talos/stage" \
-  --talosconfig "$HOME/.talos/test"
+t9s --context <context>
+t9s --talosconfig <path> --context <context>
 ```
 
-When multiple files are supplied, t9s merges contexts in memory and rejects
-duplicate context names. The standard singular `TALOSCONFIG` behavior remains
-unchanged.
+Prefer a standalone binary? Download one from
+[GitHub Releases](https://github.com/m11s-io/t9s/releases), then follow the
+[installation guide](https://t9s.m11s.io/getting-started/installation/) for
+checksum verification and setup.
 
-## Security
+## Find your way around
 
-By default the UI is read-only and offers no mutation or arbitrary
-command path. Passing `--enable-writes` (or setting `T9S_ENABLE_WRITES`)
-additionally allows reboot, shutdown, rollback, and upgrade of selected
-node(s) from the nodes screen, start/stop/restart of the selected service from
-the services screen, and etcd snapshot/defragment/alarm-disarm from the etcd
-screen, each gated behind its own prompt (a path prompt for snapshot, an inline
-confirmation that flags control-plane and etcd-quorum risk otherwise). The header's `[RO]`/`[RW]` badge
-always reflects the active mode. Talos upgrade progress covers image pull, install, drain, reboot, readiness, and uncordon when the lifecycle API is available; unsupported versions use the legacy upgrade RPC. A target skipping more than one Talos minor release receives an advisory warning. Kubernetes control-plane upgrades are separate. As before, the Talos credentials
-supplied to `t9s` may themselves be privileged — protect the talosconfig
-as a sensitive secret and grant only the permissions the operator needs.
-Do not commit real endpoints or credentials as test data.
+Use the arrow keys to select a row, `Enter` to open details, and `Esc` to go
+back. Press `/` to filter, `?` for help, or `:` to open the command palette.
 
-## k9s integration
+| Command | Explore |
+| --- | --- |
+| `:nodes` | Cluster nodes and their diagnostics |
+| `:services` | Services, state, and logs |
+| `:events` | Machine events and live follow |
+| `:etcd` | Etcd members, status, and alarms |
+| `:overview` | Cluster health at a glance |
+| `:problems` | Health findings and supporting evidence |
+| `:resources` | Talos resource types and instances |
 
-Add this to k9s's `plugins.yaml` to open the selected Kubernetes Node
-in `t9s` with `Shift-T` from k9s's Node view:
+The [command reference](https://t9s.m11s.io/reference/commands/) covers the
+full command list and view-specific controls.
 
-```yaml
-plugins:
-  t9s:
-    shortCut: Shift-T
-    description: Open in t9s
-    scopes:
-      - nodes
-    command: t9s
-    background: false
-    args:
-      - --kube-context
-      - $CONTEXT
-      - --node
-      - $NAME
-```
+## Choose when to make changes
 
-`$CONTEXT` and `$NAME` are k9s's own plugin placeholder variables — k9s
-substitutes them with its active Kubernetes context and the selected
-Node's name before invoking `t9s`. `t9s` resolves the corresponding
-Talos context (see `--kube-context` above) and opens directly on that
-node's detail view.
+`t9s` starts in read-only mode. Maintenance actions are opt-in through
+`--enable-writes` and require confirmation. These include node and service
+operations, etcd maintenance, configuration applies, and upgrades.
 
-Contributor setup, architecture boundaries, fixture rules, and benchmark
-instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Read the [security guide](https://t9s.m11s.io/security/) before enabling writes.
+It explains permissions, safeguards, and how to handle interrupted operations.
+Compatibility and live validation are documented in the
+[contributor guide](https://t9s.m11s.io/contributing/#compatibility-and-manual-validation).
 
-Documentation: <https://t9s.m11s.io>
+## Bring it into your workflow
+
+Use one Talos configuration or combine several, and switch contexts from
+inside the UI. See [Talos configuration](https://t9s.m11s.io/getting-started/talos-configuration/)
+for setup.
+
+Already using k9s? Add the [k9s plugin](https://t9s.m11s.io/guides/k9s-integration/)
+to open the selected Kubernetes node in t9s.
+
+## Contribute
+
+Bug reports, documentation improvements, and code contributions are welcome.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and project
+conventions, or [open an issue](https://github.com/m11s-io/t9s/issues).
+For security concerns, use [private vulnerability reporting](https://github.com/m11s-io/t9s/security/advisories/new).
+
+Licensed under [Apache 2.0](LICENSE).

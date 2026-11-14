@@ -50,7 +50,7 @@ in the current working directory; existing files are not overwritten. Snapshot
 failure or a change in node identity, etcd membership or health stops the upgrade.
 The terminal result retains the snapshot receipt; press `v` on the Nodes screen
 to show it again. This snapshot protects cluster state, not application volume
-data: confirm Longhorn volumes have recovered before maintaining the next node.
+data: confirm application storage has recovered before maintaining the next node.
 
 The downtime choice does not enable Force or bypass drain/PDB protection. It is
 unavailable for multi-member clusters, learners, unhealthy/unknown membership,

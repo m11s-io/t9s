@@ -6,7 +6,7 @@ description: Open t9s and navigate the initial node view.
 Start with a known context:
 
 ```bash
-go run ./cmd/t9s --context mgmt
+t9s --context mgmt
 ```
 
 `t9s` opens the read-only node view. Use the arrow keys or familiar terminal navigation keys to select a row, then press `Enter` or `d` for details. Press `Esc` or `q` to return.

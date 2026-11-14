@@ -8,6 +8,7 @@ Press `Enter` to run the command or `Esc` to close the input.
 
 | Command | Alias | Result |
 | --- | --- | --- |
+| `:help` | `:?` | Show help for the current view. |
 | `:nodes` | `:no` | Open the node explorer. |
 | `:services` | `:svc` | Open Talos services. |
 | `:contexts` | `:ctx` | Select another discovered context. |

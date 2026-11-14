@@ -37,7 +37,7 @@ A flat, filterable table of every current diagnosis: `SEVERITY`, `KIND`, `RESOUR
 Press `Enter` or `d` on a row to drill into the underlying resource:
 
 - A node diagnosis opens that node's detail view.
-- An etcd member diagnosis opens the etcd list (etcd has no per-member detail yet, so this lands you on the list rather than failing to drill in at all).
+- An etcd member diagnosis opens the etcd member list.
 
 `r` refreshes the underlying data; the health evaluation re-runs against the refreshed snapshot on the next render.
 

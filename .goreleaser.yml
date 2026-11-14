@@ -41,7 +41,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://t9s.m11s.io"
-    description: "A resource-first terminal UI for Talos Linux clusters"
+    description: "A terminal UI for exploring and managing Talos Linux clusters"
     binaries:
       - t9s
 

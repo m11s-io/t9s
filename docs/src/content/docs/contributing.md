@@ -3,7 +3,7 @@ title: Contributing
 description: Build, test, and extend t9s without crossing its architecture boundaries.
 ---
 
-Use Go 1.27.2 on Linux to match CI (Go 1.27.1 is the module minimum). The target Talos SDK and cluster version is v1.14.6.
+Go 1.27.3 is required and matches the Linux CI toolchain. The Talos SDK compatibility target is v1.14.6.
 
 ```bash
 go build ./cmd/t9s
@@ -37,6 +37,18 @@ pnpm run dev
 Commit `docs/pnpm-lock.yaml` when changing dependencies. Dependency build scripts
 are explicitly approved in `docs/pnpm-workspace.yaml`; review new build requests
 before approving them. The Go application does not require Node.js or pnpm.
+
+## Compatibility and manual validation
+
+Automated tests check SDK integration without connecting to a Talos cluster.
+Live smoke testing against Talos v1.14.6 and disposable-cluster validation of
+Kubernetes upgrades remain pending.
+
+Use the [manual smoke-test checklist](https://github.com/m11s-io/t9s/blob/main/CONTRIBUTING.md#optional-manual-smoke-test)
+on a disposable cluster. Record the t9s commit, Talos version, checks, and
+results without including endpoints or credentials. Write operations require
+separate validation with `--enable-writes` and must not be exercised against
+production as part of a test.
 
 ## Architecture boundaries
 

@@ -5,7 +5,7 @@ description: Build and run t9s against a Talos Linux cluster.
 
 ## Requirements
 
-- Go 1.27.1 (only required to build from source)
+- Go 1.27.3 (only required to build from source)
 - Access to a Talos v1.14.6 cluster
 - A valid Talos configuration with at least one context
 
@@ -25,7 +25,7 @@ tagged version.
 
 ```bash
 # Substitute the version, OS (linux or darwin), and architecture (amd64 or arm64)
-VERSION=0.1.0
+VERSION=0.1.3
 OS=linux
 ARCH=amd64
 
@@ -64,7 +64,10 @@ go test -race ./...
 ## Run
 
 ```bash
-go run ./cmd/t9s --context <name>
+t9s --context <name>
 ```
 
-The context must exist in the Talos configuration resolved by the Talos client. See [Talos configuration](../talos-configuration/) for file selection.
+When building from source, run `./t9s --context <name>` from the repository
+directory, or install the binary on your `PATH`. The context must exist in your
+Talos configuration. See [Talos configuration](../talos-configuration/) for file
+selection.
