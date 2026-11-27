@@ -4,10 +4,30 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/blang/semver/v4"
 )
+
+// MinimumTalosCLIVersion is the oldest talosctl release Kubernetes upgrades are
+// validated against. Later stable patches of the same minor are accepted; the
+// executable itself is pinned by path and SHA-256 between preview and execution.
+const MinimumTalosCLIVersion = "v1.14.6"
+
+// SupportedTalosCLIVersion reports whether a talosctl client version is a
+// stable release in MinimumTalosCLIVersion's minor at or above its patch.
+func SupportedTalosCLIVersion(value string) bool {
+	if !strings.HasPrefix(value, "v") {
+		return false
+	}
+	version, err := semver.Parse(strings.TrimPrefix(value, "v"))
+	if err != nil || len(version.Pre) > 0 || len(version.Build) > 0 {
+		return false
+	}
+	minimum := semver.MustParse(strings.TrimPrefix(MinimumTalosCLIVersion, "v"))
+	return version.Major == minimum.Major && version.Minor == minimum.Minor && version.Patch >= minimum.Patch
+}
 
 var ErrKubernetesUpgradeAssessment = errors.New("Kubernetes upgrade assessment failed")
 
@@ -140,7 +160,7 @@ func AssessKubernetesUpgrade(inventory KubernetesUpgradeInventory, target string
 	fail := func(reason string) (KubernetesUpgradePlan, error) {
 		return KubernetesUpgradePlan{}, fmt.Errorf("%w: %s", ErrKubernetesUpgradeAssessment, reason)
 	}
-	if inventory.ClusterUID == "" || inventory.TalosClusterID == "" || inventory.Gateway == "" || inventory.CLI.Version != "v1.14.6" || inventory.CLI.Path == "" || inventory.CLI.SHA256 == "" {
+	if inventory.ClusterUID == "" || inventory.TalosClusterID == "" || inventory.Gateway == "" || !SupportedTalosCLIVersion(inventory.CLI.Version) || inventory.CLI.Path == "" || inventory.CLI.SHA256 == "" {
 		return fail("cluster identity or supported talosctl identity is incomplete")
 	}
 	if !inventory.Healthy || len(inventory.Nodes) == 0 {

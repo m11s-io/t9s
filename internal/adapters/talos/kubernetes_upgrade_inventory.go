@@ -399,7 +399,7 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	var identity domain.TalosCLIIdentity
 	path, err := exec.LookPath("talosctl")
 	if err != nil {
-		return identity, errors.New("talosctl v1.14.6 must be installed and available on PATH")
+		return identity, errors.New("talosctl " + domain.MinimumTalosCLIVersion + " or a later patch must be installed and available on PATH")
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
@@ -411,8 +411,12 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	var output boundedVersionOutput
 	versionCommand.Stdout = &output
 	versionCommand.Stderr = io.Discard
-	if err := versionCommand.Run(); err != nil || !clientVersionMatches(output.String(), "v1.14.6") {
-		return identity, errors.New("talosctl v1.14.6 is required")
+	if err := versionCommand.Run(); err != nil {
+		return identity, errors.New("unable to read talosctl version")
+	}
+	version := clientVersion(output.String())
+	if !domain.SupportedTalosCLIVersion(version) {
+		return identity, errors.New("talosctl " + domain.MinimumTalosCLIVersion + " or a later patch of the same minor is required")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -427,7 +431,7 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	if _, err := io.Copy(hash, io.LimitReader(file, info.Size()+1)); err != nil {
 		return identity, errors.New("unable to fingerprint talosctl executable")
 	}
-	return domain.TalosCLIIdentity{Path: path, Version: "v1.14.6", SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
+	return domain.TalosCLIIdentity{Path: path, Version: version, SHA256: hex.EncodeToString(hash.Sum(nil))}, nil
 }
 
 type boundedVersionOutput struct{ bytes.Buffer }
@@ -439,14 +443,16 @@ func (b *boundedVersionOutput) Write(data []byte) (int, error) {
 	return b.Buffer.Write(data)
 }
 
-func clientVersionMatches(output, expected string) bool {
+// clientVersion returns the first "Tag:" or "Client:" value from
+// `talosctl version --client` output, or "" when none is present.
+func clientVersion(output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) == 2 && (strings.TrimSuffix(fields[0], ":") == "Tag" || strings.TrimSuffix(fields[0], ":") == "Client") {
-			return fields[1] == expected
+			return fields[1]
 		}
 	}
-	return false
+	return ""
 }
 
 func matchTalosNode(nodes []domain.NodeSnapshot, kubeNode corev1.Node) (domain.NodeSnapshot, bool) {

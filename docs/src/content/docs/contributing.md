@@ -3,7 +3,7 @@ title: Contributing
 description: Build, test, and extend t9s without crossing its architecture boundaries.
 ---
 
-Go 1.27.3 is required and matches the Linux CI toolchain. The Talos SDK compatibility target is v1.14.6.
+Go 1.27.3 is required and matches the Linux CI toolchain. The Talos SDK compatibility target is v1.14.7.
 
 ```bash
 go build ./cmd/t9s
@@ -41,7 +41,7 @@ before approving them. The Go application does not require Node.js or pnpm.
 ## Compatibility and manual validation
 
 Automated tests check SDK integration without connecting to a Talos cluster.
-Live smoke testing against Talos v1.14.6 and disposable-cluster validation of
+Live smoke testing against Talos v1.14.7 and disposable-cluster validation of
 Kubernetes upgrades remain pending.
 
 Use the [manual smoke-test checklist](https://github.com/m11s-io/t9s/blob/main/CONTRIBUTING.md#optional-manual-smoke-test)

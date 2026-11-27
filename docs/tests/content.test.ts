@@ -26,7 +26,7 @@ describe("documentation", () => {
 
   test("records supported Talos and Go versions", async () => {
     const install = await readFile(new URL("../src/content/docs/getting-started/installation.md", import.meta.url), "utf8");
-    assert.ok(install.includes("Talos v1.14.6"));
+    assert.ok(install.includes("Talos v1.14.7"));
     assert.ok(install.includes("Go 1.27.3"));
   });
 

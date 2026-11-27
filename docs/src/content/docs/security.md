@@ -134,7 +134,7 @@ Force, change membership, or bypass Kubernetes eviction/PDB checks. The local
 snapshot contains sensitive etcd data and should be stored securely.
 
 Kubernetes upgrades use the separate `:upgrade-k8s` command and require
-`talosctl` v1.14.6 on `PATH`. The operator supplies an explicit stable target,
+`talosctl` v1.14.6 or a later stable 1.14 patch on `PATH` (the executable is pinned by path and SHA-256 between preview and execution). The operator supplies an explicit stable target,
 reviews the prefilled local snapshot path and node-by-node plan, and confirms
 with `y` after checking the displayed cluster UID and target version. The preview does not run the upgrade
 command or mutate the cluster. Execution requires writes mode, a verified etcd

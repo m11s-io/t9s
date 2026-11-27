@@ -3,8 +3,8 @@
 ## Requirements and commands
 
 Go 1.27.3 is required and matches the Linux CI toolchain.
-The Talos SDK compatibility target is v1.14.6.
-Automated checks cover SDK integration; live v1.14.6 compatibility remains
+The Talos SDK compatibility target is v1.14.7.
+Automated checks cover SDK integration; live v1.14.7 compatibility remains
 pending until the manual smoke test below is recorded.
 
 ```bash
@@ -142,12 +142,12 @@ A disposable two-node Docker smoke check against Talos v1.14.4 ran on
 system-volume details, workload isolation, and the resource and disk views.
 The cluster had no BGP peers, LVM/MD arrays, trim or scrub schedules, or
 `sandboxd` service, and did not expose a `SystemDisk` resource. Those
-hardware-backed cases remain unverified. Live Talos v1.14.6 smoke testing and
+hardware-backed cases remain unverified. Live Talos v1.14.7 smoke testing and
 disposable-cluster Kubernetes upgrade validation remain pending.
 
 ## Optional manual smoke test
 
-On a disposable v1.14.6 cluster, check `:nodes`, `:services` and service
+On a disposable v1.14.7 cluster, check `:nodes`, `:services` and service
 logs, `:events`, `:etcd`, `:bgp`, `:overview`, and `:problems`; inspect node
 detail for system volumes, workload isolation, and `sandboxd`; inspect disk
 detail for LVM, MD RAID, trim, and scrub status; and browse `:resources` in the
@@ -155,7 +155,7 @@ default read-only mode.
 Record the t9s commit, Talos version, checks performed, and results without
 including endpoints or credentials.
 
-When a disposable Talos v1.14.6 cluster is available, verify that the first
+When a disposable Talos v1.14.7 cluster is available, verify that the first
 frame appears before node results, unreachable endpoints do not freeze input,
 context switching never displays old-context nodes, partial failures preserve
 reachable rows, `/` filters without changing the snapshot, and no key or
