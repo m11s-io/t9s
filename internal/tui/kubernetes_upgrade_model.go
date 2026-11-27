@@ -33,7 +33,7 @@ type kubernetesUpgradeModel struct {
 	phase         kubernetesUpgradePhase
 	plan          *application.PreparedKubernetesUpgrade
 	stream        ports.KubernetesUpgradeStream
-	events        []domain.KubernetesUpgradeEvent
+	events        []kubernetesUpgradeEventLine
 	result        *domain.KubernetesUpgradeResult
 	err           string
 	operation     uint64
@@ -128,13 +128,18 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 		}
 	case kubernetesUpgradeRunning:
 		body = append(body, plan, "Upgrade is running. Esc requests cancellation.")
-		for _, event := range m.events {
-			label := string(event.Stage)
-			if event.NodeUID != "" {
-				label += " · " + event.NodeUID
+		events := m.eventLines()
+		if height > 0 {
+			reserved := len(body)
+			if m.err != "" {
+				reserved += 2
 			}
-			body = append(body, "  "+label+" · "+event.Status)
+			// Keep the newest events visible when the view is short.
+			if keep := max(height-reserved, 0); keep < len(events) {
+				events = events[len(events)-keep:]
+			}
 		}
+		body = append(body, events...)
 	case kubernetesUpgradeComplete:
 		body = append(body, plan)
 		if m.result != nil {
@@ -326,10 +331,7 @@ func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (model, tea
 		if message.operation != u.operation || message.generation != m.generation() || !m.views.contains(viewKubernetesUpgrade) || u.phase != kubernetesUpgradeRunning {
 			return *m, nil
 		}
-		u.events = append(u.events, message.event)
-		if len(u.events) > 50 {
-			u.events = append([]domain.KubernetesUpgradeEvent(nil), u.events[len(u.events)-50:]...)
-		}
+		u.events = appendKubernetesUpgradeEvent(u.events, message.event, 50)
 		return *m, directKubernetesUpgradeAwaitCommand(u.stream, u.operation, u.generation)
 	case directKubernetesUpgradeFinished:
 		if message.operation != u.operation || message.generation != m.generation() || !m.views.contains(viewKubernetesUpgrade) {
@@ -347,4 +349,49 @@ func (m *model) updateDirectKubernetesUpgradeResult(message tea.Msg) (model, tea
 	default:
 		return *m, nil
 	}
+}
+
+// kubernetesUpgradeEventLine is one progress event plus how many identical
+// events arrived back to back, so repeated upstream progress stays one line.
+type kubernetesUpgradeEventLine struct {
+	event domain.KubernetesUpgradeEvent
+	count int
+}
+
+func appendKubernetesUpgradeEvent(lines []kubernetesUpgradeEventLine, event domain.KubernetesUpgradeEvent, limit int) []kubernetesUpgradeEventLine {
+	if last := len(lines) - 1; last >= 0 && lines[last].event == event {
+		lines[last].count++
+		return lines
+	}
+	lines = append(lines, kubernetesUpgradeEventLine{event: event, count: 1})
+	if len(lines) > limit {
+		lines = append([]kubernetesUpgradeEventLine(nil), lines[len(lines)-limit:]...)
+	}
+	return lines
+}
+
+// eventLines renders progress oldest first, naming nodes from the plan.
+func (m kubernetesUpgradeModel) eventLines() []string {
+	names := map[string]string{}
+	if m.plan != nil {
+		for _, node := range m.plan.Summary().Nodes {
+			names[node.UID] = node.Name
+		}
+	}
+	lines := make([]string, 0, len(m.events))
+	for _, line := range m.events {
+		label := string(line.event.Stage)
+		if uid := line.event.NodeUID; uid != "" {
+			if name, ok := names[uid]; ok {
+				uid = name
+			}
+			label += " · " + uid
+		}
+		label += " · " + line.event.Status
+		if line.count > 1 {
+			label += fmt.Sprintf(" ×%d", line.count)
+		}
+		lines = append(lines, "  "+label)
+	}
+	return lines
 }

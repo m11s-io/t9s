@@ -61,8 +61,9 @@ func (b *kubernetesUpgradeBackend) RunControlPlane(ctx context.Context, plan dom
 	}
 	var readers sync.WaitGroup
 	readers.Add(2)
-	go func() { defer readers.Done(); consumeUpgradeOutput(stdout, progress) }()
-	go func() { defer readers.Done(); consumeUpgradeOutput(stderr, progress) }()
+	nodeUIDs := upgradeNodeUIDsByAddress(plan.Nodes)
+	go func() { defer readers.Done(); consumeUpgradeOutput(stdout, nodeUIDs, progress) }()
+	go func() { defer readers.Done(); consumeUpgradeOutput(stderr, nodeUIDs, progress) }()
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
 	var waitErr error
@@ -149,7 +150,7 @@ func (b *kubernetesUpgradeBackend) privateTalosConfig() (string, string, error) 
 	return directory, path, nil
 }
 
-func consumeUpgradeOutput(reader io.Reader, progress func(domain.KubernetesUpgradeEvent)) {
+func consumeUpgradeOutput(reader io.Reader, nodeUIDs map[string]string, progress func(domain.KubernetesUpgradeEvent)) {
 	buffered := bufio.NewReaderSize(reader, 4096)
 	var line strings.Builder
 	discard := false
@@ -165,7 +166,7 @@ func consumeUpgradeOutput(reader io.Reader, progress func(domain.KubernetesUpgra
 		}
 		if err == nil {
 			if !discard {
-				emitUpgradeStage(line.String(), progress)
+				emitUpgradeStage(line.String(), nodeUIDs, progress)
 			}
 			line.Reset()
 			discard = false
@@ -176,7 +177,7 @@ func consumeUpgradeOutput(reader io.Reader, progress func(domain.KubernetesUpgra
 		}
 		if err == io.EOF {
 			if !discard && line.Len() > 0 {
-				emitUpgradeStage(line.String(), progress)
+				emitUpgradeStage(line.String(), nodeUIDs, progress)
 			}
 			return
 		}
@@ -184,7 +185,30 @@ func consumeUpgradeOutput(reader io.Reader, progress func(domain.KubernetesUpgra
 	}
 }
 
-func emitUpgradeStage(line string, progress func(domain.KubernetesUpgradeEvent)) {
+// upgradeComponents maps substrings of talosctl upgrade-k8s output to the
+// fixed component names t9s displays. Order matters: the first match wins.
+var upgradeComponents = []struct{ needle, name string }{
+	{"kube-apiserver", "kube-apiserver"},
+	{"controller-manager", "kube-controller-manager"},
+	{"scheduler", "kube-scheduler"},
+	{"kube-proxy", "kube-proxy"},
+	{"manifest", "manifests"},
+}
+
+func upgradeNodeUIDsByAddress(nodes []domain.KubernetesUpgradeNodePlan) map[string]string {
+	uids := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		if node.TalosAddress != "" && node.UID != "" {
+			uids[strings.ToLower(node.TalosAddress)] = node.UID
+		}
+	}
+	return uids
+}
+
+// emitUpgradeStage classifies one line of talosctl output. Upstream text is
+// never forwarded: the event carries only a fixed stage, a fixed component
+// name, and the UID of a planned node whose quoted address appears in the line.
+func emitUpgradeStage(line string, nodeUIDs map[string]string, progress func(domain.KubernetesUpgradeEvent)) {
 	if progress == nil {
 		return
 	}
@@ -195,19 +219,50 @@ func emitUpgradeStage(line string, progress func(domain.KubernetesUpgradeEvent))
 		return r
 	}, line)
 	line = strings.ToLower(line)
-	stage, ok := domain.KubernetesUpgradeStage(""), false
-	switch {
-	case strings.Contains(line, "pre-pulling") || strings.Contains(line, "pre-pull"):
-		stage, ok = domain.KubernetesUpgradePrePull, true
-	case strings.Contains(line, "kube-apiserver") || strings.Contains(line, "controller-manager") || strings.Contains(line, "scheduler"):
-		stage, ok = domain.KubernetesUpgradeControlPlane, true
-	case strings.Contains(line, "kube-proxy"):
-		stage, ok = domain.KubernetesUpgradeKubeProxy, true
-	case strings.Contains(line, "manifest"):
-		stage, ok = domain.KubernetesUpgradeManifests, true
+	component := ""
+	for _, candidate := range upgradeComponents {
+		if strings.Contains(line, candidate.needle) {
+			component = candidate.name
+			break
+		}
 	}
-	if ok {
-		progress(domain.KubernetesUpgradeEvent{Stage: stage, Status: "upstream-progress"})
+	var stage domain.KubernetesUpgradeStage
+	switch {
+	case strings.Contains(line, "pre-pull"):
+		stage = domain.KubernetesUpgradePrePull
+	case component == "kube-proxy":
+		stage = domain.KubernetesUpgradeKubeProxy
+	case component == "manifests":
+		stage, component = domain.KubernetesUpgradeManifests, ""
+	case component != "":
+		stage = domain.KubernetesUpgradeControlPlane
+	default:
+		return
+	}
+	status := component
+	if status == "" {
+		status = "in progress"
+	}
+	progress(domain.KubernetesUpgradeEvent{Stage: stage, NodeUID: quotedNodeUID(line, nodeUIDs), Status: status})
+}
+
+// quotedNodeUID returns the UID of the first planned node whose address
+// appears quoted in line, as talosctl prints `"10.0.0.1": ...`.
+func quotedNodeUID(line string, nodeUIDs map[string]string) string {
+	for rest := line; ; {
+		start := strings.IndexByte(rest, '"')
+		if start < 0 {
+			return ""
+		}
+		rest = rest[start+1:]
+		end := strings.IndexByte(rest, '"')
+		if end < 0 {
+			return ""
+		}
+		if uid, ok := nodeUIDs[rest[:end]]; ok {
+			return uid
+		}
+		rest = rest[end+1:]
 	}
 }
 
