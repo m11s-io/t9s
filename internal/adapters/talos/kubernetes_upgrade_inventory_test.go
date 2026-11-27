@@ -26,7 +26,7 @@ func TestInspectTalosCLIRequiresSupportedPatch(t *testing.T) {
 			t.Setenv("PATH", dir)
 			identity, err := inspectTalosCLI(context.Background())
 			if !tc.supported {
-				require.ErrorContains(t, err, "talosctl "+domain.MinimumTalosCLIVersion+" or a later patch of the same minor is required")
+				require.ErrorContains(t, err, talosCLIRequirement+" is required")
 				require.Empty(t, identity)
 				return
 			}

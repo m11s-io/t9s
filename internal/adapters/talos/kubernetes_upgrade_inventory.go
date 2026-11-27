@@ -395,11 +395,13 @@ func validateTalosKubeconfig(data []byte) error {
 	return nil
 }
 
+const talosCLIRequirement = "talosctl " + domain.MinimumTalosCLIVersion + " or a later patch of the same minor"
+
 func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	var identity domain.TalosCLIIdentity
 	path, err := exec.LookPath("talosctl")
 	if err != nil {
-		return identity, errors.New("talosctl " + domain.MinimumTalosCLIVersion + " or a later patch must be installed and available on PATH")
+		return identity, errors.New(talosCLIRequirement + " must be installed and available on PATH")
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
@@ -416,7 +418,7 @@ func inspectTalosCLI(ctx context.Context) (domain.TalosCLIIdentity, error) {
 	}
 	version := clientVersion(output.String())
 	if !domain.SupportedTalosCLIVersion(version) {
-		return identity, errors.New("talosctl " + domain.MinimumTalosCLIVersion + " or a later patch of the same minor is required")
+		return identity, errors.New(talosCLIRequirement + " is required")
 	}
 	file, err := os.Open(path)
 	if err != nil {

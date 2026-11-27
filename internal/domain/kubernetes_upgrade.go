@@ -15,6 +15,8 @@ import (
 // executable itself is pinned by path and SHA-256 between preview and execution.
 const MinimumTalosCLIVersion = "v1.14.6"
 
+var minimumTalosCLIVersion = semver.MustParse(strings.TrimPrefix(MinimumTalosCLIVersion, "v"))
+
 // SupportedTalosCLIVersion reports whether a talosctl client version is a
 // stable release in MinimumTalosCLIVersion's minor at or above its patch.
 func SupportedTalosCLIVersion(value string) bool {
@@ -25,8 +27,7 @@ func SupportedTalosCLIVersion(value string) bool {
 	if err != nil || len(version.Pre) > 0 || len(version.Build) > 0 {
 		return false
 	}
-	minimum := semver.MustParse(strings.TrimPrefix(MinimumTalosCLIVersion, "v"))
-	return version.Major == minimum.Major && version.Minor == minimum.Minor && version.Patch >= minimum.Patch
+	return version.Major == minimumTalosCLIVersion.Major && version.Minor == minimumTalosCLIVersion.Minor && version.Patch >= minimumTalosCLIVersion.Patch
 }
 
 var ErrKubernetesUpgradeAssessment = errors.New("Kubernetes upgrade assessment failed")

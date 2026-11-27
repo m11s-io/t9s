@@ -127,7 +127,10 @@ func (m kubernetesUpgradeModel) view(width, height int, writesEnabled bool) stri
 			body = append(body, "Press y to start this upgrade · n/Esc cancels.")
 		}
 	case kubernetesUpgradeRunning:
-		body = append(body, plan, "Upgrade is running. Esc requests cancellation.")
+		if plan != "" {
+			body = append(body, strings.Split(plan, "\n")...)
+		}
+		body = append(body, "Upgrade is running. Esc requests cancellation.")
 		events := m.eventLines()
 		if height > 0 {
 			reserved := len(body)
